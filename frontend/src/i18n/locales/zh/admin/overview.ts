@@ -443,6 +443,7 @@ export default {
         selectionCount: '已选 {selected} 个 · 当前可选 {visible} 个', selectResults: '全选搜索结果', clearSelection: '清空勾选',
         noMatchingModels: '没有匹配的未添加模型，可修改搜索内容或检查下方已有规则。',
         configureBatch: '2. 设置本批规则', addedRules: '已添加规则（{count}/200）',
+        saved: '模型使用规则已保存并生效', draftSaved: '模型规则草稿已保存，全站用户规则尚未启用',
         selectModel: '搜索并选择模型', unlistedModel: '此已存模型不在当前候选中，请核对或重新选择；原规则仍保留。', noCandidates: '暂无模型候选，请先检查分组与上游账号配置。',
         activeHint: '用户模型规则已生效：未设置的模型默认允许。分组模型白名单不参与限制；路由、订阅和计费保持不变。',
         draftHint: '当前为准备状态：仍使用原有分组权限。保存需要的限制后，可切换全站为用户规则；无规则用户不受额外模型限制。',

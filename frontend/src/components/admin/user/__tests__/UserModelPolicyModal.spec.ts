@@ -2,13 +2,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import type { AdminUser } from '@/types'
 
-const mocks = vi.hoisted(() => ({ get: vi.fn(), candidates: vi.fn(), save: vi.fn(), reset: vi.fn(), activate: vi.fn() }))
+const mocks = vi.hoisted(() => ({ get: vi.fn(), candidates: vi.fn(), save: vi.fn(), reset: vi.fn(), activate: vi.fn(), success: vi.fn(), error: vi.fn() }))
 vi.mock('@/api/modelPolicy', async () => {
   const actual = await vi.importActual<typeof import('@/api/modelPolicy')>('@/api/modelPolicy')
   return { ...actual, getUserModelPolicy: mocks.get, getModelPolicyCandidates: mocks.candidates, saveUserModelPolicy: mocks.save, resetUserModelQuota: mocks.reset, activateUserModelPolicies: mocks.activate }
 })
 vi.mock('vue-i18n', async () => ({ ...await vi.importActual<typeof import('vue-i18n')>('vue-i18n'), useI18n: () => ({ t: (key: string) => key }) }))
-vi.mock('@/stores/app', () => ({ useAppStore: () => ({ showInfo: vi.fn(), showError: vi.fn(), showSuccess: vi.fn(), showWarning: vi.fn() }) }))
+vi.mock('@/stores/app', () => ({ useAppStore: () => ({ showInfo: vi.fn(), showError: mocks.error, showSuccess: mocks.success, showWarning: vi.fn() }) }))
 vi.mock('@/components/common/BaseDialog.vue', () => ({ default: { props: ['show'], template: '<div v-if="show"><slot/><slot name="footer"/></div>' } }))
 vi.mock('@/components/common/ConfirmDialog.vue', () => ({ default: { props: ['show', 'message'], emits: ['confirm', 'cancel'], template: '<div v-if="show" data-test="confirm"><p>{{message}}</p><button @click="$emit(\'confirm\')">confirm</button></div>' } }))
 import UserModelPolicyModal from '../UserModelPolicyModal.vue'
@@ -79,6 +79,46 @@ describe('user model rules editor', () => {
     expect(mocks.save).toHaveBeenCalledWith(7, 4, initial().rules)
     expect(mocks.activate).not.toHaveBeenCalled()
     expect(w.text()).toContain('admin.users.modelPolicy.draftHint')
+    expect(mocks.success).toHaveBeenCalledWith('admin.users.modelPolicy.draftSaved')
+    expect(w.emitted('close')).toBeUndefined()
+  })
+  it('shows saving state, prevents duplicate writes, and keeps saved rules open for verification', async () => {
+    let finish!: (value: ReturnType<typeof initial>) => void
+    mocks.get.mockResolvedValue({ ...initial(), enabled: true })
+    mocks.save.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    const w = mount(UserModelPolicyModal, { props: { show: true, user: { id: 7 } as AdminUser } })
+    await flushPromises()
+    expect(w.get('[data-testid="bulk-model-form"] button[type="submit"]').classes()).toContain('btn-primary')
+    await w.get('#user-model-policy-form').trigger('submit')
+    const save = w.get('button[form="user-model-policy-form"]')
+    expect(save.text()).toBe('common.saving')
+    expect(save.attributes('aria-busy')).toBe('true')
+    expect(save.attributes('disabled')).toBeDefined()
+    expect(w.emitted('close')).toBeUndefined()
+    expect(mocks.success).not.toHaveBeenCalled()
+    await w.get('#user-model-policy-form').trigger('submit')
+    expect(mocks.save).toHaveBeenCalledTimes(1)
+    finish({ ...initial(), enabled: true, revision: 5 }); await flushPromises()
+    expect(mocks.success).toHaveBeenCalledWith('admin.users.modelPolicy.saved')
+    expect(w.emitted('close')).toBeUndefined()
+    expect(save.attributes('aria-busy')).toBe('false')
+    expect(w.find('#user-model-policy-form').exists()).toBe(true)
+    await w.get('#user-model-policy-form').trigger('submit'); await flushPromises()
+    expect(mocks.save).toHaveBeenLastCalledWith(7, 5, initial().rules)
+  })
+  it('keeps edits and the dialog on save failure with a visible error and no success notice', async () => {
+    mocks.save.mockRejectedValueOnce(new Error('Save conflict; reload the latest rules'))
+    const w = mount(UserModelPolicyModal, { props: { show: true, user: { id: 7 } as AdminUser } })
+    await flushPromises()
+    await w.get('tbody input[aria-label="admin.users.modelPolicy.requests"]').setValue(27)
+    await w.get('#user-model-policy-form').trigger('submit'); await flushPromises()
+    expect(w.get('[role="alert"]').text()).toContain('Save conflict')
+    expect(mocks.error).toHaveBeenCalledWith('Save conflict; reload the latest rules')
+    expect(mocks.success).not.toHaveBeenCalled()
+    expect(w.emitted('close')).toBeUndefined()
+    expect((w.get('tbody input').element as HTMLInputElement).value).toBe('27')
+    expect(w.get('button[form="user-model-policy-form"]').text()).toBe('common.save')
+    expect(w.get('button[form="user-model-policy-form"]').attributes('disabled')).toBeUndefined()
   })
   it('allows an empty policy without a deny-all confirmation', async () => {
     mocks.get.mockResolvedValue({ ...initial(), rules: [] })

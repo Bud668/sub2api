@@ -56,7 +56,7 @@
                 <span v-else class="text-xs text-gray-500">{{ t('admin.users.modelPolicy.dailyReset') }}</span>
               </template>
             </div>
-            <button type="submit" class="btn btn-secondary mt-3 w-full" :disabled="!selectedModels.length">{{ t('admin.users.modelPolicy.addSelected', { count: selectedModels.length }) }}</button>
+            <button type="submit" class="btn btn-primary mt-3 w-full gap-2" :disabled="!selectedModels.length"><Icon name="plus" size="sm" />{{ t('admin.users.modelPolicy.addSelected', { count: selectedModels.length }) }}</button>
           </fieldset>
         </form>
         <form id="user-model-policy-form" @submit.prevent="requestSave">
@@ -107,7 +107,7 @@
     </div>
     <template #footer><div class="flex gap-3 justify-end">
       <button class="btn btn-secondary" type="button" :disabled="busy" @click="close">{{ t('common.cancel') }}</button>
-      <button class="btn btn-primary" form="user-model-policy-form" type="submit" :disabled="busy || loading || !policy || !!selectedModels.length">{{ t('common.save') }}</button>
+      <button class="btn btn-primary" form="user-model-policy-form" type="submit" :aria-busy="saving" :disabled="busy || loading || !policy || !!selectedModels.length"><Icon v-if="saving" name="refresh" size="sm" class="animate-spin" />{{ t(saving ? 'common.saving' : 'common.save') }}</button>
     </div></template>
   </BaseDialog>
   <ConfirmDialog :show="!!confirmation" :title="t('admin.users.modelPolicy.title')" :message="confirmMessage" :danger="true" @cancel="confirmation = null" @confirm="confirmAction" />
@@ -116,6 +116,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useAppStore } from '@/stores/app'
+import Icon from '@/components/icons/Icon.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Select from '@/components/common/Select.vue'
@@ -125,6 +127,7 @@ import { activateUserModelPolicies, getUserModelPolicy, getModelPolicyCandidates
 const props = defineProps<{ show: boolean; user: AdminUser | null }>()
 const emit = defineEmits<{ close: []; success: [] }>()
 const { t } = useI18n()
+const appStore = useAppStore()
 const policy = ref<ModelPolicy | null>(null)
 const rules = ref<ModelRequestRule[]>([])
 const candidates = ref<string[]>([])
@@ -136,6 +139,7 @@ const visibleModels = computed(() => addableModels.value.filter(model => model.t
 const selectVisibleModels = () => { selectedModels.value = [...new Set([...selectedModels.value, ...visibleModels.value])] }
 watch(addableModels, models => { selectedModels.value = selectedModels.value.filter(model => models.includes(model)) })
 const loading = ref(false), busy = ref(false), error = ref('')
+const saving = ref(false)
 const confirmation = ref<{ kind: 'save' | 'reset' | 'activate'; model?: string } | null>(null)
 const confirmMessage = computed(() => confirmation.value?.kind === 'activate' ? t('admin.users.modelPolicy.activateConfirm') : confirmation.value?.kind === 'reset' ? t('admin.users.modelPolicy.resetConfirm', { model: confirmation.value.model }) : t('admin.users.modelPolicy.clearConfirm'))
 const formatTime = (value?: string | null) => value ? `${t('admin.users.modelPolicy.resetsAt')} ${new Date(value).toLocaleString()}` : '—'
@@ -189,7 +193,7 @@ async function confirmAction() {
 async function perform(kind: 'save' | 'reset' | 'activate', model?: string) {
   if (!props.user || !policy.value || busy.value) return
   const id = props.user.id
-  busy.value = true; error.value = ''
+  busy.value = true; saving.value = kind === 'save'; error.value = ''
   try {
     if (kind === 'activate') {
       await activateUserModelPolicies()
@@ -200,10 +204,18 @@ async function perform(kind: 'save' | 'reset' | 'activate', model?: string) {
       if (props.user?.id === id) {
         if (kind === 'reset' && policy.value) policy.value.windows = data.windows
         else accept(data)
+        if (kind === 'save') {
+          appStore.showSuccess(t(data.enabled ? 'admin.users.modelPolicy.saved' : 'admin.users.modelPolicy.draftSaved'))
+        }
       }
     }
     emit('success')
-  } catch (e: any) { if (props.user?.id === id) error.value = e?.message || t('admin.users.modelPolicy.failed') }
-  finally { busy.value = false }
+  } catch (e: any) {
+    if (props.user?.id === id) {
+      error.value = e?.message || t('admin.users.modelPolicy.failed')
+      appStore.showError(error.value)
+    }
+  }
+  finally { busy.value = false; saving.value = false }
 }
 </script>

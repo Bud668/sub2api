@@ -443,6 +443,7 @@ export default {
         selectionCount: '{selected} selected · {visible} available here', selectResults: 'Select search results', clearSelection: 'Clear selection',
         noMatchingModels: 'No matching unadded models. Change the search or check the rules below.',
         configureBatch: '2. Configure this batch', addedRules: 'Added rules ({count}/200)',
+        saved: 'Model usage rules saved and applied', draftSaved: 'Model rule draft saved; site-wide user rules are not enabled yet',
         selectModel: 'Search and select a model', unlistedModel: 'This saved model is not in the current catalog. Verify or select another; the existing rule is preserved.', noCandidates: 'No model candidates. Check group and upstream account configuration first.',
         activeHint: 'User model rules are active: unconfigured models are allowed. Group allowlists do not restrict admission; routing, subscriptions and billing are unchanged.',
         draftHint: 'Preparation mode: existing group permissions still apply. Save required restrictions before switching site-wide to user rules. Users without rules have no extra model restrictions.',
