@@ -400,6 +400,61 @@ func TestRelayUsageTerminalNonZeroReplacesFallbackAsWhole(t *testing.T) {
 	require.Equal(t, Usage{InputTokens: 3}, state.usage)
 }
 
+func TestPassthroughFirstTokenPerTurnAfterWarmup(t *testing.T) {
+	t.Parallel()
+
+	state := &relayState{}
+	base := time.Unix(1000, 0)
+	now := base
+	nowFn := func() time.Time { return now }
+	state.setPendingTurnStartedAt(now)
+	observeUpstreamMessage(state, []byte(`{"type":"response.created","response":{"id":"resp_warmup"}}`), base, nowFn, nil)
+	now = base.Add(100 * time.Millisecond)
+	warmup := observeUpstreamMessage(state, []byte(`{"type":"response.completed","response":{"id":"resp_warmup"}}`), base, nowFn, nil)
+	require.True(t, warmup.terminal)
+	require.Nil(t, warmup.firstToken, "no-output warmup must not invent a first token")
+	require.Nil(t, state.firstTokenMs)
+
+	turns := []struct {
+		id         string
+		tokenFrame string
+		ttft       time.Duration
+	}{
+		{"resp_first", `{"type":"response.output_text.delta","id":"evt_first","delta":"a"}`, 250 * time.Millisecond},
+		{"resp_second", `{"type":"response.output_text.delta","delta":"b"}`, 500 * time.Millisecond},
+		{"resp_tool", `{"type":"response.function_call_arguments.delta","delta":"{}"}`, 750 * time.Millisecond},
+		{"resp_explicit", `{"type":"response.output_text.delta","response_id":"resp_explicit","delta":"c"}`, 100 * time.Millisecond},
+	}
+	for i, turn := range turns {
+		started := base.Add(time.Duration(i+1) * 10 * time.Second)
+		now = started
+		state.setPendingTurnStartedAt(started)
+		observeUpstreamMessage(state, []byte(`{"type":"response.created","response":{"id":"`+turn.id+`"}}`), base, nowFn, nil)
+		observeUpstreamMessage(state, []byte(`{"type":"response.output_item.added"}`), base, nowFn, nil)
+		require.Nil(t, state.activeTurn.firstTokenMs, "structural events are not first-token events")
+
+		now = started.Add(turn.ttft)
+		observeUpstreamMessage(state, []byte(turn.tokenFrame), base, nowFn, nil)
+		now = now.Add(50 * time.Millisecond)
+		observeUpstreamMessage(state, []byte(turn.tokenFrame), base, nowFn, nil)
+		now = started.Add(time.Second)
+		completed := observeUpstreamMessage(state, []byte(`{"type":"response.completed","response":{"id":"`+turn.id+`","usage":{"input_tokens":2,"output_tokens":1}}}`), base, nowFn, nil)
+
+		var recorded RelayTurnResult
+		emitTurnComplete(func(result RelayTurnResult) { recorded = result }, state, completed)
+		require.NotNil(t, recorded.FirstTokenMs, "turn %s must retain ID-less token timing after the connection's first output", turn.id)
+		require.Equal(t, int(turn.ttft.Milliseconds()), *recorded.FirstTokenMs, "turn %s must use its own start and first output", turn.id)
+		require.Equal(t, turn.id, recorded.RequestID)
+		require.Equal(t, time.Second, recorded.Duration)
+		require.Equal(t, Usage{InputTokens: 2, OutputTokens: 1}, recorded.Usage)
+		require.Nil(t, state.activeTurn)
+		require.Empty(t, state.turnTimingByID)
+	}
+	require.NotNil(t, state.firstTokenMs)
+	require.Equal(t, 10250, *state.firstTokenMs, "connection-level timing remains the first output only")
+	require.Equal(t, Usage{InputTokens: 8, OutputTokens: 4}, state.usage)
+}
+
 func TestObserveUpstreamMessageBareErrorClearsTurnStateAndFinalizesUsageOnce(t *testing.T) {
 	t.Parallel()
 

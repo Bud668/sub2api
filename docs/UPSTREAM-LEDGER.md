@@ -14,6 +14,12 @@
 
 新增记录至少填写来源链接/完整提交、采用/暂缓/不适用、理由、依赖/迁移、对应自有提交和验证结果。未评估不是不适用。
 
+## 0.2.4-cyberaudit.3 WS 透传续轮首字修复
+
+修复 `passthrough` 在同一连接后续轮收到不带 response ID 的输出事件时，首字时间漏记的问题。每轮先按显式 response ID 或当前 active turn 定位，再独立记录第一次输出；连接级首字与逐轮计时分开，不用总耗时或零值填充缺失数据。
+
+保持既有首字事件集合及推理／工具输出计入规则，不统一或改变 ctx_pool、SSE 的统计口径；无依赖、配置、安全／额度或迁移改动。`TestPassthroughFirstTokenPerTurnAfterWarmup` 在旧实现第二轮失败，修复后覆盖无输出预热、连续无 ID 文本、工具参数、显式 ID、首字不被覆盖及用量不变，纳入现有受管构建的 Passthrough 竞态回归。
+
 ## 0.2.4-cyberaudit.2 WS 空闲保活修复
 
 在完整 v0.2.4 基线上修复共用 coder/websocket 上游适配器：连接建立后由唯一后台读取循环处理消息和 Ping/Pong/Close。ctx_pool 持有租约等待下一轮时、终态后的 rate_limits 等元数据暂未消费时仍响应心跳；ReadMessage/ReadFrame 共用同一有序队列，池与下一轮的既有空闲探测可以正常启用。
