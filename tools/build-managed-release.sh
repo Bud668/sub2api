@@ -92,33 +92,9 @@ fi
 (
     cd "$release_dir/source/frontend"
     pnpm install --frozen-lockfile
-    pnpm exec vitest run src/views/admin/__tests__/groupModelAllowlist.spec.ts \
-        src/views/admin/__tests__/groupModelAllowlistLayout.spec.ts \
-        src/views/admin/__tests__/GroupsView.codexManifest.spec.ts \
-        src/views/admin/__tests__/groupsReasoningEffort.spec.ts \
-		src/views/admin/__tests__/RiskControlView.spec.ts \
-		src/components/admin/group/__tests__/ReasoningEffortPolicyFields.spec.ts \
-        src/views/user/__tests__/UsageView.spec.ts
-    if [[ "$model_quota_release" == true ]]; then
-        pnpm exec vitest run src/api/__tests__/modelPolicy.spec.ts \
-            src/components/account/__tests__/ModelWhitelistSelector.spec.ts \
-            src/components/account/__tests__/CreateAccountModal.spec.ts \
-            src/components/account/__tests__/EditAccountModal.spec.ts \
-            src/components/account/__tests__/BulkEditAccountModal.spec.ts \
-            src/components/admin/user/__tests__/UserModelPolicyModal.spec.ts \
-            src/components/user/__tests__/UserModelQuotaStatus.spec.ts \
-            src/views/admin/__tests__/UsersView.spec.ts \
-            src/i18n/__tests__/localeKeyCompleteness.spec.ts \
-            src/i18n/__tests__/localesMessageCompile.spec.ts \
-            src/i18n/__tests__/localesNoKeyCollision.spec.ts
-    fi
+    # Full frontend suite includes the custom safety/quota dialogs and official additions.
     pnpm exec vitest run --maxWorkers=4 --minWorkers=1
     pnpm run build
-    if [[ "$dynamic_quota_release" == true ]]; then
-        pnpm exec vitest run src/components/admin/__tests__/DynamicQuotaDialog.spec.ts \
-            src/components/common/__tests__/DynamicQuotaCard.spec.ts \
-            src/views/admin/__tests__/SubscriptionsView.userUsageLink.spec.ts
-    fi
 )
 (
     cd "$release_dir/source/backend"
