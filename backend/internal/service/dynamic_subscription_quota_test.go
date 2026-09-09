@@ -167,8 +167,14 @@ func TestDynamicQuotaEstimateAndReserve(t *testing.T) {
 	if got := p.Available(o.FetchedAt, 220, 3); math.Abs(got-427) > 1e-8 {
 		t.Fatalf("unreported/in-flight costs not reserved: %v", got)
 	}
-	if p.Available(o.FetchedAt.Add(11*time.Minute), 220, 3) != 0 {
-		t.Fatal("stale quota increased availability")
+	if got := p.Available(o.FetchedAt.Add(11*time.Minute), 220, 3); math.Abs(got-427) > 1e-8 {
+		t.Fatalf("stale query must retain the trusted remaining budget: %v", got)
+	}
+	if got := p.Available(o.FetchedAt.Add(12*time.Minute), 320, 3); math.Abs(got-327) > 1e-8 {
+		t.Fatalf("later settlements must reduce the trusted budget: %v", got)
+	}
+	if p.Available(o.ResetAt, 320, 3) != 0 {
+		t.Fatal("an expired window cannot authorize a new cycle")
 	}
 	if p.Cycle != 1 || p.ConfirmedAt != nil {
 		t.Fatal("capacity estimate triggered reset")

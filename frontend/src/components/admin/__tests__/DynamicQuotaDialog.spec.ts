@@ -68,7 +68,7 @@ describe('dynamic quota settings', () => {
 
   const review = (): DynamicQuotaAdminStatus => {
     const result = initial()
-    result.policy = { ...result.policy, enabled: true, revision: 1, account_id: 4, status: 'quota_paused', growth_frozen: true,
+    result.policy = { ...result.policy, enabled: true, revision: 1, account_id: 4, status: 'active', growth_frozen: true,
       capacity_estimate_usd: 2000, capacity_approval_ready: true,
       capacity_review: { id: 'review-1', proposed_usd: 9000, observations: 3, last_observed_at: '', manual_required: true, anomaly_checks: 3 } }
     return result

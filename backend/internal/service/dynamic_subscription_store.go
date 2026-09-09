@@ -262,7 +262,7 @@ func loadDynamicSubscription(ctx context.Context, db dynamicQuotaQuerier, subscr
 		q.StartedAt = nativeStart.Time
 	}
 	q.CapacityEstimateUSD, q.SampleCount = q.pool.CapacityUSD, len(q.pool.Samples)
-	q.GrowthFrozen, q.CapacityReview = q.pool.growthFrozen(), q.pool.CapacityReview
+	q.GrowthFrozen, q.CapacityReview = q.pool.growthFrozen(now), q.pool.CapacityReview
 	q.CapacityApprovalReady = q.CapacityReview != nil && q.CapacityReview.ManualRequired &&
 		q.CapacityReview.Observations >= dynamicQuotaGuardChecks && q.pool.Health.Failures == 0 &&
 		q.pool.Snapshot != nil && q.pool.Snapshot.Valid(now) && (q.pool.Status == "active" || q.pool.Status == "learning")
@@ -270,7 +270,7 @@ func loadDynamicSubscription(ctx context.Context, db dynamicQuotaQuerier, subscr
 		q.SyncedAt = &q.pool.Snapshot.FetchedAt
 		t := q.pool.Snapshot.ResetAt
 		q.ExpectedResetAt = &t
-		if !q.pool.Snapshot.Valid(now) {
+		if !q.pool.trustedSnapshot(now) {
 			q.Status = "quota_unavailable"
 		} else if q.pool.Snapshot.UsedPercent >= q.pool.stopPercent() && (q.Status == "active" || q.Status == "learning") {
 			q.Status = "upstream_reserve"
@@ -542,16 +542,16 @@ func (s *DynamicSubscriptionService) reallocate(ctx context.Context, tx *sql.Tx,
 	remaining := p.Available(now, total, held)
 	// Without a capacity sample, existing explicit manual ceilings are a
 	// bootstrap only, never presented as a measured upstream capacity.
-	if p.CapacityUSD <= 0 && p.Status == "learning" && p.Snapshot != nil && p.Snapshot.Valid(now) && p.Snapshot.UsedPercent < p.stopPercent() {
+	if p.CapacityUSD <= 0 && p.Status == "learning" && p.trustedSnapshot(now) && p.Snapshot.UsedPercent < p.stopPercent() {
 		remaining = math.Max(0, bootstrap-held)
 	}
-	force := p.LastAllocationAt.IsZero() && !p.growthFrozen()
-	allowIncrease := !p.growthFrozen() && (force || now.Sub(p.LastAllocationAt) >= 30*time.Minute)
+	force := p.LastAllocationAt.IsZero() && !p.growthFrozen(now)
+	allowIncrease := !p.growthFrozen(now) && (force || now.Sub(p.LastAllocationAt) >= 30*time.Minute)
 	allocations := allocateDynamicQuota(members, remaining)
 	for _, m := range members {
 		a := allowances[m.ID]
 		allocation := allocations[m.ID]
-		if p.growthFrozen() {
+		if p.growthFrozen(now) {
 			allocation = math.Min(allocation, math.Max(m.Used, a.allocated))
 		}
 		applied := dynamicQuotaAppliedLimit(a.applied, a.used+math.Max(0, allocation-m.Used)*a.rate, a.threshold, allowIncrease, force)
@@ -687,6 +687,10 @@ func dynamicQuotaGuardSignal(p *DynamicQuotaPoolState, now time.Time) string {
 	}
 	if status := p.accessStatus(now); status != "active" && status != "learning" {
 		return "paused"
+	}
+	if !p.Snapshot.Valid(now) || p.Health.Failures >= dynamicQuotaGuardChecks ||
+		(p.CapacityReview != nil && p.CapacityReview.AnomalyChecks >= dynamicQuotaGuardChecks) {
+		return "frozen"
 	}
 	if p.CapacityReview != nil && p.CapacityReview.ManualRequired {
 		return "review"

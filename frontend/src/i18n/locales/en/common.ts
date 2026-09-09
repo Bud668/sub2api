@@ -5,13 +5,13 @@ export default {
     source: 'Bound quota source', chooseSource: 'Choose an upstream account', sourceUnavailable: 'Not currently an eligible source',
     poolRequests: 'Source requests: pending / unknown outcome',
     capacityReviewTitle: 'Upstream capacity needs administrator approval', trustedCapacity: 'Last trusted capacity (0 = unconfirmed)', proposedCapacity: 'Proposed capacity estimate',
-    capacityReviewHint: 'The first capacity estimate and growth above 20% require approval after at least 3 independent queries. Persistent anomalies pause new requests on this source. This is an estimate in standard billing units, not an upstream guarantee.',
+    capacityReviewHint: 'The first capacity estimate and growth above 20% require approval after at least 3 independent queries. Anomalies freeze increases; requests within the trusted remaining budget can continue. This is an estimate in standard billing units, not an upstream guarantee.',
     capacityWaiting: 'Observations are not stable, queries have not recovered, or confirmation expired. Refresh later.',
     capacityAcknowledge: 'I verified this capacity change and approve its use for every opted-in subscription on this source. Existing usage will not be cleared.',
     capacityUnsaved: 'Save or undo the configuration edits above before approving capacity.',
     refreshStatus: 'Refresh review status', approveCapacity: 'Approve and apply this capacity',
     capacityApproved: 'Capacity approved and allocations recalculated. Existing usage and cycles are unchanged.',
-    growthFrozen: 'Allowance increases are frozen and existing usage is retained. Persistent anomalies pause requests until data recovers or an administrator approves.',
+    growthFrozen: 'Allowance increases are frozen. Requests can use the trusted budget in this cycle; settled usage and in-flight reservations still count.',
     noSources: 'No directly authorized OpenAI OAuth source in this group. Cross-group binding is not allowed.',
     bindingHint: 'The saved source is fixed. Changing it requires a separate migration; toggling cannot change the source or refill quota.',
     weight: 'Allocation weight (1 = one share)', cap: 'Personal cycle ceiling (USD)',
@@ -28,7 +28,7 @@ export default {
     pending: 'In-flight or unresolved charges prevent this change. Wait for settlement; unknown outcomes need operator reconciliation and are never automatically refunded.',
     bindingError: 'Source and group do not match, or an existing binding was changed. Check account membership.',
     unavailable: 'Fresh, identity-matched weekly quota data is unavailable. The change was not enabled. Check the source and retry.',
-    statuses: { active: 'Synchronized', learning: 'Learning capacity', confirming: 'Confirming reset', settling: 'Waiting for settlement', reset_unconfirmed: 'Reset needs review', identity_changed: 'Identity needs review', quota_unavailable: 'Waiting for quota data', quota_paused: 'Quota anomaly: requests paused', invalid_billing_rate: 'Review billing rate', upstream_reserve: 'Safety reserve reached', disabled: 'Disabled' }
+    statuses: { active: 'Synchronized', learning: 'Learning capacity', confirming: 'Confirming reset', settling: 'Waiting for settlement', reset_unconfirmed: 'Reset needs review', identity_changed: 'Identity needs review', quota_unavailable: 'Waiting for quota data', growth_frozen: 'Increases frozen; remaining budget usable', invalid_billing_rate: 'Review billing rate', upstream_reserve: 'Safety reserve reached', disabled: 'Disabled' }
   },
   common: {
     loading: 'Loading...',

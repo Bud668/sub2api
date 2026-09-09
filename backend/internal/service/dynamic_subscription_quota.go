@@ -63,19 +63,21 @@ type DynamicQuotaPoolState struct {
 	GuardSignal      string                      `json:"guard_signal,omitempty"`
 }
 
-func (p *DynamicQuotaPoolState) growthFrozen() bool {
-	return p.CapacityReview != nil || p.Health.Failures > 0
+func (p *DynamicQuotaPoolState) growthFrozen(now time.Time) bool {
+	return p.CapacityReview != nil || p.Health.Failures > 0 || p.Snapshot == nil || !p.Snapshot.Valid(now)
+}
+
+// A delayed quota query may spend the last verified budget in the same window.
+// Freshness is still required for growth/approval; identity and reset conflicts
+// still block admission. Available deducts all later settlements and holds.
+func (p *DynamicQuotaPoolState) trustedSnapshot(now time.Time) bool {
+	return p.Snapshot != nil && p.Snapshot.Valid(p.Snapshot.FetchedAt) &&
+		!p.Snapshot.FetchedAt.After(now.Add(5*time.Second)) && now.Before(p.Snapshot.ResetAt)
 }
 
 func (p *DynamicQuotaPoolState) accessStatus(now time.Time) string {
-	if p.Snapshot == nil || !p.Snapshot.Valid(now) {
+	if !p.trustedSnapshot(now) {
 		return "quota_unavailable"
-	}
-	if p.Status != "active" && p.Status != "learning" {
-		return p.Status
-	}
-	if p.Health.Failures >= dynamicQuotaGuardChecks || (p.CapacityReview != nil && p.CapacityReview.AnomalyChecks >= dynamicQuotaGuardChecks) {
-		return "quota_paused"
 	}
 	return p.Status
 }
