@@ -112,7 +112,7 @@ fi
             src/i18n/__tests__/localesMessageCompile.spec.ts \
             src/i18n/__tests__/localesNoKeyCollision.spec.ts
     fi
-    pnpm exec vitest run --changed "$(git rev-parse 'v0.2.3^{commit}')"
+    pnpm exec vitest run --maxWorkers=4 --minWorkers=1
     pnpm run build
     if [[ "$dynamic_quota_release" == true ]]; then
         pnpm exec vitest run src/components/admin/__tests__/DynamicQuotaDialog.spec.ts \

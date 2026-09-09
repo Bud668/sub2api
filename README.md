@@ -1,6 +1,6 @@
 # Sub2API · Bud maintained fork
 
-This is the independently maintained **Bud668/sub2api** source fork, not an official Wei-Shaw release. It starts from upstream **v0.2.3**, retains the upstream history and LGPLv3 license, and adds user model quotas, security-audit controls and usability fixes.
+This is the independently maintained **Bud668/sub2api** source fork, not an official Wei-Shaw release. Its current upstream baseline is **v0.2.4**, retaining the upstream history and LGPLv3 license, with user model quotas, security-audit controls and usability fixes.
 
 [修改版说明 / Features, privacy and build instructions](docs/CUSTOM-FORK.md) · [Maintenance policy](docs/UPSTREAM-INTEGRATION.md) · [Upstream intake ledger](docs/UPSTREAM-LEDGER.md) · [Releases](https://github.com/Bud668/sub2api/releases)
 

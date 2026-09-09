@@ -1,6 +1,6 @@
 # Sub2API · Bud 维护版
 
-这是 **Bud668/sub2api 独立维护的修改版**，不是 Wei-Shaw 官方发行版。当前官方基线为 **v0.2.3**，保留上游历史、署名与 LGPLv3 许可证。
+这是 **Bud668/sub2api 独立维护的修改版**，不是 Wei-Shaw 官方发行版。当前官方基线为 **v0.2.4**，保留上游历史、署名与 LGPLv3 许可证。
 
 [修改版功能、隐私与构建说明](docs/CUSTOM-FORK.md) · [维护规范](docs/UPSTREAM-INTEGRATION.md) · [官方更新接入台账](docs/UPSTREAM-LEDGER.md) · [版本下载](https://github.com/Bud668/sub2api/releases)
 
