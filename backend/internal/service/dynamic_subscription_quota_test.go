@@ -172,7 +172,7 @@ func TestDynamicQuotaEstimateAndReserve(t *testing.T) {
 	}
 }
 
-func TestDynamicQuotaIncreaseThresholdAndPreciseDecrease(t *testing.T) {
+func TestDynamicQuotaAsymmetricAdjustmentThresholds(t *testing.T) {
 	for _, threshold := range []float64{5, 10} {
 		applied := 100.03
 		for _, delta := range []float64{0.1, 1, threshold - 0.01, threshold} {
@@ -185,9 +185,15 @@ func TestDynamicQuotaIncreaseThresholdAndPreciseDecrease(t *testing.T) {
 			}
 		}
 		for _, delta := range []float64{0.00000001, 0.1, 1, 4.99} {
-			if got := dynamicQuotaAppliedLimit(applied, applied-delta, threshold, false, false); math.Abs(got-(applied-delta)) > 1e-8 {
-				t.Fatal("precise decrease waited for an increase threshold or timer")
+			if got := dynamicQuotaAppliedLimit(applied, applied-delta, threshold, false, false); got != applied {
+				t.Fatal("small decrease moved the applied anchor before accumulating to $5")
 			}
+		}
+		if got := dynamicQuotaAppliedLimit(applied, applied-5, threshold, false, false); got != applied-5 {
+			t.Fatal("cumulative $5 decrease waited for the increase timer")
+		}
+		if got := dynamicQuotaAppliedLimit(applied, applied-0.1, threshold, false, true); math.Abs(got-(applied-0.1)) > 1e-8 {
+			t.Fatal("manual allocation change or reset was held by the display threshold")
 		}
 		if dynamicQuotaAppliedLimit(applied, applied+20, threshold, false, false) != applied {
 			t.Fatal("routine increase bypassed the allocation timer")

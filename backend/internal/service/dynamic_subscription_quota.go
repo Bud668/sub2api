@@ -160,11 +160,13 @@ func (p *DynamicQuotaPoolState) Available(now time.Time, settledTotal, holds flo
 	return math.Max(0, remaining-math.Max(0, settledTotal-p.Snapshot.LocalStandardTotal)-holds)
 }
 
-// Only increases wait for the threshold and periodic allocation window. Compare
-// with the last applied allowance, not the last estimate; decreases are exact.
+// Compare with the last applied allowance, not the last estimate. Increases
+// wait for their threshold and periodic window; decreases accumulate to $5.
+// Physical-cost admission remains independent of this published dollar limit.
 func dynamicQuotaAppliedLimit(applied, candidate, threshold float64, allowIncrease, force bool) float64 {
 	candidate = QuantizeUsageBillingAmount(candidate)
-	if candidate <= applied || force || (allowIncrease && QuantizeUsageBillingAmount(candidate-applied) >= threshold) {
+	delta := QuantizeUsageBillingAmount(candidate - applied)
+	if force || delta <= -5 || (allowIncrease && delta >= threshold) {
 		return candidate
 	}
 	return applied

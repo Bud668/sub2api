@@ -8,7 +8,7 @@ export default {
     bindingHint: 'The saved source is fixed. Changing it requires a separate migration; toggling cannot change the source or refill quota.',
     weight: 'Allocation weight (1 = one share)', cap: 'Personal cycle ceiling (USD)',
     increaseThreshold: 'Minimum automatic increase (USD)',
-    thresholdHint: 'Default $10, optionally $5. Compare cumulatively with the last applied allowance; routine increases are checked every 30 minutes. Decreases apply precisely on every sync. Initial grants, confirmed resets and manual allocation changes apply immediately.',
+    thresholdHint: 'Increases: default $10, optionally $5. Decreases: $5. Compare cumulatively with the last applied allowance; increases are checked every 30 minutes, decreases on every sync. Safety guards do not wait for display thresholds. Initial grants, confirmed resets and manual allocation changes apply immediately.',
     poolProtection: 'Shared upstream quota protection', usageCeiling: 'Maximum upstream weekly usage (%)',
     protectionHint: 'Applies to all subscriptions bound to this source, never other sources. Target reserve: {reserve}%, plus 1 percentage point for uncertainty; reported usage of {stop}% stops new requests. In-flight and external consumption may overshoot estimates. Changing this setting never resets usage.',
     allocationHint: 'Weighted base shares plus bounded surplus for subscriptions approaching their share. The ceiling is not guaranteed capacity. Estimates include uncertainty and in-flight reserves. Without samples, learning uses personal ceilings; exact utilization is not guaranteed.',
