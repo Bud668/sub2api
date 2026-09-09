@@ -2,11 +2,8 @@
   <div>
     <!-- Multi-select Dropdown -->
     <div class="relative mb-3">
-      <div
-        @click="toggleDropdown"
-        class="cursor-pointer rounded-lg border border-gray-300 bg-white px-3 py-2 dark:border-dark-500 dark:bg-dark-700"
-      >
-        <div class="grid grid-cols-2 gap-1.5">
+      <div class="rounded-lg border border-gray-300 bg-white px-3 py-2 dark:border-dark-500 dark:bg-dark-700">
+        <div data-testid="selected-models" class="grid grid-cols-2 content-start gap-1.5 overflow-auto" :class="models ? 'h-32' : 'max-h-40'">
           <span
             v-for="model in modelValue"
             :key="model"
@@ -18,6 +15,7 @@
             </span>
             <button
               type="button"
+              :aria-label="`${t('common.delete')} ${model}`"
               @click.stop="removeModel(model)"
               class="shrink-0 rounded-full hover:bg-gray-200 dark:hover:bg-dark-500"
             >
@@ -25,12 +23,12 @@
             </button>
           </span>
         </div>
-        <div class="mt-2 flex items-center justify-between border-t border-gray-200 pt-2 dark:border-dark-600">
+        <button type="button" data-testid="toggle-model-dropdown" :aria-label="t('admin.accounts.searchModels')" :aria-expanded="showDropdown" @click="toggleDropdown" class="mt-2 flex w-full items-center justify-between border-t border-gray-200 pt-2 dark:border-dark-600">
           <span class="text-xs text-gray-400">{{ t('admin.accounts.modelCount', { count: modelValue.length }) }}</span>
           <svg class="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
           </svg>
-        </div>
+        </button>
       </div>
       <!-- Dropdown List -->
       <div
@@ -43,8 +41,12 @@
             type="text"
             class="input w-full text-sm"
             :placeholder="t('admin.accounts.searchModels')"
+            :aria-label="t('admin.accounts.searchModels')"
             @click.stop
           />
+          <button v-if="models" type="button" data-testid="select-visible-models" @click="fillRelated" class="mt-2 rounded px-2 py-1 text-sm text-primary-600 hover:bg-primary-50 dark:text-primary-400 dark:hover:bg-primary-900/30">
+            {{ t('common.selectAll') }}
+          </button>
         </div>
         <div class="max-h-52 overflow-auto">
           <div
@@ -56,6 +58,7 @@
             <button
               type="button"
               data-testid="select-model"
+              :aria-pressed="modelValue.includes(model.value)"
               class="flex min-w-0 flex-1 items-center gap-2 px-3 py-2 text-left text-sm"
               @click="toggleModel(model.value)"
             >
@@ -95,6 +98,7 @@
     <!-- Quick Actions -->
     <div class="mb-4 flex flex-wrap gap-2">
       <button
+        v-if="!models"
         type="button"
         @click="fillRelated"
         class="rounded-lg border border-blue-200 px-3 py-1.5 text-sm text-blue-600 hover:bg-blue-50 dark:border-blue-800 dark:text-blue-400 dark:hover:bg-blue-900/30"
@@ -120,7 +124,7 @@
     </div>
 
     <!-- Custom Model Input -->
-    <div class="mb-3">
+    <div v-if="allowCustom" class="mb-3">
       <label class="mb-1.5 block text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('admin.accounts.customModelName') }}</label>
       <div class="flex gap-2">
         <input
@@ -157,8 +161,10 @@ import { allModels, getModelsByPlatform } from '@/composables/useModelWhitelist'
 
 const { t } = useI18n()
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   modelValue: string[]
+  models?: string[]
+  allowCustom?: boolean
   platform?: string
   platforms?: string[]
   accountId?: number
@@ -168,7 +174,7 @@ const props = defineProps<{
     base_url?: string
     api_key: string
   }
-}>()
+}>(), { allowCustom: true })
 
 const emit = defineEmits<{
   'update:modelValue': [value: string[]]
@@ -222,6 +228,7 @@ const canSyncUpstream = computed(() => {
 })
 
 const availableOptions = computed(() => {
+  if (props.models) return props.models.map(model => ({ value: model, label: model }))
   if (normalizedPlatforms.value.length === 0) {
     return allModels
   }
@@ -266,6 +273,7 @@ const copyModelId = async (model: string) => {
 }
 
 const addCustom = () => {
+  if (!props.allowCustom) return
   const model = customModel.value.trim()
   if (!model) return
   if (props.modelValue.includes(model)) {
@@ -281,6 +289,10 @@ const handleEnter = () => {
 }
 
 const fillRelated = () => {
+  if (props.models) {
+    emit('update:modelValue', [...new Set([...props.modelValue, ...filteredModels.value.map(model => model.value)])])
+    return
+  }
   const newModels = [...props.modelValue]
   for (const platform of normalizedPlatforms.value) {
     for (const model of getModelsByPlatform(platform)) {

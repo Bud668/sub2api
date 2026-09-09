@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/requestmodel"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -29,9 +30,36 @@ import (
 //     `model`/`session.model` 或 multipart `model`/`session` 后回填请求体。
 //   - 拒绝：按入口协议格式返回 404，并标记运维业务限流原因
 //     local_model_configuration 与 ingress 拒绝原因 model_not_allowed。
-func GroupModelAllowlist() gin.HandlerFunc {
+func GroupModelAllowlist(keyServices ...*service.APIKeyService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		apiKey, ok := GetAPIKeyFromContext(c)
+		var policies *service.UserModelPolicyService
+		if len(keyServices) > 0 && keyServices[0] != nil {
+			policies = keyServices[0].ModelPolicies
+		}
+		if ok && apiKey != nil && policies != nil {
+			p, err := policies.Load(c.Request.Context(), apiKey.UserID)
+			if err != nil {
+				writeUserModelPolicyError(c, err)
+				return
+			}
+			if p.Enabled {
+				if apiKey.Group == nil {
+					writeUserModelPolicyError(c, infraerrors.Forbidden("USER_MODEL_GROUP_REQUIRED", "A group-bound API key is required under user model permissions"))
+					return
+				}
+				// Auth cache objects are shared. Never change their group in place.
+				keyCopy := *apiKey
+				if apiKey.Group != nil {
+					groupCopy := *apiKey.Group
+					groupCopy.ModelAllowlist = p.Allowlist()
+					keyCopy.Group = &groupCopy
+					setGroupContext(c, keyCopy.Group)
+				}
+				apiKey = &keyCopy
+				c.Set(string(ContextKeyAPIKey), apiKey)
+			}
+		}
 		if !ok || apiKey == nil || apiKey.Group == nil || !apiKey.Group.ModelAllowlistEnabled() {
 			c.Next()
 			return
@@ -78,13 +106,23 @@ func GroupModelAllowlist() gin.HandlerFunc {
 			}
 		}
 		if blocked == "" {
+			if allowlist.UserPolicy != nil {
+				if !runUserModelRequestQuota(c, policies, apiKey, models) {
+					return
+				}
+				return
+			}
 			c.Next()
 			return
 		}
 
 		service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalModelConfiguration)
 		MarkIngressRejected(c, IngressRejectModelNotAllowed)
-		groupModelAllowlistErrorWriter(c)(c, http.StatusNotFound, fmt.Sprintf("Model %q is not available for this group", blocked))
+		message := fmt.Sprintf("Model %q is not available for this group", blocked)
+		if allowlist.UserPolicy != nil {
+			message = fmt.Sprintf("Model %q is not authorized for this user", blocked)
+		}
+		groupModelAllowlistErrorWriter(c)(c, http.StatusNotFound, message)
 		c.Abort()
 	}
 }

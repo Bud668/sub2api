@@ -774,10 +774,11 @@
                 {{ t("admin.groups.modelAllowlist.hint") }}
               </p>
             </div>
-            <Toggle v-model="createModelAllowlistState.enabled" />
+            <Toggle v-if="!userModelPolicyEnabled" v-model="createModelAllowlistState.enabled" />
           </div>
+          <p v-if="userModelPolicyEnabled" class="text-sm text-blue-600">{{ t('admin.users.modelPolicy.activeHint') }}</p>
           <div
-            v-if="createModelAllowlistState.enabled"
+            v-if="createModelAllowlistState.enabled && !userModelPolicyEnabled"
             class="overflow-hidden rounded-lg border border-gray-200 bg-gray-50/50 dark:border-dark-600 dark:bg-dark-800/40"
           >
             <div
@@ -2414,10 +2415,11 @@
                 {{ t("admin.groups.modelAllowlist.hint") }}
               </p>
             </div>
-            <Toggle v-model="editModelAllowlistState.enabled" />
+            <Toggle v-if="!userModelPolicyEnabled" v-model="editModelAllowlistState.enabled" />
           </div>
+          <p v-if="userModelPolicyEnabled" class="text-sm text-blue-600">{{ t('admin.users.modelPolicy.activeHint') }}</p>
           <div
-            v-if="editModelAllowlistState.enabled"
+            v-if="editModelAllowlistState.enabled && !userModelPolicyEnabled"
             class="overflow-hidden rounded-lg border border-gray-200 bg-gray-50/50 dark:border-dark-600 dark:bg-dark-800/40"
           >
             <div
@@ -4263,6 +4265,7 @@ import { useAppStore } from "@/stores/app";
 import { useAuthStore } from "@/stores/auth";
 import { useOnboardingStore } from "@/stores/onboarding";
 import { adminAPI } from "@/api/admin";
+import { getMyModelPolicy } from "@/api/modelPolicy";
 import type {
   AdminGroup,
   CodexModelsManifestConfig,
@@ -4863,6 +4866,7 @@ const editMessagesDispatchDefaults = createDefaultMessagesDispatchFormState();
 const createModelAllowlistState = reactive(createInitialModelAllowlistState());
 const editModelAllowlistState = reactive(createInitialModelAllowlistState());
 const createModelAllowlistLoading = ref(false);
+const userModelPolicyEnabled = ref(false);
 const editModelAllowlistLoading = ref(false);
 type ReasoningEffortPolicyFieldsExpose = {
   validate: () => boolean;
@@ -6836,6 +6840,7 @@ const saveSortOrder = async () => {
 };
 
 onMounted(() => {
+  void getMyModelPolicy().then(p => { userModelPolicyEnabled.value = p.enabled }).catch(() => { /* gateway remains authoritative */ });
   loadGroups();
   if (!authStore.isSimpleMode) {
     void loadLiveCapability();

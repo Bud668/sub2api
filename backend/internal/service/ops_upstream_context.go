@@ -45,6 +45,8 @@ const (
 	OpsStreamErrorKey  = "ops_stream_error"
 	OpsStreamErrorsKey = "ops_stream_errors"
 	OpsStreamTurnKey   = "ops_stream_turn"
+	// Typed, local quota rejection metadata only; never a request/response body.
+	OpsUserModelQuotaErrorKey = "ops_user_model_quota_error"
 
 	// Client-side configuration denials should remain visible in ops_error_logs,
 	// but should be excluded from SLA/error-rate calculations.

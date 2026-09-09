@@ -50,6 +50,62 @@ func TestAPIKeyAuthRejectsOversizedCredentialsBeforeLookup(t *testing.T) {
 	require.Zero(t, calls.Load())
 }
 
+func TestAPIKeyAuthCyberSuspensionRejectsEveryKeyAndFailurePausesForwarding(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	userStatus := service.StatusActive
+	keys := map[string]int64{"cyber-key-1": 101, "cyber-key-2": 102}
+	repo := &stubApiKeyRepo{
+		getByKey: func(_ context.Context, key string) (*service.APIKey, error) {
+			id, ok := keys[key]
+			if !ok {
+				return nil, service.ErrAPIKeyNotFound
+			}
+			user := &service.User{ID: 17, Role: service.RoleUser, Status: userStatus, Balance: 1, Concurrency: 1}
+			return &service.APIKey{ID: id, UserID: user.ID, Key: key, Status: service.StatusActive, User: user}, nil
+		},
+		listKeysByUserID: func(_ context.Context, userID int64) ([]string, error) {
+			require.Equal(t, int64(17), userID)
+			return []string{"cyber-key-1", "cyber-key-2"}, nil
+		},
+	}
+	cfg := &config.Config{RunMode: config.RunModeSimple, APIKeyAuth: config.APIKeyAuthCacheConfig{L1Size: 100, L1TTLSeconds: 60}}
+	svc := service.NewAPIKeyService(repo, nil, nil, nil, nil, nil, cfg)
+	router := newAuthTestRouter(svc, nil, cfg)
+	request := func(key string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/t", nil)
+		req.Header.Set("x-api-key", key)
+		router.ServeHTTP(w, req)
+		return w
+	}
+
+	for key := range keys {
+		require.Equal(t, http.StatusOK, request(key).Code)
+	}
+	userStatus = service.StatusDisabled
+	svc.InvalidateAuthCacheByUserID(context.Background(), 17)
+	for key := range keys {
+		w := request(key)
+		require.Equal(t, http.StatusUnauthorized, w.Code)
+		requireAPIKeyAuthError(t, w, "USER_INACTIVE", "User account is not active")
+	}
+
+	svc.PauseAfterCyberUserBanFailure()
+	w := request("cyber-key-1")
+	require.Equal(t, http.StatusServiceUnavailable, w.Code)
+	requireAPIKeyAuthError(t, w, "CYBER_USER_BAN_UNAVAILABLE", "Safety suspension unavailable; API forwarding is paused")
+
+	googleRouter := gin.New()
+	googleRouter.Use(APIKeyAuthGoogle(svc, cfg))
+	googleRouter.GET("/v1beta/models", func(c *gin.Context) { c.Status(http.StatusOK) })
+	w = httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1beta/models", nil)
+	req.Header.Set("x-goog-api-key", "cyber-key-1")
+	googleRouter.ServeHTTP(w, req)
+	require.Equal(t, http.StatusServiceUnavailable, w.Code)
+	require.Contains(t, w.Body.String(), "Safety suspension unavailable; API forwarding is paused")
+}
+
 func TestSimpleModeBypassesQuotaCheck(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -1523,8 +1579,9 @@ func requireAPIKeyAuthError(t *testing.T, w *httptest.ResponseRecorder, code, me
 }
 
 type stubApiKeyRepo struct {
-	getByKey       func(ctx context.Context, key string) (*service.APIKey, error)
-	updateLastUsed func(ctx context.Context, id int64, usedAt time.Time) error
+	getByKey         func(ctx context.Context, key string) (*service.APIKey, error)
+	listKeysByUserID func(ctx context.Context, userID int64) ([]string, error)
+	updateLastUsed   func(ctx context.Context, id int64, usedAt time.Time) error
 }
 
 func (r *stubApiKeyRepo) Create(ctx context.Context, key *service.APIKey) error {
@@ -1599,6 +1656,9 @@ func (r *stubApiKeyRepo) CountByGroupID(ctx context.Context, groupID int64) (int
 }
 
 func (r *stubApiKeyRepo) ListKeysByUserID(ctx context.Context, userID int64) ([]string, error) {
+	if r.listKeysByUserID != nil {
+		return r.listKeysByUserID(ctx, userID)
+	}
 	return nil, errors.New("not implemented")
 }
 

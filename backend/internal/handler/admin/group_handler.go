@@ -627,6 +627,21 @@ func (h *GroupHandler) GetGroupModelAllowlistCandidates(c *gin.Context) {
 		return
 	}
 
+	if c.Query("user_model_policy") == "true" {
+		// Reuse the admission normalizer so batch selection cannot create two
+		// rules for aliases sharing the same quota bucket. Group callers keep
+		// their original catalog unless they explicitly request this view.
+		canonical := make([]string, 0, len(models))
+		seen := make(map[string]bool, len(models))
+		for _, model := range models {
+			model = service.CanonicalUserModel(model)
+			if model != "" && !seen[model] {
+				canonical = append(canonical, model)
+				seen[model] = true
+			}
+		}
+		models = canonical
+	}
 	response.Success(c, gin.H{"models": models})
 }
 

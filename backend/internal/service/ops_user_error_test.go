@@ -13,6 +13,7 @@ func TestMapUserErrorCategory(t *testing.T) {
 	}{
 		{"auth", "authentication_error", "auth"},
 		{"request", "rate_limit_error", "rate_limit"},
+		{"request", "model_request_quota_exceeded", "rate_limit"},
 		{"request", "billing_error", "quota"},
 		{"request", "subscription_error", "quota"},
 		{"request", "invalid_request_error", "invalid_request"},
@@ -32,7 +33,7 @@ func TestMapUserErrorCategory(t *testing.T) {
 
 func TestCategoryToFilter(t *testing.T) {
 	phases, types := CategoryToFilter("rate_limit")
-	if len(types) != 1 || types[0] != "rate_limit_error" || len(phases) != 0 {
+	if len(types) != 2 || types[0] != "rate_limit_error" || types[1] != "model_request_quota_exceeded" || len(phases) != 0 {
 		t.Fatalf("rate_limit => phases=%v types=%v", phases, types)
 	}
 	phases, types = CategoryToFilter("auth")

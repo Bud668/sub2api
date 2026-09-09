@@ -50,7 +50,7 @@ func MapUserErrorCategory(phase, errType string) string {
 		return "internal"
 	case "request":
 		switch errType {
-		case "rate_limit_error":
+		case "rate_limit_error", "model_request_quota_exceeded":
 			return "rate_limit"
 		case "billing_error", "subscription_error":
 			return "quota"
@@ -77,7 +77,7 @@ func CategoryToFilter(category string) (phases []string, errorTypes []string) {
 	case "internal":
 		return []string{"internal"}, nil
 	case "rate_limit":
-		return nil, []string{"rate_limit_error"}
+		return nil, []string{"rate_limit_error", "model_request_quota_exceeded"}
 	case "quota":
 		return nil, []string{"billing_error", "subscription_error"}
 	case "invalid_request":

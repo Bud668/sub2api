@@ -159,6 +159,7 @@ func (h *ContentModerationHandler) GetStatus(c *gin.Context) {
 }
 
 func (h *ContentModerationHandler) ListLogs(c *gin.Context) {
+	c.Header("Cache-Control", "private, no-store")
 	page, pageSize := response.ParsePagination(c)
 	filter := service.ContentModerationLogFilter{
 		Pagination: pagination.PaginationParams{

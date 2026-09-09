@@ -143,6 +143,7 @@ type cachedCodexRestrictionPolicy struct {
 type cachedCyberSessionBlockRuntime struct {
 	enabled   bool
 	ttl       time.Duration
+	err       error
 	expiresAt int64 // unix nano
 }
 
@@ -160,10 +161,10 @@ const openAIQuotaAutoPauseSettingsRefreshKey = "openai_quota_auto_pause_settings
 // 供网关热路径读取时避免 DB 往返。
 // 两个 setting key 在单次 singleflight 里一起读取，减少 DB 往返。
 // 默认值：开关 false，TTL 1h（与粘性会话对齐）。
-func (s *SettingService) GetCyberSessionBlockRuntime(ctx context.Context) (bool, time.Duration) {
+func (s *SettingService) GetCyberSessionBlockRuntime(ctx context.Context) (bool, time.Duration, error) {
 	if cached, ok := s.cyberSessionBlockRuntimeCache.Load().(*cachedCyberSessionBlockRuntime); ok && cached != nil {
 		if time.Now().UnixNano() < cached.expiresAt {
-			return cached.enabled, cached.ttl
+			return cached.enabled, cached.ttl, cached.err
 		}
 	}
 	result, _, _ := s.cyberSessionBlockRuntimeSF.Do("cyber_session_block_runtime", func() (any, error) {
@@ -178,10 +179,16 @@ func (s *SettingService) GetCyberSessionBlockRuntime(ctx context.Context) (bool,
 		enabledVal, enabledErr := s.settingRepo.GetValue(dbCtx, SettingKeyCyberSessionBlockEnabled)
 		ttlVal, ttlErr := s.settingRepo.GetValue(dbCtx, SettingKeyCyberSessionBlockTTLSeconds)
 
-		if enabledErr != nil && !errors.Is(enabledErr, ErrSettingNotFound) {
-			slog.Warn("failed to get cyber_session_block_enabled setting", "error", enabledErr)
+		if errors.Is(enabledErr, ErrSettingNotFound) {
+			enabledErr = nil
+		}
+		if errors.Is(ttlErr, ErrSettingNotFound) {
+			ttlErr = nil
+		}
+		if err := errors.Join(enabledErr, ttlErr); err != nil {
+			slog.Warn("failed to get cyber session block settings", "error", err)
 			entry := &cachedCyberSessionBlockRuntime{
-				enabled:   false,
+				err:       err,
 				ttl:       time.Hour,
 				expiresAt: time.Now().Add(cyberSessionBlockRuntimeErrorTTL).UnixNano(),
 			}
@@ -207,9 +214,9 @@ func (s *SettingService) GetCyberSessionBlockRuntime(ctx context.Context) (bool,
 		return entry, nil
 	})
 	if entry, ok := result.(*cachedCyberSessionBlockRuntime); ok && entry != nil {
-		return entry.enabled, entry.ttl
+		return entry.enabled, entry.ttl, entry.err
 	}
-	return false, time.Hour
+	return false, time.Hour, errors.New("cyber session block settings unavailable")
 }
 
 // GetAntigravityUserAgentVersion 返回 Antigravity 上游请求使用的版本号。

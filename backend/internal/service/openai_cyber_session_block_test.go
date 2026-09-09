@@ -142,9 +142,13 @@ func (f *fakeCyberBlockStore) FindCyberSessionBlocked(_ context.Context, keys []
 // panic so accidental calls are caught immediately.
 type fakeSettingRepo struct {
 	vals map[string]string
+	err  error
 }
 
 func (r *fakeSettingRepo) GetValue(_ context.Context, key string) (string, error) {
+	if r.err != nil {
+		return "", r.err
+	}
 	v, ok := r.vals[key]
 	if !ok {
 		return "", ErrSettingNotFound
@@ -329,4 +333,63 @@ func TestCyberSessionScopeKeyNormalizesUserAgentVersion(t *testing.T) {
 	require.Equal(t, base, CyberSessionScopeKey(7, "203.0.113.10", "Codex CLI 1.2.4"))
 	require.NotEqual(t, base, CyberSessionScopeKey(8, "203.0.113.10", "Codex CLI 1.2.3"))
 	require.NotEqual(t, base, CyberSessionScopeKey(7, "203.0.113.11", "Codex CLI 1.2.3"))
+}
+
+type failingCyberBlockCache struct {
+	comboCacheAndStore
+	findErr, scopeErr, writeErr error
+}
+
+func (c *failingCyberBlockCache) FindCyberSessionBlocked(ctx context.Context, keys []string) (string, error) {
+	if c.findErr != nil {
+		return "", c.findErr
+	}
+	return c.comboCacheAndStore.FindCyberSessionBlocked(ctx, keys)
+}
+func (c *failingCyberBlockCache) IsCyberSessionScopeActive(ctx context.Context, key string) (bool, error) {
+	if c.scopeErr != nil {
+		return false, c.scopeErr
+	}
+	return c.comboCacheAndStore.IsCyberSessionScopeActive(ctx, key)
+}
+func (c *failingCyberBlockCache) SetCyberSessionBlocked(ctx context.Context, scope string, keys []string, ttl time.Duration) error {
+	if c.writeErr != nil {
+		return c.writeErr
+	}
+	return c.comboCacheAndStore.SetCyberSessionBlocked(ctx, scope, keys, ttl)
+}
+
+func TestCyberSessionGuardFailsClosed(t *testing.T) {
+	ctx := context.Background()
+	repo := &fakeSettingRepo{vals: map[string]string{SettingKeyCyberSessionBlockEnabled: "true"}}
+	settings := &SettingService{settingRepo: repo}
+	cache := &failingCyberBlockCache{}
+	svc := &OpenAIGatewayService{settingService: settings, cache: cache}
+	c, body := newCyberBlockTestCtx(map[string]string{"session_id": "test"}, `{"input":"test"}`)
+	check := func() string { return svc.FindCyberSessionBlockedForRequest(ctx, 1, c, body, "203.0.113.1", "test") }
+	require.Empty(t, check())
+	cache.findErr = errors.New("redis read failed")
+	require.Equal(t, CyberSessionBlockUnavailableKey, check())
+	cache.findErr = nil
+	cache.scopeErr = errors.New("redis scope failed")
+	require.Equal(t, CyberSessionBlockUnavailableKey, check())
+	cache.scopeErr = nil
+	cache.writeErr = errors.New("redis write failed")
+	svc.MarkCyberSessionBlocked(ctx, "scope", []string{"key"})
+	cache.writeErr = nil
+	require.Equal(t, CyberSessionBlockUnavailableKey, check(), "successful reads must not erase a failed block write")
+	svc.cyberBlockWriteFailureUntil.Store(time.Now().Add(-time.Second).UnixNano())
+	require.Empty(t, check())
+	svc.cache = nil
+	require.Equal(t, CyberSessionBlockUnavailableKey, check())
+	svc.cache = cache
+	repo.err = errors.New("database unavailable")
+	settings.cyberSessionBlockRuntimeCache.Store((*cachedCyberSessionBlockRuntime)(nil))
+	require.Equal(t, CyberSessionBlockUnavailableKey, check())
+	require.Equal(t, CyberSessionBlockUnavailableKey, check(), "cached failures must remain failures")
+	repo.err = nil
+	repo.vals[SettingKeyCyberSessionBlockEnabled] = "false"
+	settings.cyberSessionBlockRuntimeCache.Store((*cachedCyberSessionBlockRuntime)(nil))
+	cache.findErr = errors.New("redis offline")
+	require.Empty(t, check(), "an explicitly disabled guard must remain disabled")
 }

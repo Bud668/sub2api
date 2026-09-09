@@ -108,12 +108,13 @@ export async function getById(id: number): Promise<AdminGroup> {
  */
 export async function getModelAllowlistCandidates(
   id: number,
-  platform?: GroupPlatform
+  platform?: GroupPlatform,
+  userModelPolicy = false
 ): Promise<string[]> {
   const { data } = await apiClient.get<{ models: string[] }>(
     `/admin/groups/${id}/model-allowlist-candidates`,
     {
-      params: platform ? { platform } : undefined
+      params: userModelPolicy ? { platform, user_model_policy: true } : platform ? { platform } : undefined
     }
   )
   return data.models || []

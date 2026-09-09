@@ -454,6 +454,9 @@ type OpenAIGatewayService struct {
 	liveAttestation       liveattestation.Provider
 	liveAttestationCipher SecretEncryptor
 
+	// A lost safety-block write must not be forgotten when Redis reads recover.
+	cyberBlockWriteFailureUntil atomic.Int64
+
 	openaiWSPoolOnce               sync.Once
 	openaiWSStateStoreOnce         sync.Once
 	openaiSchedulerOnce            sync.Once

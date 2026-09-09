@@ -433,6 +433,28 @@ export default {
 
     // Users
     users: {
+      modelPolicy: {
+        title: 'Model usage rules', model: 'Model', permission: 'Permission', requests: 'Request limit', hours: 'Window (hours)', usage: 'Current count / limit',
+        deny: 'Disabled', unlimited: 'No request cap', limited: 'Window quota', add: 'Add model', reset: 'Reset count', remaining: 'Remaining', resetsAt: 'Available again', period: 'Per {hours} hours',
+        cycle: 'Reset cycle', daily: 'Daily', hourly: 'Hourly', dailyReset: 'Resets daily at 00:00 Beijing time (UTC+8)',
+        bulkAdd: 'Add model rules in bulk', addSelected: 'Add {count} selected models to rules',
+        bulkHint: 'Select models → configure this batch → add below → save to apply. Equivalent aliases share a rule; other models have independent counters. Existing rules are preserved.',
+        chooseModels: '1. Choose models', searchModels: 'Search model names, e.g. luna',
+        selectionCount: '{selected} selected · {visible} available here', selectResults: 'Select search results', clearSelection: 'Clear selection',
+        noMatchingModels: 'No matching unadded models. Change the search or check the rules below.',
+        configureBatch: '2. Configure this batch', addedRules: 'Added rules ({count}/200)',
+        selectModel: 'Search and select a model', unlistedModel: 'This saved model is not in the current catalog. Verify or select another; the existing rule is preserved.', noCandidates: 'No model candidates. Check group and upstream account configuration first.',
+        activeHint: 'User model rules are active: unconfigured models are allowed. Group allowlists do not restrict admission; routing, subscriptions and billing are unchanged.',
+        draftHint: 'Preparation mode: existing group permissions still apply. Save required restrictions before switching site-wide to user rules. Users without rules have no extra model restrictions.',
+        scopeHint: 'Only configured models are restricted; other available models are allowed. All keys and groups of a user share counts. Daily quotas reset at Beijing midnight; hourly windows start on first use. Counts include in-flight reservations; definitely unexecuted requests are refunded. Quotas are not security bans. Editing a cycle preserves the active window until expiry.',
+        emptyHint: 'No additional model restrictions: all available models are allowed. RPM, concurrency, balance and security limits still apply.',
+        clearConfirm: 'Remove all model rules for this user? All available models will have no user-level model restrictions. RPM, concurrency, billing and security limits remain.',
+        activate: 'Switch site-wide to user rules and disable group allowlists',
+        activateConfirm: 'This switches the site-wide authority and disables group model allowlists. Unconfigured users and models are allowed; only explicit rules restrict use. Routing, subscriptions, billing and security are unchanged. Pending edits are not saved automatically. Switch now?',
+        resetConfirm: 'Reset the request count for {model}? Daily quotas still reset at Beijing midnight; hourly windows restart on the next request. This action is audited.',
+        invalid: 'Use up to 200 unique model rules. Limited mode needs 1–1000000 requests, resetting daily or every 1–720 hours. New typed identifiers and wildcards are not supported.',
+        failed: 'Unable to load or save model rules. Please retry.',
+      },
       title: 'User Management',
       description: 'Manage users and their permissions',
       createUser: 'Create User',

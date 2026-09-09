@@ -32,6 +32,7 @@ export interface ContentModerationConfig {
   block_message: string
   email_on_hit: boolean
   auto_ban_enabled: boolean
+  cyber_policy_auto_ban_enabled?: boolean
   ban_threshold: number
   violation_window_hours: number
   retry_count: number
@@ -112,6 +113,7 @@ export interface UpdateContentModerationConfig {
   block_message?: string
   email_on_hit?: boolean
   auto_ban_enabled?: boolean
+  cyber_policy_auto_ban_enabled?: boolean
   ban_threshold?: number
   violation_window_hours?: number
   retry_count?: number

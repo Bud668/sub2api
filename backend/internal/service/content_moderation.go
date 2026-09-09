@@ -144,30 +144,31 @@ type ContentModerationConfig struct {
 	BaseURL string `json:"base_url"`
 	Model   string `json:"model"`
 	// ProxyID 指定审计请求使用的代理服务器（IP管理-代理服务器），nil 表示直连。
-	ProxyID              *int64                       `json:"proxy_id,omitempty"`
-	APIKey               string                       `json:"api_key,omitempty"`
-	APIKeys              []string                     `json:"api_keys,omitempty"`
-	TimeoutMS            int                          `json:"timeout_ms"`
-	SampleRate           int                          `json:"sample_rate"`
-	AllGroups            bool                         `json:"all_groups"`
-	GroupIDs             []int64                      `json:"group_ids"`
-	RecordNonHits        bool                         `json:"record_non_hits"`
-	Thresholds           map[string]float64           `json:"thresholds"`
-	WorkerCount          int                          `json:"worker_count"`
-	QueueSize            int                          `json:"queue_size"`
-	BlockStatus          int                          `json:"block_status"`
-	BlockMessage         string                       `json:"block_message"`
-	EmailOnHit           bool                         `json:"email_on_hit"`
-	AutoBanEnabled       bool                         `json:"auto_ban_enabled"`
-	BanThreshold         int                          `json:"ban_threshold"`
-	ViolationWindowHours int                          `json:"violation_window_hours"`
-	RetryCount           int                          `json:"retry_count"`
-	HitRetentionDays     int                          `json:"hit_retention_days"`
-	NonHitRetentionDays  int                          `json:"non_hit_retention_days"`
-	PreHashCheckEnabled  bool                         `json:"pre_hash_check_enabled"`
-	BlockedKeywords      []string                     `json:"blocked_keywords"`
-	KeywordBlockingMode  string                       `json:"keyword_blocking_mode"`
-	ModelFilter          ContentModerationModelFilter `json:"model_filter"`
+	ProxyID                   *int64                       `json:"proxy_id,omitempty"`
+	APIKey                    string                       `json:"api_key,omitempty"`
+	APIKeys                   []string                     `json:"api_keys,omitempty"`
+	TimeoutMS                 int                          `json:"timeout_ms"`
+	SampleRate                int                          `json:"sample_rate"`
+	AllGroups                 bool                         `json:"all_groups"`
+	GroupIDs                  []int64                      `json:"group_ids"`
+	RecordNonHits             bool                         `json:"record_non_hits"`
+	Thresholds                map[string]float64           `json:"thresholds"`
+	WorkerCount               int                          `json:"worker_count"`
+	QueueSize                 int                          `json:"queue_size"`
+	BlockStatus               int                          `json:"block_status"`
+	BlockMessage              string                       `json:"block_message"`
+	EmailOnHit                bool                         `json:"email_on_hit"`
+	AutoBanEnabled            bool                         `json:"auto_ban_enabled"`
+	CyberPolicyAutoBanEnabled bool                         `json:"cyber_policy_auto_ban_enabled"`
+	BanThreshold              int                          `json:"ban_threshold"`
+	ViolationWindowHours      int                          `json:"violation_window_hours"`
+	RetryCount                int                          `json:"retry_count"`
+	HitRetentionDays          int                          `json:"hit_retention_days"`
+	NonHitRetentionDays       int                          `json:"non_hit_retention_days"`
+	PreHashCheckEnabled       bool                         `json:"pre_hash_check_enabled"`
+	BlockedKeywords           []string                     `json:"blocked_keywords"`
+	KeywordBlockingMode       string                       `json:"keyword_blocking_mode"`
+	ModelFilter               ContentModerationModelFilter `json:"model_filter"`
 	// CyberPolicyExcludeFromBanCount 为 true 时，cyber_policy 命中不参与自动封号计数：
 	// 当次不判定封号，且历史 cyber 行在 CountFlaggedByUserSince 中被排除。
 	// 默认 false（计入，与历史行为一致；旧配置 JSON 无此字段时反序列化为 false）。
@@ -197,6 +198,7 @@ type ContentModerationConfigView struct {
 	BlockMessage                   string                          `json:"block_message"`
 	EmailOnHit                     bool                            `json:"email_on_hit"`
 	AutoBanEnabled                 bool                            `json:"auto_ban_enabled"`
+	CyberPolicyAutoBanEnabled      bool                            `json:"cyber_policy_auto_ban_enabled"`
 	BanThreshold                   int                             `json:"ban_threshold"`
 	ViolationWindowHours           int                             `json:"violation_window_hours"`
 	RetryCount                     int                             `json:"retry_count"`
@@ -289,6 +291,7 @@ type UpdateContentModerationConfigInput struct {
 	BlockMessage                   *string                       `json:"block_message"`
 	EmailOnHit                     *bool                         `json:"email_on_hit"`
 	AutoBanEnabled                 *bool                         `json:"auto_ban_enabled"`
+	CyberPolicyAutoBanEnabled      *bool                         `json:"cyber_policy_auto_ban_enabled"`
 	BanThreshold                   *int                          `json:"ban_threshold"`
 	ViolationWindowHours           *int                          `json:"violation_window_hours"`
 	RetryCount                     *int                          `json:"retry_count"`
@@ -659,6 +662,9 @@ func (s *ContentModerationService) UpdateConfig(ctx context.Context, input Updat
 	}
 	if input.AutoBanEnabled != nil {
 		cfg.AutoBanEnabled = *input.AutoBanEnabled
+	}
+	if input.CyberPolicyAutoBanEnabled != nil {
+		cfg.CyberPolicyAutoBanEnabled = *input.CyberPolicyAutoBanEnabled
 	}
 	if input.BanThreshold != nil {
 		cfg.BanThreshold = *input.BanThreshold
@@ -1922,30 +1928,46 @@ func (s *ContentModerationService) applyFlaggedAccountSideEffects(ctx context.Co
 	log.ViolationCount = count
 	autoBanJustApplied := false
 	if cfg.AutoBanEnabled && cfg.BanThreshold > 0 && count >= cfg.BanThreshold && s.userRepo != nil {
-		user, err := s.userRepo.GetByID(ctx, *log.UserID)
+		var err error
+		autoBanJustApplied, err = s.disableFlaggedUser(ctx, log, cfg.BanThreshold)
 		if err != nil {
-			slog.Warn("content_moderation.ban_get_user_failed", "user_id", *log.UserID, "error", err)
-			return false
+			slog.Warn("content_moderation.ban_update_user_failed", "user_id", *log.UserID, "error", err)
 		}
-		if user.IsAdmin() {
-			slog.Warn("content_moderation.autoban_skipped_admin", "user_id", *log.UserID, "role", user.Role, "count", count, "threshold", cfg.BanThreshold)
-			// TODO: Disable the triggering API key instead when API key mutation is available here.
-			return false
-		}
-		if user.Status != StatusDisabled {
-			user.Status = StatusDisabled
-			if err := s.userRepo.Update(ctx, user, UserUpdateFields{Status: true}); err != nil {
-				slog.Warn("content_moderation.ban_update_user_failed", "user_id", *log.UserID, "error", err)
-				return false
-			}
-			if s.authCacheInvalidator != nil {
-				s.authCacheInvalidator.InvalidateAuthCacheByUserID(ctx, *log.UserID)
-			}
-			autoBanJustApplied = true
-		}
-		log.AutoBanned = true
 	}
 	return autoBanJustApplied
+}
+
+// disableFlaggedUser is shared by threshold bans and the independent cyber rule.
+// Only status changes: balances, keys and evidence remain available for appeal.
+func (s *ContentModerationService) disableFlaggedUser(ctx context.Context, log *ContentModerationLog, threshold int) (bool, error) {
+	if s.userRepo == nil || log.UserID == nil || *log.UserID <= 0 {
+		return false, errors.New("user repository or authenticated user unavailable")
+	}
+	user, err := s.userRepo.GetByID(ctx, *log.UserID)
+	if err != nil {
+		return false, fmt.Errorf("get user for safety suspension: %w", err)
+	}
+	if user == nil {
+		return false, errors.New("user missing during safety suspension")
+	}
+	if user.IsAdmin() {
+		slog.Warn("content_moderation.autoban_skipped_admin", "user_id", user.ID, "role", user.Role,
+			"count", log.ViolationCount, "threshold", threshold)
+		return false, nil // Keep the recovery administrator accessible; session blocking still applies.
+	}
+	justApplied := user.Status != StatusDisabled
+	if justApplied {
+		updated := *user
+		updated.Status = StatusDisabled
+		if err := s.userRepo.Update(ctx, &updated, UserUpdateFields{Status: true}); err != nil {
+			return false, fmt.Errorf("persist safety suspension: %w", err)
+		}
+	}
+	if s.authCacheInvalidator != nil {
+		s.authCacheInvalidator.InvalidateAuthCacheByUserID(ctx, user.ID)
+	}
+	log.AutoBanned = true
+	return justApplied, nil
 }
 
 func (s *ContentModerationService) sendFlaggedNotificationSideEffects(ctx context.Context, cfg *ContentModerationConfig, log *ContentModerationLog, autoBanJustApplied bool) {
@@ -2059,10 +2081,18 @@ func contentModerationEmailVariables(log *ContentModerationLog, cfg *ContentMode
 		variables["moderation_score"] = fmt.Sprintf("%.3f", log.HighestScore)
 		variables["violation_count"] = fmt.Sprintf("%d", log.ViolationCount)
 	}
-	if cfg != nil {
-		variables["ban_threshold"] = fmt.Sprintf("%d", cfg.BanThreshold)
-	}
+	variables["ban_threshold"] = fmt.Sprintf("%d", contentModerationBanThreshold(log, cfg))
 	return variables
+}
+
+func contentModerationBanThreshold(log *ContentModerationLog, cfg *ContentModerationConfig) int {
+	if log != nil && log.Action == ContentModerationActionCyberPolicy {
+		return 1
+	}
+	if cfg != nil && cfg.BanThreshold > 0 {
+		return cfg.BanThreshold
+	}
+	return defaultContentModerationBanThreshold
 }
 
 func (s *ContentModerationService) siteName(ctx context.Context) string {
@@ -2429,6 +2459,7 @@ func (s *ContentModerationService) configView(cfg *ContentModerationConfig) *Con
 		BlockMessage:                   cfg.BlockMessage,
 		EmailOnHit:                     cfg.EmailOnHit,
 		AutoBanEnabled:                 cfg.AutoBanEnabled,
+		CyberPolicyAutoBanEnabled:      cfg.CyberPolicyAutoBanEnabled,
 		BanThreshold:                   cfg.BanThreshold,
 		ViolationWindowHours:           cfg.ViolationWindowHours,
 		RetryCount:                     cfg.RetryCount,
@@ -2978,6 +3009,8 @@ type CyberPolicyRecordInput struct {
 	GroupName       string
 	Endpoint        string
 	Model           string
+	Protocol        string
+	RequestBody     []byte
 	UpstreamMessage string
 	UpstreamBody    string
 	UpstreamStatus  int
@@ -2986,24 +3019,25 @@ type CyberPolicyRecordInput struct {
 }
 
 // RecordCyberPolicyEvent 把一次 cyber_policy 硬阻断写入风控中心日志、计入违规计数、
-// 并给用户发邮件。当前请求已由 gateway 透传给用户；本方法仅做事后记录/通知/计数。
+// 同步停用用户并落审计，再异步通知。不得把持久化封禁放进通知 goroutine。
 // 受 risk_control_enabled 总开关和内容审核 group/model scope 约束，
 // 不受内容审核 Enabled/Mode/sample 约束。
-func (s *ContentModerationService) RecordCyberPolicyEvent(ctx context.Context, in CyberPolicyRecordInput) {
+func (s *ContentModerationService) RecordCyberPolicyEvent(ctx context.Context, in CyberPolicyRecordInput) error {
 	if s == nil || s.repo == nil {
-		return
+		return errors.New("cyber audit repository unavailable")
 	}
 	runtimeSnapshot, err := s.loadRuntimeSnapshot(ctx)
 	if err != nil {
 		slog.Warn("content_moderation.cyber_runtime_snapshot_load_failed", "error", err)
-		return
+		s.pauseAfterCyberBanFailure(in.UserID, err)
+		return err
 	}
 	if !runtimeSnapshot.riskControlEnabled {
-		return
+		return nil
 	}
 	cfg := runtimeSnapshot.config
 	if !cfg.includesGroup(in.GroupID) || !cfg.includesModel(in.Model) {
-		return
+		return nil
 	}
 	var userID *int64
 	if in.UserID > 0 {
@@ -3037,13 +3071,23 @@ func (s *ContentModerationService) RecordCyberPolicyEvent(ctx context.Context, i
 		Flagged:         true,
 		HighestCategory: "cyber_policy",
 		HighestScore:    1.0,
+		InputExcerpt:    cyberPolicyInputExcerpt(in.Protocol, in.RequestBody),
 		Error:           trimRunes(redactContentModerationSecrets(errBody), maxModerationExcerptRunes*4),
 		CreatedAt:       time.Now(),
 	}
 	// 开关开时 cyber_policy 不参与封号计数：当次不判定（此处跳过），
 	// 历史行由 CountFlaggedByUserSince 的 excludeCyberPolicy 排除。
 	autoBanned := false
-	if !cfg.CyberPolicyExcludeFromBanCount {
+	var banErr error
+	if cfg.CyberPolicyAutoBanEnabled {
+		// This rule is independent of keyword/threshold bans and historical counts.
+		log.ViolationCount = 1
+		autoBanned, banErr = s.disableFlaggedUser(ctx, log, 1)
+		if banErr != nil {
+			s.pauseAfterCyberBanFailure(in.UserID, banErr)
+			log.Error = trimRunes(log.Error+"\n[platform error: permanent user suspension was not persisted]", maxModerationExcerptRunes*4)
+		}
+	} else if !cfg.CyberPolicyExcludeFromBanCount {
 		autoBanned = s.applyFlaggedAccountSideEffects(ctx, cfg, log)
 	}
 	log.EmailSent = false
@@ -3052,16 +3096,35 @@ func (s *ContentModerationService) RecordCyberPolicyEvent(ctx context.Context, i
 		logPersisted = false
 		slog.Warn("content_moderation.cyber_create_log_failed", "user_id", in.UserID, "error", err)
 	}
+	if s.emailService != nil && strings.TrimSpace(log.UserEmail) != "" {
+		go s.notifyCyberPolicyEvent(log, cfg, autoBanned, logPersisted)
+	}
+	return banErr
+}
+
+func (s *ContentModerationService) pauseAfterCyberBanFailure(userID int64, err error) {
+	// The production invalidator is APIKeyService. Keep this optional capability
+	// on the existing dependency instead of adding a second ban/cache subsystem.
+	if guard, ok := s.authCacheInvalidator.(interface{ PauseAfterCyberUserBanFailure() }); ok {
+		guard.PauseAfterCyberUserBanFailure()
+	}
+	slog.Error("content_moderation.cyber_user_ban_failed", "user_id", userID, "error", err,
+		"action", "API forwarding paused; persist the user suspension before any application restart")
+}
+
+func (s *ContentModerationService) notifyCyberPolicyEvent(log *ContentModerationLog, cfg *ContentModerationConfig, autoBanned, logPersisted bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 	emailSent := false
 	if s.emailService != nil && strings.TrimSpace(log.UserEmail) != "" {
 		if err := s.sendCyberPolicyEmail(ctx, log); err != nil {
-			slog.Warn("content_moderation.cyber_email_failed", "user_id", in.UserID, "error", err)
+			slog.Warn("content_moderation.cyber_email_failed", "user_id", contentModerationEmailUserID(log), "error", err)
 		} else {
 			emailSent = true
 		}
 		if autoBanned {
 			if err := s.sendAccountDisabledEmail(ctx, cfg, log); err != nil {
-				slog.Warn("content_moderation.cyber_ban_email_failed", "user_id", in.UserID, "error", err)
+				slog.Warn("content_moderation.cyber_ban_email_failed", "user_id", contentModerationEmailUserID(log), "error", err)
 			} else {
 				emailSent = true
 			}

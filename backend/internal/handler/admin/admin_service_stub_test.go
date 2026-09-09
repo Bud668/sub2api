@@ -13,6 +13,7 @@ type stubAdminService struct {
 	users                               []service.User
 	apiKeys                             []service.APIKey
 	groups                              []service.Group
+	modelCandidates                     []string
 	accounts                            []service.Account
 	accountSchedulerScoreFilterAccounts []service.Account
 	openAISchedulerScorePoolAccounts    []service.Account
@@ -296,6 +297,9 @@ func (s *stubAdminService) GetGroup(ctx context.Context, id int64) (*service.Gro
 }
 
 func (s *stubAdminService) GetGroupModelsListCandidates(ctx context.Context, id int64, platform string) ([]string, error) {
+	if s.modelCandidates != nil {
+		return s.modelCandidates, nil
+	}
 	if platform == service.PlatformOpenAI {
 		return []string{"gpt-5.5", "gpt-5.4"}, nil
 	}

@@ -1091,7 +1091,9 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 		c.Next()
 		w.finalizeCapture()
 
-		if _, rejected := middleware2.GetIngressRejectReason(c); rejected {
+		quotaValue, _ := c.Get(service.OpsUserModelQuotaErrorKey)
+		quota, _ := quotaValue.(*service.ModelRequestQuotaError)
+		if reason, rejected := middleware2.GetIngressRejectReason(c); rejected && (reason != middleware2.IngressRejectModelNotAllowed || quota == nil) {
 			return
 		}
 
@@ -1106,6 +1108,10 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 		}
 
 		if shouldSkipOpsErrorLogForCyber(c) {
+			return
+		}
+		if quota != nil {
+			logOpsUserModelQuotaRejected(c, ops, quota)
 			return
 		}
 

@@ -316,7 +316,7 @@
                     </td>
                     <td class="whitespace-nowrap px-5 py-4 text-sm text-gray-700 dark:text-gray-300">
                       <div>{{ row.highest_category || '-' }}</div>
-                      <div class="text-xs text-gray-400">{{ percent(row.highest_score) }}</div>
+                      <div v-if="row.action !== 'cyber_policy'" class="text-xs text-gray-400">{{ percent(row.highest_score) }}</div>
                       <div v-if="row.matched_keyword" class="mt-0.5 text-xs font-medium text-red-600 dark:text-red-300" :title="t('admin.riskControl.matchedKeyword') + ': ' + row.matched_keyword">
                         {{ t('admin.riskControl.matchedKeyword') }}: {{ row.matched_keyword }}
                       </div>
@@ -891,6 +891,13 @@
               </div>
               <div class="flex items-center justify-between rounded-lg border border-gray-100 p-4 dark:border-dark-700 lg:col-span-2">
                 <div>
+                  <p class="text-sm font-medium text-gray-900 dark:text-white">{{ t('admin.riskControl.cyberPolicyAutoBan') }}</p>
+                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.riskControl.cyberPolicyAutoBanHint') }}</p>
+                </div>
+                <Toggle v-model="configForm.cyber_policy_auto_ban_enabled" />
+              </div>
+              <div class="flex items-center justify-between rounded-lg border border-gray-100 p-4 dark:border-dark-700 lg:col-span-2">
+                <div>
                   <p class="text-sm font-medium text-gray-900 dark:text-white">{{ t('admin.riskControl.cyberPolicyExcludeBan') }}</p>
                   <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.riskControl.cyberPolicyExcludeBanHint') }}</p>
                 </div>
@@ -1083,7 +1090,7 @@
             <div class="rounded-lg border border-gray-100 bg-gray-50 p-4 dark:border-dark-700 dark:bg-dark-800/70">
               <p class="text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.riskControl.table.highest') }}</p>
               <p class="mt-1 truncate text-sm font-semibold text-gray-900 dark:text-white">
-                {{ inputDetailRow.highest_category || '-' }} / {{ percent(inputDetailRow.highest_score) }}
+                {{ inputDetailRow.highest_category || '-' }}<span v-if="inputDetailRow.action !== 'cyber_policy'"> / {{ percent(inputDetailRow.highest_score) }}</span>
               </p>
             </div>
             <div v-if="inputDetailRow.matched_keyword" class="rounded-lg border border-red-100 bg-red-50 p-4 dark:border-red-900/60 dark:bg-red-900/20">
@@ -1104,6 +1111,7 @@
                 {{ inputDetailRow.group_name }}
               </span>
             </div>
+            <p class="mt-3 break-all text-xs text-gray-500">{{ t('admin.audit.detail.requestId') }}: {{ inputDetailRow.request_id || '-' }}</p>
             <pre class="mt-4 max-h-[420px] overflow-auto whitespace-pre-wrap break-words rounded-lg bg-gray-950 p-4 text-sm leading-6 text-gray-100 shadow-inner dark:bg-black/50">{{ inputDetailText }}</pre>
           </div>
         </div>
@@ -1249,6 +1257,7 @@ const configForm = reactive({
   block_message: defaultBlockMessage(),
   email_on_hit: true,
   auto_ban_enabled: true,
+  cyber_policy_auto_ban_enabled: false,
   cyber_policy_exclude_from_ban_count: false,
   ban_threshold: 10,
   violation_window_hours: 720,
@@ -1727,6 +1736,7 @@ function applyConfig(config: ContentModerationConfig) {
   configForm.block_message = config.block_message || defaultBlockMessage()
   configForm.email_on_hit = config.email_on_hit ?? true
   configForm.auto_ban_enabled = config.auto_ban_enabled ?? true
+  configForm.cyber_policy_auto_ban_enabled = config.cyber_policy_auto_ban_enabled ?? false
   configForm.cyber_policy_exclude_from_ban_count = config.cyber_policy_exclude_from_ban_count ?? false
   configForm.ban_threshold = config.ban_threshold || 10
   configForm.violation_window_hours = config.violation_window_hours || 720
@@ -1813,6 +1823,7 @@ async function saveConfig() {
       block_message: configForm.block_message || defaultBlockMessage(),
       email_on_hit: configForm.email_on_hit,
       auto_ban_enabled: configForm.auto_ban_enabled,
+      cyber_policy_auto_ban_enabled: configForm.cyber_policy_auto_ban_enabled,
       cyber_policy_exclude_from_ban_count: configForm.cyber_policy_exclude_from_ban_count,
       ban_threshold: Number(configForm.ban_threshold) || 10,
       violation_window_hours: Number(configForm.violation_window_hours) || 720,

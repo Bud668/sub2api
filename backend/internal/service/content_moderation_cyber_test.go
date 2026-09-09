@@ -113,6 +113,8 @@ func TestRecordCyberPolicyEvent_WritesLogWhenEnabled(t *testing.T) {
 		UserEmail:       "u@x.com",
 		Model:           "gpt-5",
 		Endpoint:        "/v1/responses",
+		Protocol:        ContentModerationProtocolOpenAIResponses,
+		RequestBody:     []byte(`{"input":[{"role":"user","content":[{"type":"input_text","text":"review sk-proj-1234567890abcdef"}]}]}`),
 		UpstreamMessage: "flagged",
 		UpstreamBody:    `{"error":{"code":"cyber_policy"}}`,
 		UpstreamStatus:  400,
@@ -148,6 +150,9 @@ func TestRecordCyberPolicyEvent_WritesLogWhenEnabled(t *testing.T) {
 
 	// endpoint
 	require.Equal(t, "/v1/responses", log.Endpoint)
+	require.Contains(t, log.InputExcerpt, "review")
+	require.Contains(t, log.InputExcerpt, "[已脱敏]")
+	require.NotContains(t, log.InputExcerpt, "sk-proj-1234567890abcdef")
 
 	// violation count >= 1 (side-effects ran)
 	require.GreaterOrEqual(t, log.ViolationCount, 1)
@@ -260,8 +265,9 @@ func TestRecordCyberPolicyEvent_RuntimeSnapshotRefreshFailureKeepsStaleScope(t *
 		SettingKeyRiskControlEnabled:      "true",
 		SettingKeyContentModerationConfig: `{"all_groups":true,"model_filter":{"type":"include","models":["gpt-5"]}}`,
 	}}
-	svc := NewContentModerationService(settingRepo, repo, nil, nil, nil, nil, nil, nil)
-	svc.runtimeCacheTTL = time.Minute
+	// Keep background workers out of this deterministic cache refresh test.
+	svc := runtimeCacheTestService(settingRepo, time.Minute)
+	svc.repo = repo
 
 	_, err := svc.loadRuntimeSnapshot(context.Background())
 	require.NoError(t, err)

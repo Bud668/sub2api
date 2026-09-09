@@ -4,8 +4,10 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"html"
+	"log/slog"
 	"math"
 	"sort"
 	"strconv"
@@ -24,14 +26,15 @@ import (
 )
 
 var (
-	ErrAPIKeyNotFound       = infraerrors.NotFound("API_KEY_NOT_FOUND", "api key not found")
-	ErrGroupNotAllowed      = infraerrors.Forbidden("GROUP_NOT_ALLOWED", "user is not allowed to bind this group")
-	ErrAPIKeyExists         = infraerrors.Conflict("API_KEY_EXISTS", "api key already exists")
-	ErrAPIKeyTooShort       = infraerrors.BadRequest("API_KEY_TOO_SHORT", "api key must be at least 16 characters")
-	ErrAPIKeyInvalidChars   = infraerrors.BadRequest("API_KEY_INVALID_CHARS", "api key can only contain letters, numbers, underscores, and hyphens")
-	ErrAPIKeyRateLimited    = infraerrors.TooManyRequests("API_KEY_RATE_LIMITED", "too many failed attempts, please try again later")
-	ErrAPIKeyAuthOverloaded = infraerrors.ServiceUnavailable("API_KEY_AUTH_OVERLOADED", "api key authentication is temporarily overloaded")
-	ErrInvalidIPPattern     = infraerrors.BadRequest("INVALID_IP_PATTERN", "invalid IP or CIDR pattern")
+	ErrAPIKeyNotFound          = infraerrors.NotFound("API_KEY_NOT_FOUND", "api key not found")
+	ErrGroupNotAllowed         = infraerrors.Forbidden("GROUP_NOT_ALLOWED", "user is not allowed to bind this group")
+	ErrAPIKeyExists            = infraerrors.Conflict("API_KEY_EXISTS", "api key already exists")
+	ErrAPIKeyTooShort          = infraerrors.BadRequest("API_KEY_TOO_SHORT", "api key must be at least 16 characters")
+	ErrAPIKeyInvalidChars      = infraerrors.BadRequest("API_KEY_INVALID_CHARS", "api key can only contain letters, numbers, underscores, and hyphens")
+	ErrAPIKeyRateLimited       = infraerrors.TooManyRequests("API_KEY_RATE_LIMITED", "too many failed attempts, please try again later")
+	ErrAPIKeyAuthOverloaded    = infraerrors.ServiceUnavailable("API_KEY_AUTH_OVERLOADED", "api key authentication is temporarily overloaded")
+	ErrCyberUserBanUnavailable = infraerrors.ServiceUnavailable("CYBER_USER_BAN_UNAVAILABLE", "Safety suspension could not be persisted; API forwarding is paused")
+	ErrInvalidIPPattern        = infraerrors.BadRequest("INVALID_IP_PATTERN", "invalid IP or CIDR pattern")
 	// ErrAPIKeyExpired        = infraerrors.Forbidden("API_KEY_EXPIRED", "api key has expired")
 	ErrAPIKeyExpired = infraerrors.Forbidden("API_KEY_EXPIRED", "api key 已过期")
 	// ErrAPIKeyQuotaExhausted = infraerrors.TooManyRequests("API_KEY_QUOTA_EXHAUSTED", "api key quota exhausted")
@@ -283,6 +286,7 @@ type RateLimitCacheInvalidator interface {
 }
 
 type APIKeyService struct {
+	ModelPolicies             *UserModelPolicyService
 	apiKeyRepo                APIKeyRepository
 	userRepo                  UserRepository
 	groupRepo                 GroupRepository
@@ -300,6 +304,7 @@ type APIKeyService struct {
 	authLookupTotal           atomic.Uint64
 	authLookupRejected        atomic.Uint64
 	authLookupInFlight        atomic.Int64
+	cyberUserBanFailure       atomic.Bool
 	invalidAuthAbuse          *invalidAuthAbuseLimiter
 	authInvalidationStart     sync.Once
 	authInvalidationStop      sync.Once
@@ -702,6 +707,9 @@ func (s *APIKeyService) GetByID(ctx context.Context, id int64) (*APIKey, error) 
 
 // GetByKey 根据Key字符串获取API Key（用于认证）
 func (s *APIKeyService) GetByKey(ctx context.Context, key string) (*APIKey, error) {
+	if s.cyberUserBanFailure.Load() {
+		return nil, ErrCyberUserBanUnavailable
+	}
 	if len(key) == 0 || len(key) > MaxAPIKeyCredentialBytes {
 		return nil, ErrAPIKeyNotFound
 	}
@@ -753,6 +761,16 @@ func (s *APIKeyService) GetByKey(ctx context.Context, key string) (*APIKey, erro
 	apiKey.Key = key
 	s.compileAPIKeyIPRules(apiKey)
 	return apiKey, nil
+}
+
+// PauseAfterCyberUserBanFailure is deliberately latched, with no timer or auto
+// reset. An operator must persist the missing suspension before restarting.
+// The management/JWT path remains available for recovery.
+func (s *APIKeyService) PauseAfterCyberUserBanFailure() {
+	if s.cyberUserBanFailure.CompareAndSwap(false, true) {
+		slog.Error("api_key.cyber_user_ban_failure_latched",
+			"action", "all API key authentication paused; persist the missing user suspension before restart")
+	}
 }
 
 // Update 更新API Key
@@ -953,18 +971,30 @@ func (s *APIKeyService) ValidateKey(ctx context.Context, key string) (*APIKey, *
 		return nil, nil, infraerrors.Unauthorized("API_KEY_INACTIVE", "api key is not active")
 	}
 
-	// 获取用户信息
-	user, err := s.userRepo.GetByID(ctx, apiKey.UserID)
+	user, err := s.ValidateUserActive(ctx, apiKey.UserID)
 	if err != nil {
-		return nil, nil, fmt.Errorf("get user: %w", err)
+		return nil, nil, err
 	}
-
-	// 检查用户状态
-	if !user.IsActive() {
-		return nil, nil, ErrUserNotActive
-	}
-
 	return apiKey, user, nil
+}
+
+// ValidateUserActive reads the authoritative user row, not the handshake's
+// cached User. Every WebSocket continuation uses the same check.
+func (s *APIKeyService) ValidateUserActive(ctx context.Context, userID int64) (*User, error) {
+	if s.cyberUserBanFailure.Load() {
+		return nil, ErrCyberUserBanUnavailable
+	}
+	if s.userRepo == nil || userID <= 0 {
+		return nil, errors.New("user authorization repository unavailable")
+	}
+	user, err := s.userRepo.GetByID(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("get user: %w", err)
+	}
+	if user == nil || !user.IsActive() {
+		return nil, ErrUserNotActive
+	}
+	return user, nil
 }
 
 // TouchLastUsed 通过防抖更新 api_keys.last_used_at，减少高频写放大。

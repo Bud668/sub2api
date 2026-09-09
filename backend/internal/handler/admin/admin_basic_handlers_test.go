@@ -69,6 +69,31 @@ func setupAdminRouter() (*gin.Engine, *stubAdminService) {
 	return router, adminSvc
 }
 
+func TestUserModelPolicyCatalogCanonicalAliases(t *testing.T) {
+	router, adminSvc := setupAdminRouter()
+	adminSvc.modelCandidates = []string{"gpt-5.6", "gpt-5.6-sol", "gpt-5.6-sol-high", "gpt-6", "gpt-6-astra", "codex-auto-review", "custom-model"}
+	for _, userPolicy := range []bool{true, false} {
+		path := "/api/v1/admin/groups/7/model-allowlist-candidates"
+		if userPolicy {
+			path += "?user_model_policy=true"
+		}
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		require.Equal(t, http.StatusOK, rec.Code)
+		var result struct {
+			Data struct {
+				Models []string `json:"models"`
+			} `json:"data"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &result))
+		if userPolicy {
+			require.Equal(t, []string{"gpt-5.6-sol", "gpt-6-astra", "codex-auto-review", "custom-model"}, result.Data.Models)
+		} else {
+			require.Equal(t, adminSvc.modelCandidates, result.Data.Models)
+		}
+	}
+}
+
 func TestUserHandlerEndpoints(t *testing.T) {
 	router, _ := setupAdminRouter()
 

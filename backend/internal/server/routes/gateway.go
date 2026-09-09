@@ -43,7 +43,7 @@ func RegisterGatewayRoutes(
 
 	// 分组级模型白名单准入：在 apiKeyAuth 之后、compositeTarget 之前，
 	// 保证校验发生在合成路由改写与调度之前，且只看客户端书写的模型名。
-	groupModelAllowlist := middleware.GroupModelAllowlist()
+	groupModelAllowlist := middleware.GroupModelAllowlist(apiKeyService)
 
 	isOpenAIResponsesCompatibleGatewayPlatform := func(c *gin.Context) bool {
 		switch getGroupPlatform(c) {

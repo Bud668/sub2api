@@ -23,6 +23,9 @@ type CyberSessionBlockStore interface {
 
 const cyberSessionTranscriptLookupOverflowBlockKey = "transcript_lookup_limit_exceeded"
 
+// CyberSessionBlockUnavailableKey is a local infrastructure failure, not a user violation.
+const CyberSessionBlockUnavailableKey = "cyber_session_guard_unavailable"
+
 // CyberSessionExplicitBlockKey returns an inexpensive exact key when the
 // client supplies a stable session signal.
 func CyberSessionExplicitBlockKey(apiKeyID int64, c *gin.Context, body []byte) string {
@@ -88,48 +91,59 @@ func (s *OpenAIGatewayService) cyberSessionBlockStore() CyberSessionBlockStore {
 
 // CyberSessionBlockRuntime 返回 (开关, TTL)。开关默认关。
 // 委托给 SettingService.GetCyberSessionBlockRuntime，进程内缓存避免热路径 DB 往返。
-func (s *OpenAIGatewayService) CyberSessionBlockRuntime(ctx context.Context) (bool, time.Duration) {
+func (s *OpenAIGatewayService) CyberSessionBlockRuntime(ctx context.Context) (bool, time.Duration, error) {
 	if s == nil || s.settingService == nil {
-		return false, time.Hour
+		return false, time.Hour, nil
 	}
 	return s.settingService.GetCyberSessionBlockRuntime(ctx)
 }
 
 // MarkCyberSessionBlocked 把会话写入屏蔽表（写入点：cyber 命中后）。
-// 开关关闭、key 为空或存储不可用时静默跳过。
+// Failed writes stop forwarding for the configured block period: a later
+// successful Redis read cannot prove the lost block was ever stored.
 func (s *OpenAIGatewayService) MarkCyberSessionBlocked(ctx context.Context, scopeKey string, keys []string) {
 	if s == nil || len(keys) == 0 {
 		return
 	}
-	enabled, ttl := s.CyberSessionBlockRuntime(ctx)
-	if !enabled {
+	enabled, ttl, runtimeErr := s.CyberSessionBlockRuntime(ctx)
+	if !enabled && runtimeErr == nil {
 		return
 	}
 	store := s.cyberSessionBlockStore()
-	if store == nil {
+	if store == nil || runtimeErr != nil {
+		s.cyberBlockWriteFailureUntil.Store(time.Now().Add(ttl).UnixNano())
+		logger.LegacyPrintf("service.openai_gateway", "cyber session block unavailable; forwarding paused for %s", ttl)
 		return
 	}
 	if err := store.SetCyberSessionBlocked(ctx, scopeKey, keys, ttl); err != nil {
+		s.cyberBlockWriteFailureUntil.Store(time.Now().Add(ttl).UnixNano())
 		logger.LegacyPrintf("service.openai_gateway", "cyber session block write failed: err=%v", err)
 	}
 }
 
 // FindCyberSessionBlockedForRequest applies explicit-first lookup followed by
-// scope-gated transcript matching. All failures remain fail-open.
+// scope-gated transcript matching. Infrastructure errors fail closed without
+// turning them into moderation events or user violation counts.
 func (s *OpenAIGatewayService) FindCyberSessionBlockedForRequest(ctx context.Context, apiKeyID int64, c *gin.Context, body []byte, clientIP, userAgent string) string {
-	enabled, _ := s.CyberSessionBlockRuntime(ctx)
+	enabled, _, runtimeErr := s.CyberSessionBlockRuntime(ctx)
+	if runtimeErr != nil {
+		return CyberSessionBlockUnavailableKey
+	}
 	if !enabled {
 		return ""
 	}
+	if time.Now().UnixNano() < s.cyberBlockWriteFailureUntil.Load() {
+		return CyberSessionBlockUnavailableKey
+	}
 	store := s.cyberSessionBlockStore()
 	if store == nil {
-		return ""
+		return CyberSessionBlockUnavailableKey
 	}
 	if explicitKey := CyberSessionExplicitBlockKey(apiKeyID, c, body); explicitKey != "" {
 		key, err := store.FindCyberSessionBlocked(ctx, []string{explicitKey})
 		if err != nil {
 			logger.LegacyPrintf("service.openai_gateway", "cyber explicit session read failed: err=%v", err)
-			return ""
+			return CyberSessionBlockUnavailableKey
 		}
 		if key != "" {
 			return key
@@ -139,7 +153,7 @@ func (s *OpenAIGatewayService) FindCyberSessionBlockedForRequest(ctx context.Con
 	active, err := store.IsCyberSessionScopeActive(ctx, scopeKey)
 	if err != nil {
 		logger.LegacyPrintf("service.openai_gateway", "cyber session scope read failed: err=%v", err)
-		return ""
+		return CyberSessionBlockUnavailableKey
 	}
 	if !active {
 		return ""
@@ -157,7 +171,7 @@ func (s *OpenAIGatewayService) FindCyberSessionBlockedForRequest(ctx context.Con
 	key, err := store.FindCyberSessionBlocked(ctx, keys)
 	if err != nil {
 		logger.LegacyPrintf("service.openai_gateway", "cyber session block batch read failed: err=%v", err)
-		return ""
+		return CyberSessionBlockUnavailableKey
 	}
 	return key
 }

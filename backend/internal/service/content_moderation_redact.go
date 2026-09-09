@@ -6,7 +6,7 @@ import (
 )
 
 var contentModerationSecretPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`(?i)\bhttps?://[^\s"'<>，。；、]+`),
+	regexp.MustCompile(`(?i)\b[a-z][a-z0-9+.-]*://[^\s"'<>，。；、]+`),
 	regexp.MustCompile(`(?i)\b((?:api[_-]?key|apikey|access[_-]?token|refresh[_-]?token|id[_-]?token|session[_-]?token|token|session|cookie|set[_-]?cookie|authorization|bearer|password|passwd|pwd|secret|client[_-]?secret|private[_-]?key)\s*[:=]\s*)(["']?)[^"'\s,;，。；、]{6,}`),
 	regexp.MustCompile(`(?i)\b(Bearer\s+)[A-Za-z0-9._~+/=-]{12,}`),
 	regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b`),
@@ -17,12 +17,18 @@ var contentModerationSecretPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b`),
 }
 
+var contentModerationPrivateKeyPattern = regexp.MustCompile(`(?is)-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|$)`)
+var contentModerationQuotedSecretPattern = regexp.MustCompile(`(?i)((?:["']|\b)(?:api[_ -]?key|apikey|access[_-]?token|refresh[_-]?token|id[_-]?token|session[_-]?token|token|cookie|set[_-]?cookie|authorization|password|passwd|pwd|secret|client[_-]?secret|private[_-]?key)["']?\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;，。；、]+)`)
+var contentModerationInlineDataPattern = regexp.MustCompile(`(?i)\bdata:[^\s"'<>]+`)
+
 func redactContentModerationSecrets(text string) string {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return ""
 	}
-	out := text
+	out := contentModerationPrivateKeyPattern.ReplaceAllString(text, `[已脱敏]`)
+	out = contentModerationQuotedSecretPattern.ReplaceAllString(out, `${1}"[已脱敏]"`)
+	out = contentModerationInlineDataPattern.ReplaceAllString(out, `[已脱敏]`)
 	for idx, pattern := range contentModerationSecretPatterns {
 		switch idx {
 		case 1:

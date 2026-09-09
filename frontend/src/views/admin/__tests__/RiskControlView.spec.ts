@@ -95,6 +95,7 @@ const baseConfig = (): ContentModerationConfig => ({
   block_message: '内容审计命中风险规则，请调整输入后重试',
   email_on_hit: true,
   auto_ban_enabled: true,
+  cyber_policy_auto_ban_enabled: false,
   ban_threshold: 10,
   violation_window_hours: 720,
   retry_count: 2,
@@ -283,6 +284,41 @@ describe('admin RiskControlView', () => {
       }),
     }))
     expect(showError).not.toHaveBeenCalled()
+  })
+
+  it('keeps the first-hit cyber suspension independent from threshold auto-ban', async () => {
+    getConfig.mockResolvedValue({
+      ...baseConfig(),
+      auto_ban_enabled: false,
+      cyber_policy_auto_ban_enabled: true,
+    })
+    const wrapper = mount(RiskControlView, {
+      global: {
+        stubs: {
+          AppLayout: AppLayoutStub,
+          BaseDialog: BaseDialogStub,
+          Icon: true,
+          Select: true,
+          Toggle: true,
+          Pagination: true,
+          ModelWhitelistSelector: ModelWhitelistSelectorStub,
+          ProxySelector: true,
+        },
+      },
+    })
+
+    await flushPromises()
+    await findButtonByText(wrapper, 'admin.riskControl.openSettings').trigger('click')
+    await findButtonByText(wrapper, 'admin.riskControl.tabs.response').trigger('click')
+    expect(wrapper.text()).toContain('admin.riskControl.cyberPolicyAutoBan')
+    expect(wrapper.text()).toContain('admin.riskControl.cyberPolicyAutoBanHint')
+    await findButtonByText(wrapper, 'admin.riskControl.saveConfig').trigger('click')
+    await flushPromises()
+
+    expect(updateConfig).toHaveBeenCalledWith(expect.objectContaining({
+      auto_ban_enabled: false,
+      cyber_policy_auto_ban_enabled: true,
+    }))
   })
 
   it('describes worker runtime as async audit and pre-block record processing', async () => {

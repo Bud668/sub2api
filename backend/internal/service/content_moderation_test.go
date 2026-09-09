@@ -18,10 +18,13 @@ import (
 )
 
 type contentModerationTestSettingRepo struct {
+	mu     sync.Mutex
 	values map[string]string
 }
 
 func (r *contentModerationTestSettingRepo) Get(ctx context.Context, key string) (*Setting, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if value, ok := r.values[key]; ok {
 		return &Setting{Key: key, Value: value}, nil
 	}
@@ -29,6 +32,8 @@ func (r *contentModerationTestSettingRepo) Get(ctx context.Context, key string) 
 }
 
 func (r *contentModerationTestSettingRepo) GetValue(ctx context.Context, key string) (string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if value, ok := r.values[key]; ok {
 		return value, nil
 	}
@@ -36,6 +41,8 @@ func (r *contentModerationTestSettingRepo) GetValue(ctx context.Context, key str
 }
 
 func (r *contentModerationTestSettingRepo) Set(ctx context.Context, key, value string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if r.values == nil {
 		r.values = map[string]string{}
 	}
@@ -44,6 +51,8 @@ func (r *contentModerationTestSettingRepo) Set(ctx context.Context, key, value s
 }
 
 func (r *contentModerationTestSettingRepo) GetMultiple(ctx context.Context, keys []string) (map[string]string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	out := map[string]string{}
 	for _, key := range keys {
 		if value, ok := r.values[key]; ok {
@@ -54,6 +63,8 @@ func (r *contentModerationTestSettingRepo) GetMultiple(ctx context.Context, keys
 }
 
 func (r *contentModerationTestSettingRepo) SetMultiple(ctx context.Context, settings map[string]string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if r.values == nil {
 		r.values = map[string]string{}
 	}
@@ -64,6 +75,8 @@ func (r *contentModerationTestSettingRepo) SetMultiple(ctx context.Context, sett
 }
 
 func (r *contentModerationTestSettingRepo) GetAll(ctx context.Context) (map[string]string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	out := make(map[string]string, len(r.values))
 	for key, value := range r.values {
 		out[key] = value
@@ -72,6 +85,8 @@ func (r *contentModerationTestSettingRepo) GetAll(ctx context.Context) (map[stri
 }
 
 func (r *contentModerationTestSettingRepo) Delete(ctx context.Context, key string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	delete(r.values, key)
 	return nil
 }
@@ -1797,6 +1812,25 @@ func TestBuildContentModerationAccountDisabledEmailBody_ContainsBanDetails(t *te
 	require.Contains(t, body, "10 次（阈值 10）")
 	require.Contains(t, body, "sexual / 0.926")
 	require.Contains(t, body, "Sub2API &lt;Admin&gt;")
+}
+
+func TestBuildContentModerationAccountDisabledEmailBody_CyberFirstHitIsProtective(t *testing.T) {
+	cfg := defaultContentModerationConfig()
+	cfg.BanThreshold = 10
+	log := &ContentModerationLog{
+		Action:          ContentModerationActionCyberPolicy,
+		UserEmail:       "user@example.com",
+		HighestCategory: "cyber_policy",
+		HighestScore:    1,
+		ViolationCount:  1,
+	}
+	body := buildContentModerationAccountDisabledEmailBody("Sub2API", log, cfg)
+
+	require.Contains(t, body, "首次命中规则")
+	require.Contains(t, body, "不代表平台已人工认定违规")
+	require.Contains(t, body, "1 次（阈值 1）")
+	require.NotContains(t, body, "多次触发")
+	require.Equal(t, "1", contentModerationEmailVariables(log, cfg)["ban_threshold"])
 }
 
 func TestContentModerationUnbanUser_ActivatesUserAndInvalidatesAuthCache(t *testing.T) {

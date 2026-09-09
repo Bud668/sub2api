@@ -18,6 +18,7 @@ export function mapErrorCategory(phase?: string | null, errType?: string | null)
     case 'request':
       switch ((errType || '').toLowerCase()) {
         case 'rate_limit_error':
+        case 'model_request_quota_exceeded':
           return 'rate_limit'
         case 'billing_error':
         case 'subscription_error':

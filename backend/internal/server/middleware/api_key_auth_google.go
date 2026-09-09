@@ -60,6 +60,10 @@ func APIKeyAuthWithSubscriptionGoogle(apiKeyService *service.APIKeyService, subs
 
 		apiKey, err := apiKeyService.GetByKey(c.Request.Context(), apiKeyString)
 		if err != nil {
+			if errors.Is(err, service.ErrCyberUserBanUnavailable) {
+				abortWithGoogleError(c, 503, "Safety suspension unavailable; API forwarding is paused")
+				return
+			}
 			if errors.Is(err, service.ErrAPIKeyNotFound) {
 				recordInvalidAuthFailure(c, apiKeyService)
 				MarkIngressRejected(c, IngressRejectInvalidAPIKey)

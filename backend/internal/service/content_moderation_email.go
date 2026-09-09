@@ -15,10 +15,7 @@ func buildContentModerationViolationEmailBody(siteName string, log *ContentModer
 	if userName == "" && log.UserID != nil {
 		userName = fmt.Sprintf("UID %d", *log.UserID)
 	}
-	threshold := cfg.BanThreshold
-	if threshold <= 0 {
-		threshold = defaultContentModerationBanThreshold
-	}
+	threshold := contentModerationBanThreshold(log, cfg)
 	statusBlock := ""
 	if log.AutoBanned {
 		statusBlock = `<div style="margin-top:24px;padding:18px 20px;border-radius:10px;background:#ff3b30;color:#fff;font-size:18px;font-weight:700;text-align:center;line-height:1.6;">账户当前处于封禁状态，所有 API 请求将被拒绝</div>`
@@ -68,9 +65,10 @@ func buildContentModerationAccountDisabledEmailBody(siteName string, log *Conten
 	if userName == "" && log.UserID != nil {
 		userName = fmt.Sprintf("UID %d", *log.UserID)
 	}
-	threshold := cfg.BanThreshold
-	if threshold <= 0 {
-		threshold = defaultContentModerationBanThreshold
+	threshold := contentModerationBanThreshold(log, cfg)
+	reason := "您的账户在计数周期内多次触发平台风控策略，系统已自动禁用该账户。详情如下。"
+	if log.Action == ContentModerationActionCyberPolicy {
+		reason = "您的请求被上游网络安全策略拦截。为保护平台，系统已按首次命中规则暂停该账户；这不代表平台已人工认定违规，可联系管理员复核。详情如下。"
 	}
 	return fmt.Sprintf(`<!doctype html>
 <html>
@@ -80,7 +78,7 @@ func buildContentModerationAccountDisabledEmailBody(siteName string, log *Conten
     <div style="background:#fff;border-radius:0 0 14px 14px;padding:40px 48px;box-shadow:0 8px 28px rgba(15,23,42,.08);">
       <div style="letter-spacing:4px;color:#999;font-size:14px;text-transform:uppercase;">Risk Control / 账户封禁</div>
       <h1 style="margin:20px 0 28px;font-size:30px;line-height:1.25;">账户已被自动禁用</h1>
-      <p style="font-size:17px;line-height:1.9;margin:0 0 24px;">尊敬的用户 <strong>%s</strong>，您的账户在计数周期内多次触发平台风控策略，系统已自动禁用该账户。详情如下。</p>
+      <p style="font-size:17px;line-height:1.9;margin:0 0 24px;">尊敬的用户 <strong>%s</strong>，%s</p>
       <div style="background:#fff1f2;border:1px solid #fecdd3;border-radius:12px;padding:22px 28px;margin:28px 0;">
         <h2 style="margin:0 0 18px;color:#b91c1c;font-size:18px;">封禁详情</h2>
         <table style="width:100%%;border-collapse:collapse;font-size:16px;">
@@ -99,6 +97,7 @@ func buildContentModerationAccountDisabledEmailBody(siteName string, log *Conten
 </body>
 </html>`,
 		html.EscapeString(userName),
+		html.EscapeString(reason),
 		html.EscapeString(time.Now().Format("2006-01-02 15:04:05")),
 		html.EscapeString(defaultContentModerationString(log.GroupName, "-")),
 		html.EscapeString(defaultContentModerationString(log.HighestCategory, "-")),

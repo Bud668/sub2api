@@ -16,6 +16,8 @@ import (
 type GroupModelAllowlist struct {
 	Enabled bool     `json:"enabled"`
 	Models  []string `json:"models,omitempty"`
+	// Request-local projection only; never persisted or inserted into auth caches.
+	UserPolicy *UserModelRequestPolicy `json:"-"`
 }
 
 // DomainGroupModelAllowlist 把 service 白名单转换为 ent 持久化使用的 domain 类型。
@@ -93,6 +95,9 @@ func (g *Group) ModelAllowlistEnabled() bool {
 // 候选形式覆盖代码中已有的模型名等价规则（Gemini models/ 前缀、
 // Antigravity/Claude -thinking 宽容规则、OpenAI 推理后缀），不做模糊匹配。
 func (a GroupModelAllowlist) Allows(model string) bool {
+	if a.UserPolicy != nil {
+		return a.UserPolicy.Allows(model)
+	}
 	if !a.Enabled {
 		return true
 	}
@@ -152,6 +157,15 @@ func groupModelAllowlistCandidates(model string) []string {
 // 精确条目沿用既有规则：只有出现在 source（账号映射键 ∪ 平台默认列表）的模式
 // 集合中才输出；通配条目展开为 source 中所有匹配项并保持 source 顺序；全局去重。
 func (a GroupModelAllowlist) FilterForListing(source []string) []string {
+	if a.UserPolicy != nil {
+		out := make([]string, 0, len(source))
+		for _, model := range source {
+			if a.Allows(model) && !strings.Contains(model, "*") {
+				out = append(out, model)
+			}
+		}
+		return out
+	}
 	if !a.Enabled {
 		return source
 	}

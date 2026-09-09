@@ -25,7 +25,7 @@ func TestRecordCyberPolicyIfMarked_NoMark(t *testing.T) {
 	c := newTestGinContext()
 	h := &OpenAIGatewayHandler{}
 
-	h.recordCyberPolicyIfMarked(c, nil, nil, nil, "gpt-5", true, nil, service.ChannelUsageFields{}, "")
+	h.recordCyberPolicyIfMarked(c, nil, nil, nil, "gpt-5", service.ContentModerationProtocolOpenAIResponses, true, nil, service.ChannelUsageFields{}, "")
 
 	// Flag must NOT be set when there was no mark.
 	require.False(t, c.GetBool(cyberPolicyRecordedKey),
@@ -48,14 +48,14 @@ func TestRecordCyberPolicyIfMarked_WithMark(t *testing.T) {
 
 	// First call: should set the flag.
 	require.NotPanics(t, func() {
-		h.recordCyberPolicyIfMarked(c, nil, nil, nil, "gpt-5", true, nil, service.ChannelUsageFields{}, "")
+		h.recordCyberPolicyIfMarked(c, nil, nil, nil, "gpt-5", service.ContentModerationProtocolOpenAIResponses, true, nil, service.ChannelUsageFields{}, "")
 	})
 	require.True(t, c.GetBool(cyberPolicyRecordedKey),
 		"cyberPolicyRecordedKey must be true after first call with a mark")
 
 	// Second call: flag already set — must be a no-op (idempotent).
 	require.NotPanics(t, func() {
-		h.recordCyberPolicyIfMarked(c, nil, nil, nil, "gpt-5", false, nil, service.ChannelUsageFields{}, "")
+		h.recordCyberPolicyIfMarked(c, nil, nil, nil, "gpt-5", service.ContentModerationProtocolOpenAIResponses, false, nil, service.ChannelUsageFields{}, "")
 	})
 	// Flag should still be true (not toggled or cleared).
 	require.True(t, c.GetBool(cyberPolicyRecordedKey),
@@ -76,7 +76,7 @@ func TestRecordCyberPolicyIfMarked_ForwardSuccessSkipsUsageLog(t *testing.T) {
 	h := &OpenAIGatewayHandler{}
 
 	require.NotPanics(t, func() {
-		h.recordCyberPolicyIfMarked(c, nil, nil, nil, "gpt-5", false /* forwardErrored=false */, nil, service.ChannelUsageFields{}, "")
+		h.recordCyberPolicyIfMarked(c, nil, nil, nil, "gpt-5", service.ContentModerationProtocolOpenAIResponses, false /* forwardErrored=false */, nil, service.ChannelUsageFields{}, "")
 	})
 	require.True(t, c.GetBool(cyberPolicyRecordedKey))
 }
@@ -89,7 +89,7 @@ func TestClearCyberPolicyTurnState(t *testing.T) {
 	h := &OpenAIGatewayHandler{}
 
 	service.MarkOpsCyberPolicy(c, service.CyberPolicyMark{Message: "turn1", UpstreamStatus: 200})
-	h.recordCyberPolicyIfMarked(c, nil, nil, nil, "gpt-5", false, nil, service.ChannelUsageFields{}, "")
+	h.recordCyberPolicyIfMarked(c, nil, nil, nil, "gpt-5", service.ContentModerationProtocolOpenAIResponses, false, nil, service.ChannelUsageFields{}, "")
 	require.True(t, c.GetBool(cyberPolicyRecordedKey))
 
 	clearCyberPolicyTurnState(c)
@@ -98,21 +98,21 @@ func TestClearCyberPolicyTurnState(t *testing.T) {
 
 	// turn2: a fresh cyber hit must be recordable again.
 	service.MarkOpsCyberPolicy(c, service.CyberPolicyMark{Message: "turn2", UpstreamStatus: 200})
-	h.recordCyberPolicyIfMarked(c, nil, nil, nil, "gpt-5", false, nil, service.ChannelUsageFields{}, "")
+	h.recordCyberPolicyIfMarked(c, nil, nil, nil, "gpt-5", service.ContentModerationProtocolOpenAIResponses, false, nil, service.ChannelUsageFields{}, "")
 	require.True(t, c.GetBool(cyberPolicyRecordedKey))
 	require.Equal(t, "turn2", service.GetOpsCyberPolicy(c).Message)
 }
 
-func TestAdvanceOpenAIWSCyberBlockStateDefersBlockAcrossFailover(t *testing.T) {
+func TestAdvanceOpenAIWSCyberBlockStateStopsFailover(t *testing.T) {
 	failoverErr := &service.UpstreamFailoverError{StatusCode: http.StatusTooManyRequests}
 
 	blocked, pending := advanceOpenAIWSCyberBlockState(false, false, true, failoverErr)
-	require.False(t, blocked, "the replacement account must receive the current turn")
-	require.True(t, pending, "the cyber hit must still block later turns")
+	require.True(t, blocked, "cyber_policy must immediately stop retries, even with a rate-limit wrapper")
+	require.False(t, pending)
 
 	blocked, pending = advanceOpenAIWSCyberBlockState(blocked, pending, false, failoverErr)
-	require.False(t, blocked, "additional failover attempts must remain eligible")
-	require.True(t, pending)
+	require.True(t, blocked)
+	require.False(t, pending)
 
 	blocked, pending = advanceOpenAIWSCyberBlockState(blocked, pending, false, nil)
 	require.True(t, blocked, "the next client turn must be blocked after failover finishes")
@@ -124,7 +124,7 @@ func TestClearCyberPolicyAttemptStatePreservesRecordedGuardDuringFailover(t *tes
 	h := &OpenAIGatewayHandler{}
 
 	service.MarkOpsCyberPolicy(c, service.CyberPolicyMark{Message: "account-a", UpstreamStatus: http.StatusOK})
-	h.recordCyberPolicyIfMarked(c, nil, nil, nil, "gpt-5", true, nil, service.ChannelUsageFields{}, "")
+	h.recordCyberPolicyIfMarked(c, nil, nil, nil, "gpt-5", service.ContentModerationProtocolOpenAIResponses, true, nil, service.ChannelUsageFields{}, "")
 	require.True(t, c.GetBool(cyberPolicyRecordedKey))
 
 	clearCyberPolicyAttemptState(c, false)
@@ -132,7 +132,7 @@ func TestClearCyberPolicyAttemptStatePreservesRecordedGuardDuringFailover(t *tes
 	require.True(t, c.GetBool(cyberPolicyRecordedKey), "the same logical turn must not record again after failover")
 
 	service.MarkOpsCyberPolicy(c, service.CyberPolicyMark{Message: "account-b", UpstreamStatus: http.StatusOK})
-	h.recordCyberPolicyIfMarked(c, nil, nil, nil, "gpt-5", true, nil, service.ChannelUsageFields{}, "")
+	h.recordCyberPolicyIfMarked(c, nil, nil, nil, "gpt-5", service.ContentModerationProtocolOpenAIResponses, true, nil, service.ChannelUsageFields{}, "")
 	require.Equal(t, "account-b", service.GetOpsCyberPolicy(c).Message)
 	require.True(t, c.GetBool(cyberPolicyRecordedKey))
 
@@ -161,6 +161,22 @@ func TestBuildCyberSessionBlockedOpsEntry(t *testing.T) {
 		SessionBlockKey: "abc123",
 	})
 	require.Equal(t, "session_block_key=abc123", entryWithKey.ErrorBody)
+}
+
+func TestCyberSessionGuardFailureIsNotUserViolation(t *testing.T) {
+	status, errType, code, message := cyberSessionBlockClientError(service.CyberSessionBlockUnavailableKey)
+	require.Equal(t, http.StatusServiceUnavailable, status)
+	require.Equal(t, "server_error", errType)
+	require.Equal(t, service.CyberSessionBlockUnavailableKey, code)
+	require.Contains(t, message, "转发已暂停")
+	entry := buildCyberSessionBlockedOpsEntry(cyberPolicyOpsErrorMeta{SessionBlockKey: code})
+	require.Equal(t, http.StatusServiceUnavailable, entry.StatusCode)
+	require.Equal(t, code, entry.ErrorType)
+	require.False(t, entry.IsBusinessLimited)
+	require.Nil(t, entry.RequestType)
+	require.Nil(t, entry.AccountID)
+	status, _, _, _ = cyberSessionBlockClientError("blocked-session-hash")
+	require.Equal(t, http.StatusForbidden, status)
 }
 
 // TestRejectIfCyberSessionBlocked_FailOpen verifies fail-open paths: nil handler
@@ -195,7 +211,7 @@ func TestBuildCyberSessionBlockWritePlanCombinesExplicitAndTranscriptKeys(t *tes
 	require.NotEmpty(t, plan.scopeKey)
 }
 
-// TestRecordCyberPolicyIfMarked_BlockKeyPlumbed verifies the 6th param is
+// TestRecordCyberPolicyIfMarked_BlockKeyPlumbed verifies the body param is
 // accepted and a non-empty key with nil gateway service does not panic
 // (write-side guards live in the service layer).
 func TestRecordCyberPolicyIfMarked_BlockKeyPlumbed(t *testing.T) {
@@ -203,7 +219,7 @@ func TestRecordCyberPolicyIfMarked_BlockKeyPlumbed(t *testing.T) {
 	service.MarkOpsCyberPolicy(c, service.CyberPolicyMark{Message: "x", UpstreamStatus: 400})
 	h := &OpenAIGatewayHandler{}
 	require.NotPanics(t, func() {
-		h.recordCyberPolicyIfMarked(c, nil, nil, nil, "gpt-5", true, []byte(`{"input":"deadbeef"}`), service.ChannelUsageFields{}, "")
+		h.recordCyberPolicyIfMarked(c, nil, nil, nil, "gpt-5", service.ContentModerationProtocolOpenAIResponses, true, []byte(`{"input":"deadbeef"}`), service.ChannelUsageFields{}, "")
 	})
 }
 

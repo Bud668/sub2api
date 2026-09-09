@@ -669,6 +669,9 @@ func classifyOpenAIWSAcquireError(err error) string {
 
 func isOpenAIWSRateLimitError(codeRaw, errTypeRaw, msgRaw string) bool {
 	code := strings.ToLower(strings.TrimSpace(codeRaw))
+	if code == "cyber_policy" {
+		return false
+	}
 	errType := strings.ToLower(strings.TrimSpace(errTypeRaw))
 	msg := strings.ToLower(strings.TrimSpace(msgRaw))
 
@@ -728,6 +731,9 @@ func (s *OpenAIGatewayService) newOpenAIWSRateLimitFailoverError(account *Accoun
 
 func classifyOpenAIWSErrorEventFromRaw(codeRaw, errTypeRaw, msgRaw string) (string, bool) {
 	code := strings.ToLower(strings.TrimSpace(codeRaw))
+	if code == "cyber_policy" {
+		return "cyber_policy", false
+	}
 	errType := strings.ToLower(strings.TrimSpace(errTypeRaw))
 	msg := strings.ToLower(strings.TrimSpace(msgRaw))
 
@@ -781,6 +787,9 @@ func classifyOpenAIWSErrorEvent(message []byte) (string, bool) {
 
 func openAIWSErrorHTTPStatusFromRaw(codeRaw, errTypeRaw string) int {
 	code := strings.ToLower(strings.TrimSpace(codeRaw))
+	if code == "cyber_policy" {
+		return http.StatusForbidden
+	}
 	errType := strings.ToLower(strings.TrimSpace(errTypeRaw))
 	switch {
 	case strings.Contains(errType, "invalid_request"),

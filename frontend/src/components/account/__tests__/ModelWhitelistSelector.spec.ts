@@ -93,7 +93,7 @@ describe('ModelWhitelistSelector', () => {
 
   it('copies a model ID without selecting the model', async () => {
     const wrapper = mountSelector()
-    await wrapper.get('div.cursor-pointer').trigger('click')
+    await wrapper.get('[data-testid="toggle-model-dropdown"]').trigger('click')
 
     const row = findModelRow(wrapper, 'gpt-5.6-sol')
 
@@ -109,13 +109,29 @@ describe('ModelWhitelistSelector', () => {
 
   it('keeps the existing model selection behavior', async () => {
     const wrapper = mountSelector()
-    await wrapper.get('div.cursor-pointer').trigger('click')
+    await wrapper.get('[data-testid="toggle-model-dropdown"]').trigger('click')
 
     const row = findModelRow(wrapper, 'gpt-5.6-sol')
     await row.get('[data-testid="select-model"]').trigger('click')
 
     expect(wrapper.emitted('update:modelValue')).toEqual([[['gpt-5.6-sol']]])
     expect(copyToClipboard).not.toHaveBeenCalled()
+  })
+
+  it('accepts system-only options, preserves checks across search and selects only visible results', async () => {
+    const wrapper = mountSelector({ models: ['gpt-5.6-sol', 'gpt-5.6-luna', 'custom-server-model'], allowCustom: false })
+    expect(wrapper.text()).not.toContain('admin.accounts.customModelName')
+    await wrapper.get('[data-testid="toggle-model-dropdown"]').trigger('click')
+    expect(wrapper.findAll('[data-testid="model-option"]')).toHaveLength(3)
+    await findModelRow(wrapper, 'gpt-5.6-sol').get('[data-testid="select-model"]').trigger('click')
+    await wrapper.setProps({ modelValue: ['gpt-5.6-sol'] })
+    expect(findModelRow(wrapper, 'gpt-5.6-sol').get('[data-testid="select-model"]').attributes('aria-pressed')).toBe('true')
+    await wrapper.get('input[aria-label="admin.accounts.searchModels"]').setValue('luna')
+    expect(wrapper.findAll('[data-testid="model-option"]')).toHaveLength(1)
+    await wrapper.get('[data-testid="select-visible-models"]').trigger('click')
+    expect(wrapper.emitted('update:modelValue')?.at(-1)).toEqual([['gpt-5.6-sol', 'gpt-5.6-luna']])
+    expect(syncUpstreamModels).not.toHaveBeenCalled()
+    expect(syncUpstreamModelsPreview).not.toHaveBeenCalled()
   })
 
   it('warns when model IDs sync but capability metadata is incomplete', async () => {

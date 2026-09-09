@@ -433,6 +433,28 @@ export default {
 
     // Users Management
     users: {
+      modelPolicy: {
+        title: '模型使用规则', model: '模型', permission: '权限', requests: '请求数上限', hours: '周期（小时）', usage: '当前计数 / 上限',
+        deny: '禁用', unlimited: '不限次数', limited: '周期限量', add: '添加模型', reset: '重置次数', remaining: '剩余', resetsAt: '恢复时间', period: '每 {hours} 小时',
+        cycle: '重置周期', daily: '每天', hourly: '按小时', dailyReset: '每天北京时间 00:00 重置',
+        bulkAdd: '批量添加模型规则', addSelected: '将所选 {count} 个模型添加到规则',
+        bulkHint: '勾选模型 → 设置本批规则 → 添加到下方 → 保存生效。等价别名共用规则，各模型独立计数，已有规则不会被覆盖。',
+        chooseModels: '1. 选择模型', searchModels: '搜索模型名称，例如 luna',
+        selectionCount: '已选 {selected} 个 · 当前可选 {visible} 个', selectResults: '全选搜索结果', clearSelection: '清空勾选',
+        noMatchingModels: '没有匹配的未添加模型，可修改搜索内容或检查下方已有规则。',
+        configureBatch: '2. 设置本批规则', addedRules: '已添加规则（{count}/200）',
+        selectModel: '搜索并选择模型', unlistedModel: '此已存模型不在当前候选中，请核对或重新选择；原规则仍保留。', noCandidates: '暂无模型候选，请先检查分组与上游账号配置。',
+        activeHint: '用户模型规则已生效：未设置的模型默认允许。分组模型白名单不参与限制；路由、订阅和计费保持不变。',
+        draftHint: '当前为准备状态：仍使用原有分组权限。保存需要的限制后，可切换全站为用户规则；无规则用户不受额外模型限制。',
+        scopeHint: '只限制明确设置的模型，其他可用模型默认允许；同一用户所有 Key 和分组合并计数。按天在北京时间零点重置，按小时从首次请求计时。计数包含在途预占，明确未执行的请求退回；不属于违规封号。更改周期不清零，当前周期沿用到期。',
+        emptyHint: '未设置额外模型限制，所有可用模型默认允许；原有 RPM、并发、余额与安全限制仍生效。',
+        clearConfirm: '确认移除此用户的全部模型规则？所有可用模型将不再受用户级模型限制，原有 RPM、并发、计费与安全限制仍保留。',
+        activate: '切换全站为用户规则并关闭分组白名单',
+        activateConfirm: '这会切换全站权限来源并关闭分组模型白名单。未设置规则的用户与模型默认允许，只有明确设置的规则限制使用；路由、订阅、计费及安全限制不变。当前未保存的编辑不会自动保存。确认切换？',
+        resetConfirm: '确认重置模型 {model} 的请求次数？每日模式仍在北京时间零点重置；按小时模式从下一次请求重新计时。此操作会留审计记录。',
+        invalid: '最多 200 条不重复的模型规则；限量需设置 1–1000000 次，每日重置或 1–720 小时周期。不支持手填新模型或通配符。',
+        failed: '无法读取或保存模型规则，请重试。',
+      },
       title: '用户管理',
       description: '管理用户账户和权限',
       createUser: '创建用户',

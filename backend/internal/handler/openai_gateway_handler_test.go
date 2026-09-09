@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	pkghttputil "github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
@@ -612,7 +613,7 @@ func TestOpenAIMissingResponsesDependencies(t *testing.T) {
 		h := &OpenAIGatewayHandler{
 			gatewayService:      &service.OpenAIGatewayService{},
 			billingCacheService: &service.BillingCacheService{},
-			apiKeyService:       &service.APIKeyService{},
+			apiKeyService:       newOpenAIWSUserAuthTestService(nil),
 			concurrencyHelper: &ConcurrencyHelper{
 				concurrencyService: &service.ConcurrencyService{},
 			},
@@ -666,7 +667,7 @@ func TestOpenAIEnsureResponsesDependencies(t *testing.T) {
 		h := &OpenAIGatewayHandler{
 			gatewayService:      &service.OpenAIGatewayService{},
 			billingCacheService: &service.BillingCacheService{},
-			apiKeyService:       &service.APIKeyService{},
+			apiKeyService:       newOpenAIWSUserAuthTestService(nil),
 			concurrencyHelper: &ConcurrencyHelper{
 				concurrencyService: &service.ConcurrencyService{},
 			},
@@ -1403,7 +1404,7 @@ func TestOpenAIResponsesWebSocket_ContentModerationBlocksFirstFrame(t *testing.T
 	h := &OpenAIGatewayHandler{
 		gatewayService:           &service.OpenAIGatewayService{},
 		billingCacheService:      &service.BillingCacheService{},
-		apiKeyService:            &service.APIKeyService{},
+		apiKeyService:            newOpenAIWSUserAuthTestService(nil),
 		contentModerationService: moderationSvc,
 		concurrencyHelper:        NewConcurrencyHelper(service.NewConcurrencyService(&concurrencyCacheMock{}), SSEPingFormatNone, time.Second),
 	}
@@ -1892,7 +1893,7 @@ func newOpenAIHandlerForPreviousResponseIDValidation(t *testing.T, cache *concur
 	return &OpenAIGatewayHandler{
 		gatewayService:      &service.OpenAIGatewayService{},
 		billingCacheService: &service.BillingCacheService{},
-		apiKeyService:       &service.APIKeyService{},
+		apiKeyService:       newOpenAIWSUserAuthTestService(nil),
 		concurrencyHelper:   NewConcurrencyHelper(service.NewConcurrencyService(cache), SSEPingFormatNone, time.Second),
 	}
 }
@@ -1931,6 +1932,7 @@ type openAIResponsesWSUsageLogCase struct {
 	group *service.Group
 	// firstFrameCloseExpected：首帧即被拒（连接被 1008 关闭），不期待任何响应帧。
 	firstFrameCloseExpected bool
+	firstFrameCloseReason   string
 	// secondTurnCloseExpected：第二个 turn 被拒（连接被 1008 关闭）。
 	secondTurnCloseExpected bool
 }
@@ -2234,7 +2236,7 @@ func TestOpenAIResponses_APIKeyPassthroughPool5xxRetriesThenExhaustsMaxSwitches(
 		gatewaySvc,
 		service.NewConcurrencyService(nil),
 		billingCacheSvc,
-		service.NewAPIKeyService(nil, nil, nil, nil, nil, nil, cfg),
+		newOpenAIWSUserAuthTestService(cfg),
 		nil,
 		nil,
 		nil,
@@ -2335,7 +2337,7 @@ func TestOpenAIResponses_APIKeyPassthroughPoolAuthFailureRetriesThenSwitchesToHe
 				gatewaySvc,
 				service.NewConcurrencyService(nil),
 				billingCacheSvc,
-				service.NewAPIKeyService(nil, nil, nil, nil, nil, nil, cfg),
+				newOpenAIWSUserAuthTestService(cfg),
 				nil,
 				nil,
 				nil,
@@ -2417,7 +2419,7 @@ func TestOpenAIResponses_APIKeyPassthroughSSERateLimitUsesConfiguredPoolRetry(t 
 		gatewaySvc,
 		service.NewConcurrencyService(nil),
 		billingCacheSvc,
-		service.NewAPIKeyService(nil, nil, nil, nil, nil, nil, cfg),
+		newOpenAIWSUserAuthTestService(cfg),
 		nil,
 		nil,
 		nil,
@@ -2445,8 +2447,13 @@ func TestOpenAIResponses_APIKeyPassthroughSSERateLimitUsesConfiguredPoolRetry(t 
 	require.Equal(t, "Upstream rate limit exceeded, please retry later", gjson.GetBytes(rec.Body.Bytes(), "error.message").String())
 }
 
-func TestOpenAIResponsesWebSocket_FailoverOnUpstreamUsageLimitEvent(t *testing.T) {
+func TestOpenAIResponsesWebSocket_UserModelQuotaFailoverOnUpstreamUsageLimitEvent(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+	expectUserModelWSReservation(mock, 1702, "gpt-5.1", true)
+	expectUserModelWSLoad(mock, 1702, "gpt-5.1") // retry checks permission but reuses the reserved slot
 
 	firstHitCh := make(chan []byte, 1)
 	secondHitCh := make(chan []byte, 1)
@@ -2585,13 +2592,15 @@ func TestOpenAIResponsesWebSocket_FailoverOnUpstreamUsageLimitEvent(t *testing.T
 	h := &OpenAIGatewayHandler{
 		gatewayService:      gatewaySvc,
 		billingCacheService: billingCacheSvc,
-		apiKeyService:       &service.APIKeyService{},
+		apiKeyService:       newOpenAIWSUserAuthTestService(nil),
 		concurrencyHelper:   NewConcurrencyHelper(service.NewConcurrencyService(cache), SSEPingFormatNone, time.Second),
 		maxAccountSwitches:  3,
 	}
+	h.apiKeyService.ModelPolicies = service.NewUserModelPolicyService(db)
 
 	apiKey := &service.APIKey{
 		ID:      1802,
+		UserID:  1702,
 		GroupID: &groupID,
 		User:    &service.User{ID: 1702, Status: service.StatusActive},
 		Group:   &service.Group{ID: groupID, Platform: service.PlatformOpenAI, Status: service.StatusActive},
@@ -2639,6 +2648,7 @@ func TestOpenAIResponsesWebSocket_FailoverOnUpstreamUsageLimitEvent(t *testing.T
 		t.Fatal("等待第二个上游收到重放首帧超时")
 	}
 	require.Equal(t, []int64{int64(9902)}, accountRepo.rateLimitedIDs)
+	require.NoError(t, mock.ExpectationsWereMet(), "internal failover must not reserve twice or refund the successful request")
 }
 
 func TestOpenAIResponsesWebSocket_FirstOutputTimeoutWithoutDownstreamReusesClientForOneFailover(t *testing.T) {
@@ -2771,7 +2781,7 @@ func TestOpenAIResponsesWebSocket_FirstOutputTimeoutWithoutDownstreamReusesClien
 	h := &OpenAIGatewayHandler{
 		gatewayService:      gatewaySvc,
 		billingCacheService: billingCacheSvc,
-		apiKeyService:       &service.APIKeyService{},
+		apiKeyService:       newOpenAIWSUserAuthTestService(nil),
 		concurrencyHelper:   NewConcurrencyHelper(service.NewConcurrencyService(cache), SSEPingFormatNone, time.Second),
 		maxAccountSwitches:  3,
 	}
@@ -3000,7 +3010,7 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 	h := &OpenAIGatewayHandler{
 		gatewayService:      gatewaySvc,
 		billingCacheService: billingCacheSvc,
-		apiKeyService:       &service.APIKeyService{},
+		apiKeyService:       newOpenAIWSUserAuthTestService(nil),
 		concurrencyHelper:   NewConcurrencyHelper(service.NewConcurrencyService(cache), SSEPingFormatNone, time.Second),
 	}
 
@@ -3051,7 +3061,11 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 		var closeErr coderws.CloseError
 		require.ErrorAs(t, readErr, &closeErr)
 		require.Equal(t, coderws.StatusPolicyViolation, closeErr.Code)
-		require.Contains(t, closeErr.Reason, "not available for this group")
+		reason := tc.firstFrameCloseReason
+		if reason == "" {
+			reason = "not available for this group"
+		}
+		require.Contains(t, closeErr.Reason, reason)
 		_ = clientConn.CloseNow()
 		return openAIResponsesWSUsageLogResult{}
 	}

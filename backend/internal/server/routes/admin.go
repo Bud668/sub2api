@@ -298,6 +298,7 @@ func registerDashboardRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 }
 
 func registerUserManagementRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	admin.POST("/model-request-policies/activate", h.APIKey.AdminActivateModelPolicies)
 	users := admin.Group("/users")
 	{
 		users.GET("", h.Admin.User.List)
@@ -317,6 +318,9 @@ func registerUserManagementRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		users.GET("/:id/platform-quotas", h.Admin.User.GetUserPlatformQuotas)
 		users.PUT("/:id/platform-quotas", h.Admin.User.UpdateUserPlatformQuotas)
 		users.POST("/:id/platform-quotas/reset", h.Admin.User.ResetUserPlatformQuotaWindow)
+		users.GET("/:id/model-policy", h.APIKey.AdminGetModelPolicy)
+		users.PUT("/:id/model-policy", h.APIKey.AdminSaveModelPolicy)
+		users.POST("/:id/model-policy/reset", h.APIKey.AdminResetModelQuota)
 
 		// User attribute values
 		users.GET("/:id/attributes", h.Admin.UserAttribute.GetUserAttributes)

@@ -99,6 +99,10 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 
 		apiKey, err := apiKeyService.GetByKey(c.Request.Context(), apiKeyString)
 		if err != nil {
+			if errors.Is(err, service.ErrCyberUserBanUnavailable) {
+				AbortWithError(c, http.StatusServiceUnavailable, "CYBER_USER_BAN_UNAVAILABLE", "Safety suspension unavailable; API forwarding is paused")
+				return
+			}
 			if errors.Is(err, service.ErrAPIKeyNotFound) {
 				recordInvalidAuthFailure(c, apiKeyService)
 				MarkIngressRejected(c, IngressRejectInvalidAPIKey)
