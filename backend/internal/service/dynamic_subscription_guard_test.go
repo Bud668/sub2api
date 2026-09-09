@@ -260,6 +260,58 @@ func TestDynamicQuotaRefreshPersistsInvalidAndCanceledQueries(t *testing.T) {
 	}
 }
 
+func TestDynamicQuotaStaleRecoveryAndNotificationSurviveRestart(t *testing.T) {
+	s, db := dynamicTestStore(t)
+	ctx := context.Background()
+	dynamicTestSave(t, s, 11, 4, true)
+	now := time.Now().UTC()
+	reset := now.Add(6 * 24 * time.Hour)
+	updateDynamicGuardPool(t, db, 4, func(p *DynamicQuotaPoolState) {
+		o := dynamicTestObservation(4, 50, reset, now.Add(-13*time.Minute))
+		p.Snapshot, p.SampleAnchor = &o, &o
+		p.Health = dynamicQuotaHealth{Failures: 1, LastAttemptAt: o.FetchedAt}
+		p.GuardSignal = "warning"
+	})
+	require.NoError(t, s.recordRefreshFailure(ctx, 4, now.Add(-2*time.Minute)))
+	require.NoError(t, s.recordRefreshFailure(ctx, 4, now.Add(-110*time.Second)))
+	q, err := s.Load(ctx, 11)
+	require.NoError(t, err)
+	require.Equal(t, 2, q.pool.Health.Failures, "test the below-threshold failure count after a long stale gap")
+	var pauses int
+	require.NoError(t, db.QueryRow(`SELECT count(*) FROM dynamic_quota_events WHERE kind='quota_guard_paused'`).Scan(&pauses))
+	require.Equal(t, 1, pauses, "clock expiry must create a pause event once, not zero or one per poll")
+	s = NewDynamicSubscriptionService(db, dynamicTestAccounts{}, nil, nil)
+	for i := 0; i < 3; i++ {
+		observed := now.Add(time.Duration(i-2) * 30 * time.Second)
+		s.fetch = func(_ context.Context, id int64) (DynamicQuotaObservation, error) {
+			return dynamicTestObservation(id, 50, reset, observed), nil
+		}
+		require.NoError(t, s.Refresh(ctx, 4))
+		q, err = s.Load(ctx, 11)
+		require.NoError(t, err)
+		if i < 2 {
+			require.Equal(t, "quota_paused", q.Status)
+		} else {
+			require.Equal(t, "learning", q.Status)
+		}
+	}
+	var recovered int
+	require.NoError(t, db.QueryRow(`SELECT count(*) FROM dynamic_quota_events WHERE kind='quota_guard_recovered'`).Scan(&recovered))
+	require.Equal(t, 1, recovered)
+	require.Equal(t, 20.0, q.UsedUSD)
+	require.Equal(t, int64(1), q.Cycle)
+	updateDynamicGuardPool(t, db, 4, func(p *DynamicQuotaPoolState) {
+		p.Snapshot.FetchedAt = now.Add(-11 * time.Minute)
+		p.Health = dynamicQuotaHealth{Failures: 3, Recoveries: 2, LastAttemptAt: p.Snapshot.FetchedAt, LastRecoveryAt: p.Snapshot.FetchedAt}
+		p.GuardSignal = "paused"
+	})
+	require.NoError(t, s.Refresh(ctx, 4))
+	q, err = s.Load(ctx, 11)
+	require.NoError(t, err)
+	require.Equal(t, "quota_paused", q.Status, "two recovery samples from before another stale gap do not count")
+	require.Equal(t, 1, q.pool.Health.Recoveries)
+}
+
 func TestDynamicQuotaFailurePauseAndRecoveryKeepsBilling(t *testing.T) {
 	s, db := dynamicTestStore(t)
 	ctx := context.Background()

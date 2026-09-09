@@ -60,6 +60,7 @@ type DynamicQuotaPoolState struct {
 	LastAllocationAt time.Time                   `json:"last_allocation_at"`
 	CapacityReview   *DynamicQuotaCapacityReview `json:"capacity_review,omitempty"`
 	Health           dynamicQuotaHealth          `json:"health,omitempty"`
+	GuardSignal      string                      `json:"guard_signal,omitempty"`
 }
 
 func (p *DynamicQuotaPoolState) growthFrozen() bool {
@@ -187,8 +188,9 @@ func (p *DynamicQuotaPoolState) Observe(o DynamicQuotaObservation, now time.Time
 	if !o.FetchedAt.After(old.FetchedAt) {
 		return false
 	}
-	if now.Sub(old.FetchedAt) > dynamicQuotaFreshness && p.Health.Failures == 0 {
-		p.Health.Failures, p.Health.Recoveries = dynamicQuotaGuardChecks, 0
+	if now.Sub(old.FetchedAt) > dynamicQuotaFreshness {
+		p.Health.Failures = max(p.Health.Failures, dynamicQuotaGuardChecks)
+		p.Health.Recoveries = 0 // Old recovery observations cannot bridge another stale gap.
 	}
 	boundaryChanged := math.Abs(o.ResetAt.Sub(old.ResetAt).Seconds()) > dynamicQuotaResetTolerance.Seconds()
 	// An unused rolling window moves with the query time. Refresh its baseline

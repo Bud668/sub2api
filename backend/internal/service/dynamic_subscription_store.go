@@ -606,7 +606,6 @@ func (s *DynamicSubscriptionService) Refresh(ctx context.Context, accountID int6
 	}
 	o.LocalStandardTotal = totalBefore
 	now := time.Now().UTC()
-	beforeGuard := dynamicQuotaGuardSignal(p, now)
 	initial := p.Snapshot == nil
 	confirmed := p.Observe(o, now)
 	if initial && p.Snapshot != nil && o.Valid(now) && o.UsedPercent >= 5 {
@@ -665,10 +664,10 @@ func (s *DynamicSubscriptionService) Refresh(ctx context.Context, accountID int6
 	if err = s.reallocate(ctx, tx, accountID, p, now); err != nil {
 		return err
 	}
-	if err = writeDynamicPool(ctx, tx, accountID, p); err != nil {
+	if err = recordDynamicGuardTransition(ctx, tx, accountID, p, now); err != nil {
 		return err
 	}
-	if err = recordDynamicGuardTransition(ctx, tx, accountID, p, beforeGuard, now); err != nil {
+	if err = writeDynamicPool(ctx, tx, accountID, p); err != nil {
 		return err
 	}
 	if err = tx.Commit(); err != nil {
@@ -698,8 +697,10 @@ func dynamicQuotaGuardSignal(p *DynamicQuotaPoolState, now time.Time) string {
 	return "recovered"
 }
 
-func recordDynamicGuardTransition(ctx context.Context, tx *sql.Tx, accountID int64, p *DynamicQuotaPoolState, before string, now time.Time) error {
+func recordDynamicGuardTransition(ctx context.Context, tx *sql.Tx, accountID int64, p *DynamicQuotaPoolState, now time.Time) error {
 	after := dynamicQuotaGuardSignal(p, now)
+	before := p.GuardSignal
+	p.GuardSignal = after // Compare with the last committed signal, including across clock expiry/restarts.
 	if after == before || after == "" || (before == "" && after == "recovered") {
 		return nil
 	}
@@ -732,12 +733,11 @@ func (s *DynamicSubscriptionService) recordRefreshFailure(ctx context.Context, a
 	if err != nil {
 		return err
 	}
-	before := dynamicQuotaGuardSignal(p, at)
 	p.recordFailure(at)
-	if err = writeDynamicPool(ctx, tx, accountID, p); err != nil {
+	if err = recordDynamicGuardTransition(ctx, tx, accountID, p, time.Now().UTC()); err != nil {
 		return err
 	}
-	if err = recordDynamicGuardTransition(ctx, tx, accountID, p, before, at); err != nil {
+	if err = writeDynamicPool(ctx, tx, accountID, p); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -791,6 +791,7 @@ func (s *DynamicSubscriptionService) ApproveCapacity(ctx context.Context, subscr
 		return ErrDynamicQuotaBinding
 	}
 	p.CapacityUSD, p.CapacityReview, p.Status = r.ProposedUSD, nil, "active"
+	p.GuardSignal = "recovered"
 	p.LastAllocationAt = time.Time{}
 	if err = s.reallocate(ctx, tx, accountID, p, now); err != nil {
 		return err
