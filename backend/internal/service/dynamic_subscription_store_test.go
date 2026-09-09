@@ -111,6 +111,51 @@ func dynamicTestSettle(t *testing.T, db *sql.DB, r *DynamicQuotaReservation, key
 	require.NoError(t, tx.Commit())
 }
 
+func TestDynamicQuotaPostgresOfficial024Migration(t *testing.T) {
+	s, db := dynamicTestStore(t)
+	dynamicTestSave(t, s, 11, 4, true)
+	dynamicExec(t, db, `ALTER TABLE settings ADD COLUMN updated_at TIMESTAMPTZ`)
+	modelMigration, err := os.ReadFile("../../migrations/237_user_model_request_policies.sql")
+	require.NoError(t, err)
+	dynamicExec(t, db, string(modelMigration))
+	dynamicExec(t, db, `INSERT INTO user_model_request_policies(user_id) VALUES(1);
+ INSERT INTO user_model_request_windows(user_id,model,used,resets_at) VALUES(1,'gpt-5.5',37,NOW()+INTERVAL '1 day')`)
+	dynamicExec(t, db, `CREATE TABLE user_platform_quotas(platform TEXT CHECK(platform IN ('openai')));
+ CREATE TABLE composite_model_routes(target_platform TEXT CHECK(target_platform IN ('openai')));
+ CREATE TABLE channel_monitors(provider TEXT CHECK(provider IN ('openai')));
+ CREATE TABLE channel_monitor_request_templates(provider TEXT CHECK(provider IN ('openai')));
+ INSERT INTO user_platform_quotas VALUES('openai');
+ INSERT INTO composite_model_routes VALUES('openai');
+ INSERT INTO channel_monitors VALUES('openai');
+ INSERT INTO channel_monitor_request_templates VALUES('openai');
+ INSERT INTO dynamic_quota_requests(id,account_id,cycle,subscription_id,hold_standard_usd,status)
+ VALUES('00000000-0000-4000-8000-000000000024',4,1,11,2,'uncertain');`)
+	ledger := func() string {
+		t.Helper()
+		var value string
+		err := db.QueryRow(`SELECT jsonb_build_object(
+ 'policies',(SELECT jsonb_agg(to_jsonb(p) ORDER BY subscription_id) FROM dynamic_subscription_policies p),
+ 'requests',(SELECT jsonb_agg(to_jsonb(r) ORDER BY id) FROM dynamic_quota_requests r),
+ 'subscriptions',(SELECT jsonb_agg(to_jsonb(s) ORDER BY id) FROM user_subscriptions s),
+ 'model_policies',(SELECT jsonb_agg(to_jsonb(p) ORDER BY user_id) FROM user_model_request_policies p),
+ 'model_windows',(SELECT jsonb_agg(to_jsonb(w) ORDER BY user_id,model) FROM user_model_request_windows w))::text`).Scan(&value)
+		require.NoError(t, err)
+		return value
+	}
+	before := ledger()
+	migration, err := os.ReadFile("../../migrations/237_add_minimax_platform.sql")
+	require.NoError(t, err)
+	for i := 0; i < 2; i++ {
+		dynamicExec(t, db, string(migration))
+		require.Equal(t, before, ledger(), "official migration must preserve live subscriptions and unknown holds")
+	}
+	for _, table := range []string{"user_platform_quotas", "composite_model_routes", "channel_monitors", "channel_monitor_request_templates"} {
+		dynamicExec(t, db, "INSERT INTO "+table+" VALUES('minimax')")
+		_, err := db.Exec("INSERT INTO " + table + " VALUES('invalid-platform')")
+		require.Error(t, err, "the platform CHECK must remain enforced")
+	}
+}
+
 func TestDynamicQuotaPostgresIsolationAndReset(t *testing.T) {
 	s, db := dynamicTestStore(t)
 	ctx := context.Background()

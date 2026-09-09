@@ -71,11 +71,11 @@ fi
     [[ $(go env GOVERSION) == "$(jq -r .go_version "$manifest")" ]] || fail "Go 版本不一致"
     go test ./internal/service ./internal/service/openai_ws_v2 ./internal/handler ./internal/handler/admin \
         ./internal/server/... ./internal/repository ./internal/pkg/apicompat ./internal/pkg/openai \
-        ./internal/pkg/requestmodel ./internal/pkg/httputil ./migrations
+        ./internal/pkg/requestmodel ./internal/pkg/httputil ./migrations ./cmd/server
 	go test -tags=unit ./internal/server/middleware \
 		-run 'CyberSuspension' -count=1
     go test -race -tags=unit ./internal/service \
-        -run 'CancelsUpstreamBeforeClosingBody' -count=1
+        -run 'CancelsUpstreamBeforeClosingBody|RuntimeBlock|OpsSystemLog|RuntimeLog|ComputeEffective|OpsCleanup' -count=1
     go test -race ./internal/service ./internal/service/openai_ws_v2 ./internal/handler ./internal/repository \
         -run 'Cyber|RedactContentModeration|Relay|Passthrough|HTTPBridge|ModelAllowlist|AuthCacheInvalidation|ClientCancellation|ClientDisconnect|SkipsCanceledClient|HTTP2|OpenAI429|OAuth429' -count=1
 	go test -race -tags=unit ./internal/server/middleware \
@@ -112,6 +112,7 @@ fi
             src/i18n/__tests__/localesMessageCompile.spec.ts \
             src/i18n/__tests__/localesNoKeyCollision.spec.ts
     fi
+    pnpm exec vitest run --changed "$(git rev-parse 'v0.2.3^{commit}')"
     pnpm run build
     if [[ "$dynamic_quota_release" == true ]]; then
         pnpm exec vitest run src/components/admin/__tests__/DynamicQuotaDialog.spec.ts \

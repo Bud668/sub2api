@@ -766,6 +766,54 @@ func TestOpenAIRuntimeBlock_ClearAccountSchedulingBlock(t *testing.T) {
 	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
 }
 
+func TestRuntimeBlockOpenAIRequiresExplicitClear(t *testing.T) {
+	svc := &OpenAIGatewayService{}
+	account := &Account{ID: 95, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Status: StatusActive, Schedulable: true}
+	svc.BlockAccountScheduling(account, time.Now().Add(time.Minute), "write pending or failed")
+	require.True(t, svc.isOpenAIAccountRequestRuntimeBlocked(account, "gpt-5.5"))
+	svc.ClearAccountSchedulingBlock(account.ID)
+	require.False(t, svc.isOpenAIAccountRequestRuntimeBlocked(account, "gpt-5.5"))
+}
+
+func TestRuntimeBlockHonorsClearedPersistedCooldown(t *testing.T) {
+	svc := &OpenAIGatewayService{}
+	account := &Account{ID: 92, Platform: PlatformGrok, Type: AccountTypeOAuth, Status: StatusActive, Schedulable: true}
+	svc.BlockAccountScheduling(account, time.Now().Add(30*time.Minute), "grok payment required")
+	require.False(t, svc.isOpenAIAccountRequestRuntimeBlocked(account, "grok-3"))
+	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
+}
+
+func TestRuntimeBlockConditionalClearSkipsNewerGeneration(t *testing.T) {
+	svc := &OpenAIGatewayService{}
+	account := &Account{ID: 94, Platform: PlatformGrok, Type: AccountTypeOAuth, Status: StatusActive, Schedulable: true}
+	firstUntil := time.Now().Add(10 * time.Minute)
+	svc.BlockAccountScheduling(account, firstUntil, "stale")
+	snapshot := svc.peekOpenAIAccountRuntimeBlock(account)
+	require.True(t, snapshot.blocked)
+	newerUntil := time.Now().Add(30 * time.Minute)
+	svc.BlockAccountScheduling(account, newerUntil, "fresh")
+	svc.clearOpenAIAccountRuntimeBlockIfUnchanged(account.ID, snapshot)
+	require.True(t, svc.isOpenAIAccountRuntimeBlocked(account))
+	require.False(t, svc.isOpenAIAccountRequestRuntimeBlocked(account, "grok-3"))
+	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
+}
+
+func TestRuntimeBlockKeepsActivePersistedCooldown(t *testing.T) {
+	svc := &OpenAIGatewayService{}
+	until := time.Now().Add(30 * time.Minute)
+	account := &Account{
+		ID:                     93,
+		Platform:               PlatformGrok,
+		Type:                   AccountTypeOAuth,
+		Status:                 StatusActive,
+		Schedulable:            true,
+		TempUnschedulableUntil: &until,
+	}
+	svc.BlockAccountScheduling(account, until, "grok payment required")
+	require.True(t, svc.isOpenAIAccountRequestRuntimeBlocked(account, "grok-3"))
+	require.True(t, svc.isOpenAIAccountRuntimeBlocked(account))
+}
+
 func TestShouldStopOpenAIOAuth429Failover_AfterBoundedFullWindows(t *testing.T) {
 	svc := &OpenAIGatewayService{}
 	account := &Account{ID: 42, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
