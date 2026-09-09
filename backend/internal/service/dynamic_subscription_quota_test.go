@@ -161,7 +161,7 @@ func TestDynamicQuotaEstimateAndReserve(t *testing.T) {
 	if math.Abs(p.CapacityUSD-900) > 1e-8 {
 		t.Fatalf("bad estimate %v", p.CapacityUSD)
 	}
-	if got := p.Available(o.FetchedAt, 220, 3); math.Abs(got-400) > 1e-8 {
+	if got := p.Available(o.FetchedAt, 220, 3); math.Abs(got-427) > 1e-8 {
 		t.Fatalf("unreported/in-flight costs not reserved: %v", got)
 	}
 	if p.Available(o.FetchedAt.Add(11*time.Minute), 220, 3) != 0 {
@@ -204,11 +204,11 @@ func TestDynamicQuotaAsymmetricAdjustmentThresholds(t *testing.T) {
 	}
 }
 
-func TestDynamicQuotaConfigurableSourceProtection(t *testing.T) {
+func TestDynamicQuotaNativeSourceProtection(t *testing.T) {
 	now := time.Now().UTC()
 	p := DynamicQuotaPoolState{Status: "active", CapacityUSD: 1000, Snapshot: &DynamicQuotaObservation{Identity: "source", UsedPercent: 50, ResetAt: now.Add(time.Hour), WindowSeconds: 604800, FetchedAt: now}}
-	for _, tc := range []struct{ ceiling, available float64 }{{98, 470}, {95, 440}, {55.25, 42.5}, {50, 0}, {1, 0}, {100, 490}} {
-		p.Settings.UsageCeilingPercent = tc.ceiling
+	for _, tc := range []struct{ ceiling, available float64 }{{98, 480}, {95, 450}, {55.25, 52.5}, {50, 0}, {1, 0}, {100, 500}, {0, 500}} {
+		p.ceilingPercent = tc.ceiling
 		if got := p.Available(now, 0, 0); math.Abs(got-tc.available) > 1e-8 {
 			t.Fatalf("ceiling=%v available=%v want=%v", tc.ceiling, got, tc.available)
 		}

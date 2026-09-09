@@ -11,7 +11,7 @@
         <p class="text-xs leading-relaxed text-gray-500 dark:text-gray-400">{{ t('dynamicQuota.optInHint') }}</p>
         <div>
           <label for="dynamic-source" class="input-label">{{ t('dynamicQuota.source') }}</label>
-          <select id="dynamic-source" v-model.number="form.account_id" class="input" required :disabled="form.revision > 0" @change="selectSource">
+          <select id="dynamic-source" v-model.number="form.account_id" class="input" required :disabled="form.revision > 0" @change="saved = false">
             <option :value="0" disabled>{{ t('dynamicQuota.chooseSource') }}</option>
             <option v-for="source in status.sources" :key="source.id" :value="source.id">#{{ source.id }} · {{ source.name }}</option>
             <option v-if="form.account_id && !status.sources.some(source => source.id === form.account_id)" :value="form.account_id">#{{ form.account_id }} · {{ t('dynamicQuota.sourceUnavailable') }}</option>
@@ -29,12 +29,7 @@
           </select>
           <p class="input-hint">{{ t('dynamicQuota.thresholdHint') }}</p>
         </div>
-        <div v-if="form.pool_settings" class="space-y-2 rounded-xl border border-amber-200 bg-amber-50/50 p-3 dark:border-amber-900 dark:bg-amber-900/10">
-          <p class="text-sm font-semibold">{{ t('dynamicQuota.poolProtection') }} · #{{ form.account_id }}</p>
-          <label for="dynamic-usage-ceiling" class="input-label">{{ t('dynamicQuota.usageCeiling') }}</label>
-          <input id="dynamic-usage-ceiling" v-model.number="form.pool_settings.usage_ceiling_percent" type="number" min="1" max="100" step="0.01" required class="input" @input="saved = false" />
-          <p class="text-xs leading-relaxed text-amber-800 dark:text-amber-200">{{ t('dynamicQuota.protectionHint', { reserve: reservePercent, stop: stopPercent }) }}</p>
-        </div>
+        <p class="rounded-lg bg-gray-50 p-3 text-xs leading-relaxed text-gray-600 dark:bg-dark-800 dark:text-gray-300">{{ t('dynamicQuota.nativeProtectionHint') }}</p>
         <p class="text-xs leading-relaxed text-gray-500 dark:text-gray-400">{{ t('dynamicQuota.allocationHint') }}</p>
       </fieldset>
       <DynamicQuotaCard v-if="status.policy.enabled" :quota="status.policy" />
@@ -58,7 +53,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { adminAPI } from '@/api/admin'
 import type { DynamicQuotaAdminStatus, DynamicQuotaInput, UserSubscription } from '@/types'
@@ -75,19 +70,10 @@ const saved = ref(false)
 const error = ref('')
 const status = ref<DynamicQuotaAdminStatus>()
 const form = reactive<DynamicQuotaInput>({ enabled: false, revision: 0, account_id: 0, weight: 1, max_limit_usd: 0, increase_threshold_usd: 10 })
-const reservePercent = computed(() => (100 - (Number(form.pool_settings?.usage_ceiling_percent) || 0)).toFixed(2))
-const stopPercent = computed(() => Math.max(0, (Number(form.pool_settings?.usage_ceiling_percent) || 0) - 1).toFixed(2))
-const selectSource = () => {
-  const source = status.value?.sources.find(source => source.id === form.account_id)
-  form.pool_settings = source ? { ...source.pool_settings } : undefined
-  saved.value = false
-}
 const apply = (result: DynamicQuotaAdminStatus) => {
   status.value = result
   const p = result.policy
   Object.assign(form, { enabled: p.enabled, revision: p.revision, account_id: p.account_id || 0, weight: p.weight, max_limit_usd: p.max_limit_usd, increase_threshold_usd: p.increase_threshold_usd })
-  selectSource()
-  if (p.pool_settings) form.pool_settings = { ...p.pool_settings }
 }
 const errorMessage = (err: unknown) => {
   const code = (err as { response?: { data?: { reason?: string } } })?.response?.data?.reason

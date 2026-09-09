@@ -9,8 +9,6 @@ import (
 )
 
 const (
-	dynamicQuotaDefaultCeiling = 98.0
-	dynamicQuotaSafety         = 0.01 // Additional uncertainty reserve; 98% is not an exact upper-bound SLA.
 	dynamicQuotaFreshness      = 10 * time.Minute
 	dynamicQuotaConfirmDelay   = 30 * time.Second
 	dynamicQuotaResetTolerance = 2 * time.Minute
@@ -28,7 +26,7 @@ type DynamicQuotaObservation struct {
 }
 
 type DynamicQuotaPoolState struct {
-	Settings         DynamicQuotaPoolSettings `json:"-"` // Separate persisted configuration, not overwritten by observations.
+	ceilingPercent   float64                  // Read from native account/global 7d auto-pause settings; never persisted here.
 	Cycle            int64                    `json:"cycle"`
 	StartedAt        time.Time                `json:"started_at"`
 	ConfirmedAt      *time.Time               `json:"confirmed_at,omitempty"`
@@ -41,17 +39,11 @@ type DynamicQuotaPoolState struct {
 	LastAllocationAt time.Time                `json:"last_allocation_at"`
 }
 
-type DynamicQuotaPoolSettings struct {
-	Revision            int64   `json:"revision"`
-	UsageCeilingPercent float64 `json:"usage_ceiling_percent"`
-}
-
 func (p *DynamicQuotaPoolState) stopPercent() float64 {
-	ceiling := p.Settings.UsageCeilingPercent
-	if ceiling == 0 {
-		ceiling = dynamicQuotaDefaultCeiling
+	if p.ceilingPercent > 0 {
+		return p.ceilingPercent
 	}
-	return math.Max(0, ceiling-dynamicQuotaSafety*100)
+	return 100 // Native auto-pause unset/disabled: no separate percentage reserve.
 }
 
 func validDynamicAmount(v float64) bool { return !math.IsNaN(v) && !math.IsInf(v, 0) && v >= 0 }

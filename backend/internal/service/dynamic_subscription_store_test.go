@@ -51,7 +51,8 @@ func dynamicTestStore(t *testing.T) (*DynamicSubscriptionService, *sql.DB) {
  CREATE TABLE groups(id BIGINT PRIMARY KEY,platform TEXT DEFAULT 'openai',subscription_type TEXT DEFAULT 'subscription',
  status TEXT DEFAULT 'active',rate_multiplier NUMERIC DEFAULT 1,weekly_limit_usd NUMERIC DEFAULT 700,
  peak_rate_enabled BOOLEAN DEFAULT false,peak_start TEXT DEFAULT '',peak_end TEXT DEFAULT '',peak_rate_multiplier NUMERIC DEFAULT 1,deleted_at TIMESTAMPTZ);
- CREATE TABLE accounts(id BIGINT PRIMARY KEY,name TEXT DEFAULT 'Test source',platform TEXT DEFAULT 'openai',type TEXT DEFAULT 'oauth',credentials JSONB,deleted_at TIMESTAMPTZ);
+ CREATE TABLE accounts(id BIGINT PRIMARY KEY,name TEXT DEFAULT 'Test source',platform TEXT DEFAULT 'openai',type TEXT DEFAULT 'oauth',credentials JSONB,extra JSONB,deleted_at TIMESTAMPTZ);
+ CREATE TABLE settings(key TEXT PRIMARY KEY,value TEXT);
  CREATE TABLE account_groups(account_id BIGINT,group_id BIGINT,PRIMARY KEY(account_id,group_id));
  CREATE TABLE user_subscriptions(id BIGINT PRIMARY KEY,user_id BIGINT,group_id BIGINT,status TEXT DEFAULT 'active',expires_at TIMESTAMPTZ DEFAULT NOW()+INTERVAL '30 days',
  daily_usage_usd NUMERIC DEFAULT 5,weekly_usage_usd NUMERIC DEFAULT 20,monthly_usage_usd NUMERIC DEFAULT 30,
@@ -231,8 +232,8 @@ func TestDynamicQuotaPostgresAppliedAllowance(t *testing.T) {
 		require.NoError(t, err)
 		now := time.Now().UTC()
 		p.Status = "active"
-		// One low-usage member: 80% * (20 used + 47% remaining capacity).
-		p.CapacityUSD = (candidate/0.8 - 20) / 0.47
+		// Native 7d threshold is unset: 80% * (20 used + 50% remaining capacity).
+		p.CapacityUSD = (candidate/0.8 - 20) / 0.5
 		p.LastAllocationAt = now
 		if windowDue {
 			p.LastAllocationAt = now.Add(-31 * time.Minute)
@@ -290,7 +291,7 @@ func TestDynamicQuotaPostgresAppliedAllowance(t *testing.T) {
 	require.Zero(t, after.RemainingUSD)
 }
 
-func TestDynamicQuotaPostgresSharedProtectionSettings(t *testing.T) {
+func TestDynamicQuotaPostgresNativeProtectionSettings(t *testing.T) {
 	s, db := dynamicTestStore(t)
 	ctx := context.Background()
 	for _, p := range [][2]int64{{11, 4}, {12, 4}, {21, 5}} {
@@ -298,23 +299,17 @@ func TestDynamicQuotaPostgresSharedProtectionSettings(t *testing.T) {
 	}
 	before, err := s.Load(ctx, 21)
 	require.NoError(t, err)
-	input := DynamicSubscriptionInput{Enabled: true, Revision: 1, AccountID: 4, Weight: 1, MaxLimitUSD: 700, PoolSettings: &DynamicQuotaPoolSettings{UsageCeilingPercent: 49.25}}
-	// Existing settings remain adjustable during upstream metadata outages.
-	s.fetch = func(context.Context, int64) (DynamicQuotaObservation, error) {
-		return DynamicQuotaObservation{}, errors.New("metadata unavailable")
-	}
-	require.NoError(t, s.Save(ctx, 11, input))
+	// Legacy pool percentages no longer apply, even after a restart/refresh.
+	dynamicExec(t, db, `UPDATE dynamic_quota_pools SET usage_ceiling_percent=1,config_revision=7`)
+	dynamicExec(t, db, `UPDATE accounts SET extra='{"auto_pause_7d_threshold":0.4925}' WHERE id=4`)
 	for _, id := range []int64{11, 12} {
 		q, err := s.Load(ctx, id)
 		require.NoError(t, err)
-		require.Equal(t, 49.25, q.PoolSettings.UsageCeilingPercent)
-		require.Equal(t, int64(1), q.PoolSettings.Revision)
+		require.Equal(t, 49.25, q.pool.stopPercent())
 		require.Equal(t, "upstream_reserve", q.Status)
 		require.ErrorIs(t, q.checkReady(), ErrDynamicQuotaExhausted, "reserve is a local limit, not an upstream 503")
 		require.Equal(t, 20.0, q.UsedUSD)
 		require.Equal(t, int64(1), q.Cycle)
-		require.Zero(t, q.RemainingUSD)
-		require.Nil(t, q.Public().PoolSettings)
 	}
 	for _, key := range []int64{101, 103} { // Includes an OFF member's consumption on the protected pool.
 		_, err = s.Begin(ctx, key, 4)
@@ -326,47 +321,52 @@ func TestDynamicQuotaPostgresSharedProtectionSettings(t *testing.T) {
 	r, err := s.Begin(ctx, 201, 5)
 	require.NoError(t, err)
 	r.RejectBeforeForward()
-	require.ErrorIs(t, s.Save(ctx, 12, input), ErrDynamicQuotaChanged, "another subscription's stale pool form must conflict")
-	input.Revision = 2
-	input.PoolSettings = &DynamicQuotaPoolSettings{Revision: 1, UsageCeilingPercent: 95.25}
-	require.NoError(t, s.Save(ctx, 11, input))
-	s.fetch = func(_ context.Context, id int64) (DynamicQuotaObservation, error) {
-		return dynamicTestObservation(id, 50, time.Now().UTC().Add(6*24*time.Hour), time.Now().UTC()), nil
+	for _, tc := range []struct {
+		name, extra, global string
+		ceiling             float64
+		denied              bool
+	}{
+		{"global default", `{}`, `{"default_threshold_7d":0.5}`, 50, true},
+		{"zero inherits", `{"auto_pause_7d_threshold":0}`, `{"default_threshold_7d":0.5}`, 50, true},
+		{"account override", `{"auto_pause_7d_threshold":0.9525}`, `{"default_threshold_7d":0.5}`, 95.25, false},
+		{"explicit disable", `{"auto_pause_7d_threshold":0.5,"auto_pause_7d_disabled":true}`, `{"default_threshold_7d":0.5}`, 100, false},
+		{"no weekly threshold", `{}`, `{"default_threshold_5h":0.1}`, 100, false},
+		{"no hidden one percent reserve", `{"auto_pause_7d_threshold":0.5025}`, `{}`, 50.25, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dynamicExec(t, db, `UPDATE accounts SET extra=$1::jsonb WHERE id=4`, tc.extra)
+			dynamicExec(t, db, `INSERT INTO settings VALUES('ops_advanced_settings',$1) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value`, `{"openai_account_quota_auto_pause":`+tc.global+`}`)
+			q, err := s.Load(ctx, 11)
+			require.NoError(t, err)
+			require.InDelta(t, tc.ceiling, q.pool.stopPercent(), 1e-8)
+			r, err := s.Begin(ctx, 101, 4) // Fresh native changes apply before any periodic refresh.
+			if tc.denied {
+				require.ErrorIs(t, err, ErrDynamicQuotaExhausted)
+			} else {
+				require.NoError(t, err)
+				r.RejectBeforeForward()
+			}
+		})
 	}
+	// Refresh and subscriber edits must not rewrite native settings or reset usage.
 	require.NoError(t, s.Refresh(ctx, 4))
-	status, err := s.AdminStatus(ctx, 11)
+	dynamicTestSave(t, s, 11, 4, true)
+	q, err := s.Load(ctx, 11)
 	require.NoError(t, err)
-	require.Equal(t, 95.25, status.Policy.PoolSettings.UsageCeilingPercent, "runtime observation must not overwrite saved protection")
-	require.Equal(t, int64(2), status.Policy.PoolSettings.Revision)
-	require.Equal(t, *status.Policy.PoolSettings, status.Sources[0].PoolSettings)
-	require.Equal(t, 20.0, status.Policy.UsedUSD)
-	require.Equal(t, int64(1), status.Policy.Cycle)
-	input.Revision = status.Policy.Revision
-	for _, percent := range []float64{-1, 0, 100.01, 1.111} {
-		input.PoolSettings = &DynamicQuotaPoolSettings{Revision: 2, UsageCeilingPercent: percent}
-		require.Equal(t, "INVALID_DYNAMIC_QUOTA", infraerrors.Reason(s.Save(ctx, 11, input)))
-	}
-	// Two different subscriber editors still serialize on the same source config.
-	results := make(chan error, 2)
-	for i, id := range []int64{11, 12} {
-		q, err := s.Load(ctx, id)
-		require.NoError(t, err)
-		go func(id, revision int64, ceiling float64) {
-			results <- s.Save(ctx, id, DynamicSubscriptionInput{Enabled: true, Revision: revision, AccountID: 4, Weight: 1, MaxLimitUSD: 700, PoolSettings: &DynamicQuotaPoolSettings{Revision: 2, UsageCeilingPercent: ceiling}})
-		}(id, q.Revision, float64(90+i))
-	}
-	var successes, conflicts int
-	for range 2 {
-		err := <-results
-		if err == nil {
-			successes++
-		} else {
-			require.ErrorIs(t, err, ErrDynamicQuotaChanged)
-			conflicts++
-		}
-	}
-	require.Equal(t, 1, successes)
-	require.Equal(t, 1, conflicts)
+	require.Equal(t, 20.0, q.UsedUSD)
+	require.Equal(t, int64(1), q.Cycle)
+	require.Nil(t, q.ConfirmedAt)
+	require.InDelta(t, 50.25, q.pool.stopPercent(), 1e-8)
+	var legacy float64
+	require.NoError(t, db.QueryRow(`SELECT usage_ceiling_percent FROM dynamic_quota_pools WHERE account_id=4`).Scan(&legacy))
+	require.Equal(t, 1.0, legacy, "leave applied migration and historical settings intact but unused")
+	// A settings failure must stop new protected traffic, not lose an already billed request.
+	r, err = s.Begin(ctx, 101, 4)
+	require.NoError(t, err)
+	dynamicExec(t, db, `UPDATE settings SET value='invalid json'`)
+	_, err = s.Begin(ctx, 101, 4)
+	require.ErrorIs(t, err, ErrDynamicQuotaUnavailable)
+	dynamicTestSettle(t, db, r, 101, 11, 1, 1)
 	var resets int
 	require.NoError(t, db.QueryRow(`SELECT count(*) FROM dynamic_quota_events WHERE kind='reset_confirmed'`).Scan(&resets))
 	require.Zero(t, resets)

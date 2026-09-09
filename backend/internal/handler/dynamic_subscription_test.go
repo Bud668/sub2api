@@ -25,7 +25,7 @@ func expectDynamicWSAdmission(t *testing.T, mock sqlmock.Sqlmock, allow bool) {
 	t.Helper()
 	now := time.Now().UTC()
 	hash := sha256.Sum256([]byte("9951"))
-	percent := 97.0
+	percent := 98.0
 	if allow {
 		percent = 50
 	}
@@ -34,17 +34,19 @@ func expectDynamicWSAdmission(t *testing.T, mock sqlmock.Sqlmock, allow bool) {
 	require.NoError(t, err)
 	mock.ExpectBegin()
 	mock.ExpectExec("INSERT INTO dynamic_quota_pools").WithArgs(int64(9951)).WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectQuery("SELECT state,config_revision,usage_ceiling_percent FROM dynamic_quota_pools").WithArgs(int64(9951)).WillReturnRows(sqlmock.NewRows([]string{"state", "config_revision", "usage_ceiling_percent"}).AddRow(raw, 0, 98))
+	mock.ExpectQuery("SELECT state FROM dynamic_quota_pools").WithArgs(int64(9951)).WillReturnRows(sqlmock.NewRows([]string{"state"}).AddRow(raw))
 	mock.ExpectQuery("SELECT us.id,us.status").WithArgs(int64(1851)).WillReturnRows(sqlmock.NewRows([]string{"id", "active"}).AddRow(11, true))
 	mock.ExpectQuery("SELECT account_id FROM dynamic_subscription_policies").WithArgs(int64(11)).WillReturnRows(sqlmock.NewRows([]string{"account_id"}).AddRow(9951))
 	mock.ExpectQuery("SELECT EXISTS").WithArgs(int64(9951)).WillReturnRows(sqlmock.NewRows([]string{"protected"}).AddRow(true))
+	mock.ExpectQuery("SELECT COALESCE\\(a.extra").WithArgs(int64(9951)).WillReturnRows(sqlmock.NewRows([]string{"extra", "settings"}).AddRow(`{"auto_pause_7d_threshold":0.98}`, `{}`))
 	if !allow {
 		mock.ExpectRollback()
 		return
 	}
 	mock.ExpectQuery("SELECT COALESCE\\(credentials").WithArgs(int64(9951), int64(1851)).WillReturnRows(sqlmock.NewRows([]string{"identity", "bound"}).AddRow("9951", true))
 	mock.ExpectQuery("SELECT p.standard_total_usd").WithArgs(int64(9951)).WillReturnRows(sqlmock.NewRows([]string{"total", "held", "max", "pending"}).AddRow(0, 0, 0, 0))
-	mock.ExpectQuery("SELECT p.enabled,p.revision").WithArgs(int64(11)).WillReturnRows(sqlmock.NewRows([]string{"enabled", "revision", "account_id", "weight", "max_limit", "used_std", "allocated_std", "used", "user_id", "group_id", "rate", "peak_enabled", "peak_start", "peak_end", "peak_rate", "state", "updated", "start", "held", "threshold", "applied", "config_revision", "ceiling"}).AddRow(true, 1, 9951, 1, 100, 0, 100, 0, 1751, 4301, 1, false, "", "", 1, raw, now, now, 0, 10, 100, 0, 98))
+	mock.ExpectQuery("SELECT p.enabled,p.revision").WithArgs(int64(11)).WillReturnRows(sqlmock.NewRows([]string{"enabled", "revision", "account_id", "weight", "max_limit", "used_std", "allocated_std", "used", "user_id", "group_id", "rate", "peak_enabled", "peak_start", "peak_end", "peak_rate", "state", "updated", "start", "held", "threshold", "applied"}).AddRow(true, 1, 9951, 1, 100, 0, 100, 0, 1751, 4301, 1, false, "", "", 1, raw, now, now, 0, 10, 100))
+	mock.ExpectQuery("SELECT COALESCE\\(a.extra").WithArgs(int64(9951)).WillReturnRows(sqlmock.NewRows([]string{"extra", "settings"}).AddRow(`{"auto_pause_7d_threshold":0.98}`, `{}`))
 	mock.ExpectExec("INSERT INTO dynamic_quota_requests").WithArgs(sqlmock.AnyArg(), int64(9951), int64(1), int64(11), int64(1851), 0.01).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 }
@@ -136,7 +138,7 @@ func TestDynamicQuotaWSFirstFrameReconnectAndTurns(t *testing.T) {
 }
 
 func TestDynamicQuotaPublicProjectionAndOps(t *testing.T) {
-	sub := &service.UserSubscription{ID: 11, DynamicQuota: &service.DynamicSubscriptionQuota{Enabled: true, AccountID: 4, CapacityEstimateUSD: 12345, SampleCount: 3, PoolSettings: &service.DynamicQuotaPoolSettings{UsageCeilingPercent: 98}, LimitUSD: 200, UsedUSD: 20, RemainingUSD: 180}}
+	sub := &service.UserSubscription{ID: 11, DynamicQuota: &service.DynamicSubscriptionQuota{Enabled: true, AccountID: 4, CapacityEstimateUSD: 12345, SampleCount: 3, LimitUSD: 200, UsedUSD: 20, RemainingUSD: 180}}
 	public, err := json.Marshal(dto.UserSubscriptionFromService(sub))
 	require.NoError(t, err)
 	require.NotContains(t, string(public), "account_id")

@@ -20,6 +20,7 @@
       <div class="flex flex-wrap justify-between gap-1"><dt>{{ t('dynamicQuota.confirmed') }}</dt><dd>{{ quota.confirmed_at ? date(quota.confirmed_at) : t('dynamicQuota.notReset') }}</dd></div>
       <div v-if="quota.expected_reset_at" class="flex flex-wrap justify-between gap-1"><dt>{{ t('dynamicQuota.expected') }}</dt><dd>{{ date(quota.expected_reset_at) }}</dd></div>
     </dl>
+    <p v-if="quota.status === 'learning'" class="mt-2 text-xs text-gray-600 dark:text-gray-300">{{ t('dynamicQuota.learningHint') }}</p>
     <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ t('dynamicQuota.cycleHint') }}</p>
   </section>
 </template>
