@@ -158,9 +158,13 @@ func (s *APIKeyService) invalidateLocalAuthCache(cacheKey string) {
 	}
 	if s.authCacheL1 != nil {
 		s.authCacheL1.Del(cacheKey)
+		// Ristretto queues writes: wait for Del so an earlier Set cannot
+		// reappear after invalidation returns. Reads keep their fast path.
+		s.authCacheL1.Wait()
 	}
 	if s.authNegativeCacheL1 != nil {
 		s.authNegativeCacheL1.Del(cacheKey)
+		s.authNegativeCacheL1.Wait()
 	}
 }
 
@@ -252,12 +256,7 @@ func (s *APIKeyService) setAuthCacheEntry(ctx context.Context, cacheKey string, 
 }
 
 func (s *APIKeyService) deleteAuthCache(ctx context.Context, cacheKey string) {
-	if s.authCacheL1 != nil {
-		s.authCacheL1.Del(cacheKey)
-	}
-	if s.authNegativeCacheL1 != nil {
-		s.authNegativeCacheL1.Del(cacheKey)
-	}
+	s.invalidateLocalAuthCache(cacheKey)
 	if s.cache == nil {
 		return
 	}

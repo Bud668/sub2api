@@ -114,6 +114,74 @@ func TestAuthCacheInvalidationWorker_FirstPassSchedulesSafetyPass(t *testing.T) 
 	require.Empty(t, repo.deleted)
 }
 
+func TestAuthCacheInvalidationDrainsQueuedWrites(t *testing.T) {
+	for _, negative := range []bool{false, true} {
+		for _, path := range []string{"local", "key", "outbox"} {
+			name := path + "/positive"
+			if negative {
+				name = path + "/negative"
+			}
+			t.Run(name, func(t *testing.T) {
+				entered, release := make(chan struct{}), make(chan struct{})
+				var once sync.Once
+				unblock := func() { once.Do(func() { close(release) }) }
+				local, err := ristretto.NewCache(&ristretto.Config{
+					NumCounters: 1000, MaxCost: 100, BufferItems: 64, IgnoreInternalCost: true,
+					OnReject: func(item *ristretto.Item) {
+						if item.Value == "queue-barrier" {
+							close(entered)
+							<-release
+						}
+					},
+				})
+				require.NoError(t, err)
+				t.Cleanup(func() { unblock(); local.Close() })
+				svc := &APIKeyService{cache: &authInvalidationCacheStub{}}
+				if negative {
+					svc.authNegativeCacheL1 = local
+				} else {
+					svc.authCacheL1 = local
+				}
+				key := svc.authCacheKey("test-key")
+				// Hold the real asynchronous writer before queuing Set -> Del.
+				require.True(t, local.Set("barrier", "queue-barrier", 101))
+				select {
+				case <-entered:
+				case <-time.After(time.Second):
+					t.Fatal("cache writer did not reach barrier")
+				}
+				require.True(t, local.Set(key, &APIKeyAuthCacheEntry{NotFound: negative}, 1))
+				done := make(chan struct{})
+				go func() {
+					defer close(done)
+					switch path {
+					case "local": // Pub/Sub uses this same entry point.
+						svc.invalidateLocalAuthCache(key)
+					case "key": // User/group invalidations also call deleteAuthCache.
+						svc.InvalidateAuthCacheByKey(context.Background(), "test-key")
+					case "outbox":
+						worker := NewAuthCacheInvalidationWorker(&authInvalidationRepoStub{}, svc.cache, svc)
+						worker.processEvent(context.Background(), AuthCacheInvalidationEvent{ID: 1, CacheKey: key, Stage: 1})
+					}
+				}()
+				select {
+				case <-done:
+					t.Fatal("invalidation returned before its queued deletion completed")
+				case <-time.After(50 * time.Millisecond):
+				}
+				unblock()
+				select {
+				case <-done:
+				case <-time.After(time.Second):
+					t.Fatal("invalidation did not finish after releasing cache writer")
+				}
+				_, found := local.Get(key)
+				require.False(t, found, "queued stale entry must be gone when invalidation returns")
+			})
+		}
+	}
+}
+
 func TestAuthCacheInvalidationWorker_SecondPassCleansEvent(t *testing.T) {
 	repo := &authInvalidationRepoStub{}
 	cache := &authInvalidationCacheStub{}
