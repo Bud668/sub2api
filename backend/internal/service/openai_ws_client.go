@@ -19,6 +19,13 @@ import (
 
 const openAIWSMessageReadLimitBytes int64 = 16 * 1024 * 1024
 const (
+	openAIWSReadQueueFrames = 1024
+	openAIWSReadQueueBytes  = 32 * 1024 * 1024
+)
+
+var errOpenAIWSReadBacklog = errors.New("openai ws receive backlog exceeded")
+
+const (
 	openAIWSProxyTransportMaxIdleConns        = 128
 	openAIWSProxyTransportMaxIdleConnsPerHost = 64
 	openAIWSProxyTransportIdleConnTimeout     = 90 * time.Second
@@ -141,7 +148,13 @@ func (d *coderOpenAIWSClientDialer) Dial(
 	if resp != nil {
 		respHeaders = cloneHeader(resp.Header)
 	}
-	return &coderOpenAIWSClientConn{conn: conn}, 0, respHeaders, nil
+	client := &coderOpenAIWSClientConn{
+		conn:     conn,
+		readCh:   make(chan openAIWSReadFrame, openAIWSReadQueueFrames),
+		readDone: make(chan struct{}),
+	}
+	go client.readPump()
+	return client, 0, respHeaders, nil
 }
 
 func (d *coderOpenAIWSClientDialer) proxyHTTPClient(proxy string) (*http.Client, error) {
@@ -267,10 +280,47 @@ func (d *coderOpenAIWSClientDialer) SnapshotTransportMetrics() OpenAIWSTransport
 }
 
 type coderOpenAIWSClientConn struct {
-	conn *coderws.Conn
+	conn        *coderws.Conn
+	readCh      chan openAIWSReadFrame
+	readDone    chan struct{}
+	queuedBytes atomic.Int64
+	readErr     error // Written by the pump; read only after readCh is closed and drained.
+}
+
+type openAIWSReadFrame struct {
+	msgType coderws.MessageType
+	payload []byte
 }
 
 var _ openaiwsv2.FrameConn = (*coderOpenAIWSClientConn)(nil)
+
+// coder/websocket processes control frames only while reading. Keep exactly one
+// reader for the connection lifetime, including idle gaps between leased turns.
+func (c *coderOpenAIWSClientConn) readPump() {
+	defer close(c.readDone)
+	defer close(c.readCh)
+	defer c.conn.CloseNow()
+	for {
+		msgType, payload, err := c.conn.Read(context.Background())
+		if err != nil {
+			c.readErr = err
+			return
+		}
+		size := int64(len(payload))
+		if c.queuedBytes.Add(size) <= openAIWSReadQueueBytes {
+			select {
+			case c.readCh <- openAIWSReadFrame{msgType: msgType, payload: payload}:
+				continue
+			default:
+			}
+		}
+		// Never block heartbeats behind an unbounded/slow consumer. Retain the
+		// queued frames in order, then report the failure (no silent event loss).
+		c.queuedBytes.Add(-size)
+		c.readErr = errOpenAIWSReadBacklog
+		return
+	}
+}
 
 func (c *coderOpenAIWSClientConn) WriteJSON(ctx context.Context, value any) error {
 	if c == nil || c.conn == nil {
@@ -283,14 +333,7 @@ func (c *coderOpenAIWSClientConn) WriteJSON(ctx context.Context, value any) erro
 }
 
 func (c *coderOpenAIWSClientConn) ReadMessage(ctx context.Context) ([]byte, error) {
-	if c == nil || c.conn == nil {
-		return nil, errOpenAIWSConnClosed
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
-	msgType, payload, err := c.conn.Read(ctx)
+	msgType, payload, err := c.ReadFrame(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -303,17 +346,27 @@ func (c *coderOpenAIWSClientConn) ReadMessage(ctx context.Context) ([]byte, erro
 }
 
 func (c *coderOpenAIWSClientConn) ReadFrame(ctx context.Context) (coderws.MessageType, []byte, error) {
-	if c == nil || c.conn == nil {
+	if c == nil || c.conn == nil || c.readCh == nil {
 		return coderws.MessageText, nil, errOpenAIWSConnClosed
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	msgType, payload, err := c.conn.Read(ctx)
-	if err != nil {
-		return coderws.MessageText, nil, err
+	if ctx.Err() == nil {
+		select {
+		case frame, ok := <-c.readCh:
+			if !ok {
+				return coderws.MessageText, nil, c.readErr
+			}
+			c.queuedBytes.Add(-int64(len(frame.payload)))
+			return frame.msgType, frame.payload, nil
+		case <-ctx.Done():
+		}
 	}
-	return msgType, payload, nil
+	// Preserve coder/websocket's contract: a canceled read invalidates the
+	// connection, so abandoned response events cannot be reused by another turn.
+	_ = c.conn.CloseNow()
+	return coderws.MessageText, nil, ctx.Err()
 }
 
 func (c *coderOpenAIWSClientConn) WriteFrame(ctx context.Context, msgType coderws.MessageType, payload []byte) error {
@@ -336,12 +389,9 @@ func (c *coderOpenAIWSClientConn) Ping(ctx context.Context) error {
 	return c.conn.Ping(ctx)
 }
 
-// SupportsIdlePingWithoutReader reports the actual coder/websocket contract.
-// Conn.Ping waits for a pong, while control frames are only consumed by Read.
-// The pool deliberately has no reader on an idle connection, so using Ping as
-// a health probe would deterministically time out a healthy socket.
-func (*coderOpenAIWSClientConn) SupportsIdlePingWithoutReader() bool {
-	return false
+// The adapter's lifetime reader consumes pongs even without a lease reader.
+func (c *coderOpenAIWSClientConn) SupportsIdlePingWithoutReader() bool {
+	return c != nil && c.conn != nil && c.readCh != nil
 }
 
 func (c *coderOpenAIWSClientConn) Close() error {
@@ -351,5 +401,8 @@ func (c *coderOpenAIWSClientConn) Close() error {
 	// Close 为幂等，忽略重复关闭错误。
 	_ = c.conn.Close(coderws.StatusNormalClosure, "")
 	_ = c.conn.CloseNow()
+	if c.readDone != nil {
+		<-c.readDone
+	}
 	return nil
 }

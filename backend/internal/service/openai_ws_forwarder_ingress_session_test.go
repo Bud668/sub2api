@@ -117,9 +117,34 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_KeepLeaseAcrossT
 			[]byte(`{"type":"response.completed","response":{"id":"resp_ingress_turn_2","model":"gpt-5.1","usage":{"input_tokens":1,"output_tokens":1}}}`),
 		},
 	}
-	captureDialer := &openAIWSCaptureDialer{conn: captureConn}
+	clientAdapter, upstream, upstreamCtx := newTestOpenAIWSClientPair(t)
+	upstreamDone := make(chan error, 1)
+	go func() {
+		for turn, events := range [][][]byte{captureConn.events[:2], captureConn.events[2:]} {
+			_, payload, err := upstream.Read(upstreamCtx)
+			if err != nil {
+				upstreamDone <- err
+				return
+			}
+			if err = captureConn.WriteJSON(upstreamCtx, payload); err != nil {
+				upstreamDone <- err
+				return
+			}
+			for _, event := range events {
+				if err = upstream.Write(upstreamCtx, coderws.MessageText, event); err != nil {
+					upstreamDone <- err
+					return
+				}
+			}
+			if turn == 1 {
+				upstreamDone <- nil
+			}
+		}
+		upstream.CloseRead(upstreamCtx)
+	}()
 	pool := newOpenAIWSConnPool(cfg)
-	pool.setClientDialerForTest(captureDialer)
+	pool.setClientDialerForTest(&openAIWSSingleConnDialer{conn: clientAdapter})
+	t.Cleanup(pool.Close)
 
 	svc := &OpenAIGatewayService{
 		cfg:              cfg,
@@ -220,13 +245,23 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_KeepLeaseAcrossT
 	firstTurnEvent := readMessage()
 	require.Equal(t, "response.completed", gjson.GetBytes(firstTurnEvent, "type").String())
 	require.Equal(t, "resp_ingress_turn_1", gjson.GetBytes(firstTurnEvent, "response.id").String())
+	require.Equal(t, "response.completed", <-turnTerminalCh, "首轮 turn 应保留成功终态")
+	// The gateway is waiting for the next client turn, not reading the lease.
+	// Metadata queued after the terminal event must not block upstream pings.
+	require.NoError(t, upstream.Write(upstreamCtx, coderws.MessageText, []byte(`{"type":"rate_limits.updated"}`)))
+	pingCtx, cancelPing := context.WithTimeout(upstreamCtx, time.Second)
+	require.NoError(t, upstream.Ping(pingCtx))
+	cancelPing()
 
 	writeMessage(`{"type":"response.create","model":"gpt-5.1","stream":false,"previous_response_id":"resp_ingress_turn_1"}`)
 	secondTurnEvent := readMessage()
+	if gjson.GetBytes(secondTurnEvent, "type").String() == "rate_limits.updated" {
+		secondTurnEvent = readMessage()
+	}
 	require.Equal(t, "response.completed", gjson.GetBytes(secondTurnEvent, "type").String())
 	require.Equal(t, "resp_ingress_turn_2", gjson.GetBytes(secondTurnEvent, "response.id").String())
-	require.Equal(t, "response.completed", <-turnTerminalCh, "首轮 turn 应保留成功终态")
 	require.Equal(t, "response.completed", <-turnTerminalCh, "第二轮 turn 应保留成功终态")
+	require.NoError(t, <-upstreamDone)
 
 	_ = clientConn.Close(coderws.StatusNormalClosure, "done")
 
@@ -239,7 +274,6 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_KeepLeaseAcrossT
 
 	metrics := svc.SnapshotOpenAIWSPoolMetrics()
 	require.Equal(t, int64(1), metrics.AcquireTotal, "同一 ingress 会话多 turn 应只获取一次上游 lease")
-	require.Equal(t, 1, captureDialer.DialCount(), "同一 ingress 会话应保持同一上游连接")
 	require.Len(t, captureConn.writes, 2, "应向同一上游连接发送两轮 response.create")
 }
 

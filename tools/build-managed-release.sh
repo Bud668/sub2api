@@ -76,6 +76,8 @@ fi
 		-run 'CyberSuspension' -count=1
     go test -race -tags=unit ./internal/service \
         -run 'CancelsUpstreamBeforeClosingBody|RuntimeBlock|OpsSystemLog|RuntimeLog|ComputeEffective|OpsCleanup' -count=1
+    go test -race ./internal/service \
+        -run 'CoderOpenAIWSClient|KeepLeaseAcrossTurns|IdlePing' -count=3
     go test -race ./internal/service ./internal/service/openai_ws_v2 ./internal/handler ./internal/repository \
         -run 'Cyber|RedactContentModeration|Relay|Passthrough|HTTPBridge|ModelAllowlist|AuthCacheInvalidation|ClientCancellation|ClientDisconnect|SkipsCanceledClient|HTTP2|OpenAI429|OAuth429' -count=1
 	go test -race -tags=unit ./internal/server/middleware \
