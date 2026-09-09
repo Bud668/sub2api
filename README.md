@@ -1,3 +1,15 @@
+# Sub2API · Bud maintained fork
+
+This is the independently maintained **Bud668/sub2api** source fork, not an official Wei-Shaw release. It starts from upstream **v0.2.3**, retains the upstream history and LGPLv3 license, and adds user model quotas, security-audit controls and usability fixes.
+
+[修改版说明 / Features, privacy and build instructions](docs/CUSTOM-FORK.md) · [Maintenance policy](docs/UPSTREAM-INTEGRATION.md) · [Upstream intake ledger](docs/UPSTREAM-LEDGER.md) · [Releases](https://github.com/Bud668/sub2api/releases)
+
+Custom source is the development mainline; upstream changes are reviewed and integrated selectively. Security fixes and their prerequisites must be assessed, not silently skipped. Public source and reproducible build instructions support inspection; they are not a security certification or proof of a third-party deployment's configuration.
+
+**Use the custom build instructions above.** Installation scripts, images, badges, sponsors and update links in the preserved upstream documentation below refer to the upstream project and may install its unmodified version. Do not use them to overwrite a custom deployment.
+
+---
+
 <div align="center">
 
 <img src="assets/logo.svg" alt="Sub2API Logo" width="128" />

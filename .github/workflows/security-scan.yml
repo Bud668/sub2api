@@ -11,6 +11,7 @@ permissions:
 
 jobs:
   backend-security:
+    if: github.repository == 'Wei-Shaw/sub2api'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -31,6 +32,7 @@ jobs:
           govulncheck ./...
 
   frontend-security:
+    if: github.repository == 'Wei-Shaw/sub2api'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6

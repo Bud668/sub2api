@@ -1,0 +1,52 @@
+name: Custom release regression
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: sub2api_modelquota_test
+          POSTGRES_PASSWORD: ci_test_only
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d sub2api_modelquota_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      GOFLAGS: -p=2
+      SUB2API_MODEL_QUOTA_TEST_DSN: host=127.0.0.1 port=5432 user=postgres password=ci_test_only dbname=sub2api_modelquota_test sslmode=disable
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9.15.9
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20.19.2
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - name: Build the pinned source and run release gates
+        run: |
+          git fetch --no-tags https://github.com/Wei-Shaw/sub2api.git refs/tags/v0.2.3:refs/tags/v0.2.3
+          jq --arg source "$(git rev-parse HEAD)" --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '.source_commit=$source | .commit=$source | .build_date=$date' \
+            deploy/custom-release.example.json > "$RUNNER_TEMP/candidate.json"
+          bash tools/build-managed-release.sh "$PWD" "$RUNNER_TEMP/custom-release" "$RUNNER_TEMP/candidate.json"

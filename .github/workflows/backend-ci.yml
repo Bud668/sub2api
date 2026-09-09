@@ -9,6 +9,7 @@ permissions:
 
 jobs:
   shell:
+    if: github.repository == 'Wei-Shaw/sub2api'
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v6
@@ -22,6 +23,7 @@ jobs:
           /bin/sh deploy/test-caddyfile-cache.sh
 
   test:
+    if: github.repository == 'Wei-Shaw/sub2api'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -42,6 +44,7 @@ jobs:
         run: make test-integration
 
   frontend:
+    if: github.repository == 'Wei-Shaw/sub2api'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -62,6 +65,7 @@ jobs:
         run: make test-frontend
 
   golangci-lint:
+    if: github.repository == 'Wei-Shaw/sub2api'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6

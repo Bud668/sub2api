@@ -1,3 +1,15 @@
+# Sub2API · Bud 维护版
+
+这是 **Bud668/sub2api 独立维护的修改版**，不是 Wei-Shaw 官方发行版。当前官方基线为 **v0.2.3**，保留上游历史、署名与 LGPLv3 许可证。
+
+[修改版功能、隐私与构建说明](docs/CUSTOM-FORK.md) · [维护规范](docs/UPSTREAM-INTEGRATION.md) · [官方更新接入台账](docs/UPSTREAM-LEDGER.md) · [版本下载](https://github.com/Bud668/sub2api/releases)
+
+本项目以自有源码为开发主线，受控合入官方更新，方便用户查看差异和复核构建。公开源码不等于已经通过第三方安全审计，也不能单独证明某站点运行的是同一产物或采用何种配置。
+
+**请按修改版构建说明使用。** 下方保留的上游原始文档中，安装脚本、镜像、更新链接、徽章和赞助商信息属于上游项目，可能安装官方原版；不要据此覆盖已经启用自定义安全/限额规则的部署。
+
+---
+
 <div align="center">
 
 <img src="assets/logo.svg" alt="Sub2API Logo" width="128" />

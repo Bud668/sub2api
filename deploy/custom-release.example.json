@@ -1,0 +1,17 @@
+{
+  "status": "candidate",
+  "source_repo": "https://github.com/Bud668/sub2api",
+  "source_commit": "0000000000000000000000000000000000000000",
+  "upstream_repo": "https://github.com/Wei-Shaw/sub2api",
+  "upstream_tag": "v0.2.3",
+  "upstream_commit": "8fa67d477d6651a744754392a8982ea589c26ae6",
+  "version": "0.2.3-cyberaudit.9",
+  "commit": "0000000000000000000000000000000000000000",
+  "build_date": "2026-09-09T00:00:00Z",
+  "go_version": "go1.27.0",
+  "node_version": "v20.19.2",
+  "pnpm_version": "9.15.9",
+  "features": {
+    "user_model_request_quotas": true
+  }
+}
