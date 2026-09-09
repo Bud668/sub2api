@@ -2062,6 +2062,16 @@ export interface DynamicSubscriptionQuota {
   updated_at: string
   capacity_estimate_usd?: number
   sample_count?: number
+  growth_frozen?: boolean
+  capacity_approval_ready?: boolean
+  capacity_review?: {
+    id: string
+    proposed_usd: number
+    observations: number
+    last_observed_at: string
+    manual_required: boolean
+    anomaly_checks: number
+  }
 }
 
 export interface DynamicQuotaInput {

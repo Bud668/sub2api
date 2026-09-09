@@ -25,25 +25,28 @@ var (
 )
 
 type DynamicSubscriptionQuota struct {
-	Enabled                               bool       `json:"enabled"`
-	Revision                              int64      `json:"revision"`
-	AccountID                             int64      `json:"account_id,omitempty"` // Removed from user-facing DTOs.
-	Weight                                float64    `json:"weight"`
-	MaxLimitUSD                           float64    `json:"max_limit_usd"`
-	IncreaseThresholdUSD                  float64    `json:"increase_threshold_usd"`
-	Cycle                                 int64      `json:"cycle"`
-	Status                                string     `json:"status"`
-	LimitUSD                              float64    `json:"limit_usd"`
-	UsedUSD                               float64    `json:"used_usd"`
-	RemainingUSD                          float64    `json:"remaining_usd"`
-	ReservedUSD                           float64    `json:"reserved_usd"`
-	StartedAt                             time.Time  `json:"started_at"`
-	ConfirmedAt                           *time.Time `json:"confirmed_at,omitempty"`
-	SyncedAt                              *time.Time `json:"synced_at,omitempty"`
-	ExpectedResetAt                       *time.Time `json:"expected_reset_at,omitempty"`
-	UpdatedAt                             time.Time  `json:"updated_at"`
-	CapacityEstimateUSD                   float64    `json:"capacity_estimate_usd,omitempty"` // Admin-only diagnostic.
-	SampleCount                           int        `json:"sample_count,omitempty"`
+	Enabled                               bool                        `json:"enabled"`
+	Revision                              int64                       `json:"revision"`
+	AccountID                             int64                       `json:"account_id,omitempty"` // Removed from user-facing DTOs.
+	Weight                                float64                     `json:"weight"`
+	MaxLimitUSD                           float64                     `json:"max_limit_usd"`
+	IncreaseThresholdUSD                  float64                     `json:"increase_threshold_usd"`
+	Cycle                                 int64                       `json:"cycle"`
+	Status                                string                      `json:"status"`
+	LimitUSD                              float64                     `json:"limit_usd"`
+	UsedUSD                               float64                     `json:"used_usd"`
+	RemainingUSD                          float64                     `json:"remaining_usd"`
+	ReservedUSD                           float64                     `json:"reserved_usd"`
+	StartedAt                             time.Time                   `json:"started_at"`
+	ConfirmedAt                           *time.Time                  `json:"confirmed_at,omitempty"`
+	SyncedAt                              *time.Time                  `json:"synced_at,omitempty"`
+	ExpectedResetAt                       *time.Time                  `json:"expected_reset_at,omitempty"`
+	UpdatedAt                             time.Time                   `json:"updated_at"`
+	CapacityEstimateUSD                   float64                     `json:"capacity_estimate_usd,omitempty"` // Admin-only diagnostic.
+	SampleCount                           int                         `json:"sample_count,omitempty"`
+	GrowthFrozen                          bool                        `json:"growth_frozen,omitempty"`
+	CapacityReview                        *DynamicQuotaCapacityReview `json:"capacity_review,omitempty"`
+	CapacityApprovalReady                 bool                        `json:"capacity_approval_ready,omitempty"`
 	usedStandard, allocatedStandard, rate float64
 	userID, groupID                       int64
 	pool                                  DynamicQuotaPoolState
@@ -57,6 +60,8 @@ func (q *DynamicSubscriptionQuota) Public() *DynamicSubscriptionQuota {
 	cp.AccountID = 0
 	cp.CapacityEstimateUSD = 0
 	cp.SampleCount = 0
+	cp.CapacityReview = nil
+	cp.CapacityApprovalReady = false
 	return &cp
 }
 
@@ -90,6 +95,14 @@ type DynamicSubscriptionService struct {
 	stopOnce      sync.Once
 	disabled      bool // Simple mode has no canonical billing and cannot use dynamic quotas.
 }
+
+// One membership definition for polling, allocation and shared-source admission.
+const dynamicActiveMemberSQL = `p.enabled AND EXISTS(SELECT 1 FROM user_subscriptions us
+ JOIN users u ON u.id=us.user_id JOIN groups g ON g.id=us.group_id
+ WHERE us.id=p.subscription_id AND us.deleted_at IS NULL AND us.status='active' AND us.expires_at>NOW()
+ AND u.deleted_at IS NULL AND u.status='active' AND g.deleted_at IS NULL AND g.status='active'
+ AND g.platform='openai' AND g.subscription_type='subscription'
+ AND EXISTS(SELECT 1 FROM account_groups ag WHERE ag.account_id=p.account_id AND ag.group_id=us.group_id))`
 
 func NewDynamicSubscriptionService(db *sql.DB, accounts AccountRepository, quota *OpenAIQuotaService, subscriptions *SubscriptionService) *DynamicSubscriptionService {
 	s := &DynamicSubscriptionService{db: db, accounts: accounts, quota: quota, subscriptions: subscriptions, stop: make(chan struct{}), done: make(chan struct{})}
@@ -242,10 +255,17 @@ func loadDynamicSubscription(ctx context.Context, db dynamicQuotaQuerier, subscr
 		return q, nil
 	}
 	q.Cycle, q.Status, q.StartedAt, q.ConfirmedAt = q.pool.Cycle, q.pool.Status, q.pool.StartedAt, q.pool.ConfirmedAt
+	if q.Enabled {
+		q.Status = q.pool.accessStatus(now)
+	}
 	if nativeStart.Valid {
 		q.StartedAt = nativeStart.Time
 	}
 	q.CapacityEstimateUSD, q.SampleCount = q.pool.CapacityUSD, len(q.pool.Samples)
+	q.GrowthFrozen, q.CapacityReview = q.pool.growthFrozen(), q.pool.CapacityReview
+	q.CapacityApprovalReady = q.CapacityReview != nil && q.CapacityReview.ManualRequired &&
+		q.CapacityReview.Observations >= dynamicQuotaGuardChecks && q.pool.Health.Failures == 0 &&
+		q.pool.Snapshot != nil && q.pool.Snapshot.Valid(now) && (q.pool.Status == "active" || q.pool.Status == "learning")
 	if q.pool.Snapshot != nil {
 		q.SyncedAt = &q.pool.Snapshot.FetchedAt
 		t := q.pool.Snapshot.ResetAt
@@ -261,6 +281,9 @@ func loadDynamicSubscription(ctx context.Context, db dynamicQuotaQuerier, subscr
 	// Admission still honors BOTH the dollar ceiling and the physical-cost share.
 	headroom := math.Min(math.Max(0, math.Min(q.LimitUSD, q.MaxLimitUSD)-q.UsedUSD), math.Max(0, q.allocatedStandard-q.usedStandard)*q.rate)
 	q.RemainingUSD = QuantizeUsageBillingAmount(math.Max(0, headroom-q.ReservedUSD))
+	if q.Enabled && q.checkReady() != nil {
+		q.RemainingUSD = 0
+	}
 	return q, nil
 }
 
@@ -292,15 +315,9 @@ func (s *DynamicSubscriptionService) Save(ctx context.Context, subscriptionID in
 		(in.IncreaseThresholdUSD != 5 && in.IncreaseThresholdUSD != 10) {
 		return infraerrors.BadRequest("INVALID_DYNAMIC_QUOTA", "Choose an upstream account, weight (0–1000) and positive maximum quota")
 	}
-	account, err := s.accounts.GetByID(ctx, in.AccountID)
-	if err != nil {
-		return err
-	}
-	if !account.IsOpenAIOAuth() || account.IsShadow() || account.IsOpenAIAgentIdentity() || account.GetCredential("chatgpt_account_id") == "" {
-		return infraerrors.BadRequest("UNSUPPORTED_DYNAMIC_QUOTA_ACCOUNT", "Dynamic quota requires a directly authorized OpenAI OAuth account with a global weekly window")
-	}
 	// Validate before even creating a pool or querying upstream. Recheck under
 	// lock below; failed/stale forms must not mutate another subscriber's pool.
+	var err error
 	var eligible bool
 	var revisionBefore int64
 	var oldSource int64
@@ -315,11 +332,22 @@ func (s *DynamicSubscriptionService) Save(ctx context.Context, subscriptionID in
 		}
 		return err
 	}
-	if !eligible || (oldSource != 0 && oldSource != in.AccountID) {
+	if (in.Enabled && !eligible) || (oldSource != 0 && oldSource != in.AccountID) {
 		return ErrDynamicQuotaBinding
 	}
 	if revisionBefore != in.Revision {
 		return ErrDynamicQuotaChanged
+	}
+	// Turning off an existing binding must work after source removal or loss of
+	// credentials; it still verifies the immutable source and policy revision.
+	if in.Enabled || oldSource == 0 {
+		account, err := s.accounts.GetByID(ctx, in.AccountID)
+		if err != nil {
+			return err
+		}
+		if !eligible || !account.IsOpenAIOAuth() || account.IsShadow() || account.IsOpenAIAgentIdentity() || account.GetCredential("chatgpt_account_id") == "" {
+			return infraerrors.BadRequest("UNSUPPORTED_DYNAMIC_QUOTA_ACCOUNT", "Dynamic quota requires a directly authorized OpenAI OAuth account with a global weekly window")
+		}
 	}
 	// Only a quota metadata query. It neither consumes reset credits nor probes a model.
 	if _, err = s.db.ExecContext(ctx, `INSERT INTO dynamic_quota_pools(account_id) VALUES($1) ON CONFLICT DO NOTHING`, in.AccountID); err != nil {
@@ -363,7 +391,7 @@ func (s *DynamicSubscriptionService) Save(ctx context.Context, subscriptionID in
 	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM account_groups WHERE account_id=$1 AND group_id=$2)`, in.AccountID, groupID).Scan(&bound); err != nil {
 		return err
 	}
-	if !bound {
+	if in.Enabled && !bound {
 		return ErrDynamicQuotaBinding
 	}
 	var oldAccount, revision int64
@@ -466,22 +494,21 @@ func (s *DynamicSubscriptionService) reallocate(ctx context.Context, tx *sql.Tx,
 	if p.ceilingPercent, err = loadDynamicNativeCeiling(ctx, tx, accountID); err != nil {
 		return err
 	}
+	if status := p.accessStatus(now); status != "active" && status != "learning" {
+		return nil // Freeze the published allowance; admission independently stops.
+	}
 	rows, err := tx.QueryContext(ctx, `SELECT p.subscription_id,p.weight,p.used_standard_usd,p.max_limit_usd,us.weekly_usage_usd,
  COALESCE(r.rate_multiplier,g.rate_multiplier),g.peak_rate_enabled,g.peak_start,g.peak_end,g.peak_rate_multiplier,
- p.applied_limit_usd,p.increase_threshold_usd
+ p.applied_limit_usd,p.increase_threshold_usd,p.allocated_standard_usd
  FROM dynamic_subscription_policies p JOIN user_subscriptions us ON us.id=p.subscription_id
  JOIN users u ON u.id=us.user_id JOIN groups g ON g.id=us.group_id
  LEFT JOIN user_group_rate_multipliers r ON r.user_id=us.user_id AND r.group_id=us.group_id
- WHERE p.account_id=$1 AND p.enabled AND us.deleted_at IS NULL AND us.status='active' AND us.expires_at>$2
- AND u.deleted_at IS NULL AND u.status='active' AND g.deleted_at IS NULL AND g.status='active'
- AND g.platform='openai' AND g.subscription_type='subscription'
- AND EXISTS(SELECT 1 FROM account_groups ag WHERE ag.account_id=p.account_id AND ag.group_id=us.group_id)
- ORDER BY p.subscription_id`, accountID, now)
+ WHERE p.account_id=$1 AND `+dynamicActiveMemberSQL+` ORDER BY p.subscription_id`, accountID)
 	if err != nil {
 		return err
 	}
 	var members []DynamicQuotaMember
-	type allowance struct{ used, rate, applied, threshold float64 }
+	type allowance struct{ used, rate, applied, threshold, allocated float64 }
 	allowances := map[int64]allowance{}
 	var bootstrap float64
 	for rows.Next() {
@@ -489,7 +516,7 @@ func (s *DynamicSubscriptionService) reallocate(ctx context.Context, tx *sql.Tx,
 		var max, used, rate float64
 		var peak Group
 		var a allowance
-		if err = rows.Scan(&m.ID, &m.Weight, &m.Used, &max, &used, &rate, &peak.PeakRateEnabled, &peak.PeakStart, &peak.PeakEnd, &peak.PeakRateMultiplier, &a.applied, &a.threshold); err != nil {
+		if err = rows.Scan(&m.ID, &m.Weight, &m.Used, &max, &used, &rate, &peak.PeakRateEnabled, &peak.PeakStart, &peak.PeakEnd, &peak.PeakRateMultiplier, &a.applied, &a.threshold, &a.allocated); err != nil {
 			rows.Close()
 			return err
 		}
@@ -518,12 +545,15 @@ func (s *DynamicSubscriptionService) reallocate(ctx context.Context, tx *sql.Tx,
 	if p.CapacityUSD <= 0 && p.Status == "learning" && p.Snapshot != nil && p.Snapshot.Valid(now) && p.Snapshot.UsedPercent < p.stopPercent() {
 		remaining = math.Max(0, bootstrap-held)
 	}
-	force := p.LastAllocationAt.IsZero()
-	allowIncrease := force || now.Sub(p.LastAllocationAt) >= 30*time.Minute
+	force := p.LastAllocationAt.IsZero() && !p.growthFrozen()
+	allowIncrease := !p.growthFrozen() && (force || now.Sub(p.LastAllocationAt) >= 30*time.Minute)
 	allocations := allocateDynamicQuota(members, remaining)
 	for _, m := range members {
 		a := allowances[m.ID]
 		allocation := allocations[m.ID]
+		if p.growthFrozen() {
+			allocation = math.Min(allocation, math.Max(m.Used, a.allocated))
+		}
 		applied := dynamicQuotaAppliedLimit(a.applied, a.used+math.Max(0, allocation-m.Used)*a.rate, a.threshold, allowIncrease, force)
 		// Suppressed increases must not leave a larger hidden standard-cost grant.
 		allocation = m.Used + math.Min(math.Max(0, allocation-m.Used), math.Max(0, applied-a.used)/a.rate)
@@ -541,6 +571,7 @@ func (s *DynamicSubscriptionService) reallocate(ctx context.Context, tx *sql.Tx,
 // Refresh performs one independent metadata fetch, then commits only if newer
 // than the locked snapshot. It never sends model requests or consumes reset cards.
 func (s *DynamicSubscriptionService) Refresh(ctx context.Context, accountID int64) error {
+	attemptAt := time.Now().UTC()
 	if s.fetch == nil {
 		return ErrDynamicQuotaUnavailable
 	}
@@ -551,8 +582,14 @@ func (s *DynamicSubscriptionService) Refresh(ctx context.Context, accountID int6
 		return err
 	}
 	o, err := s.fetch(ctx, accountID)
-	if err != nil {
-		return ErrDynamicQuotaUnavailable.WithCause(err)
+	if err != nil || !o.Valid(time.Now().UTC()) {
+		if guardErr := s.recordRefreshFailure(ctx, accountID, attemptAt); guardErr != nil {
+			return ErrDynamicQuotaUnavailable.WithCause(guardErr)
+		}
+		if err != nil {
+			return ErrDynamicQuotaUnavailable.WithCause(err)
+		}
+		return ErrDynamicQuotaUnavailable
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -569,6 +606,7 @@ func (s *DynamicSubscriptionService) Refresh(ctx context.Context, accountID int6
 	}
 	o.LocalStandardTotal = totalBefore
 	now := time.Now().UTC()
+	beforeGuard := dynamicQuotaGuardSignal(p, now)
 	initial := p.Snapshot == nil
 	confirmed := p.Observe(o, now)
 	if initial && p.Snapshot != nil && o.Valid(now) && o.UsedPercent >= 5 {
@@ -578,15 +616,13 @@ func (s *DynamicSubscriptionService) Refresh(ctx context.Context, accountID int6
 			return err
 		}
 		if spent > 0 {
-			p.CapacityUSD = spent / (o.UsedPercent / 100) * 0.8
-			p.Status = "active"
+			p.considerCapacity(spent/(o.UsedPercent/100)*0.8, o.FetchedAt)
 		}
 	}
 	var resetIDs []int64
 	if confirmed && pending == 0 {
 		rows, e := tx.QueryContext(ctx, `SELECT p.subscription_id,us.weekly_usage_usd FROM dynamic_subscription_policies p
- JOIN user_subscriptions us ON us.id=p.subscription_id WHERE p.account_id=$1 AND p.enabled AND us.deleted_at IS NULL
- AND EXISTS(SELECT 1 FROM account_groups ag WHERE ag.account_id=p.account_id AND ag.group_id=us.group_id)
+ JOIN user_subscriptions us ON us.id=p.subscription_id WHERE p.account_id=$1 AND `+dynamicActiveMemberSQL+`
  ORDER BY p.subscription_id FOR UPDATE OF us,p`, accountID)
 		if e != nil {
 			return e
@@ -632,6 +668,9 @@ func (s *DynamicSubscriptionService) Refresh(ctx context.Context, accountID int6
 	if err = writeDynamicPool(ctx, tx, accountID, p); err != nil {
 		return err
 	}
+	if err = recordDynamicGuardTransition(ctx, tx, accountID, p, beforeGuard, now); err != nil {
+		return err
+	}
 	if err = tx.Commit(); err != nil {
 		return err
 	}
@@ -641,6 +680,128 @@ func (s *DynamicSubscriptionService) Refresh(ctx context.Context, accountID int6
 		}
 	}
 	return nil
+}
+
+func dynamicQuotaGuardSignal(p *DynamicQuotaPoolState, now time.Time) string {
+	if p.Snapshot == nil {
+		return ""
+	}
+	if status := p.accessStatus(now); status != "active" && status != "learning" {
+		return "paused"
+	}
+	if p.CapacityReview != nil && p.CapacityReview.ManualRequired {
+		return "review"
+	}
+	if p.Health.Failures > 0 {
+		return "warning"
+	}
+	return "recovered"
+}
+
+func recordDynamicGuardTransition(ctx context.Context, tx *sql.Tx, accountID int64, p *DynamicQuotaPoolState, before string, now time.Time) error {
+	after := dynamicQuotaGuardSignal(p, now)
+	if after == before || after == "" || (before == "" && after == "recovered") {
+		return nil
+	}
+	return recordDynamicGuardEvent(ctx, tx, accountID, p, "quota_guard_"+after)
+}
+
+func recordDynamicGuardEvent(ctx context.Context, tx *sql.Tx, accountID int64, p *DynamicQuotaPoolState, kind string) error {
+	details := map[string]any{"trusted_capacity_usd": p.CapacityUSD, "failures": p.Health.Failures}
+	if p.CapacityReview != nil {
+		details["proposed_capacity_usd"] = p.CapacityReview.ProposedUSD
+		details["observations"] = p.CapacityReview.Observations
+	}
+	raw, err := json.Marshal(details)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO dynamic_quota_events(account_id,cycle,kind,details) VALUES($1,$2,$3,$4::jsonb)`, accountID, p.Cycle, kind, string(raw))
+	return err
+}
+
+func (s *DynamicSubscriptionService) recordRefreshFailure(ctx context.Context, accountID int64, at time.Time) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	p, err := lockDynamicPool(ctx, tx, accountID)
+	if err != nil {
+		return err
+	}
+	before := dynamicQuotaGuardSignal(p, at)
+	p.recordFailure(at)
+	if err = writeDynamicPool(ctx, tx, accountID, p); err != nil {
+		return err
+	}
+	if err = recordDynamicGuardTransition(ctx, tx, accountID, p, before, at); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// Approval is source-wide but must originate from an eligible bound subscription.
+// Neither a normal policy save nor a stale/replayed confirmation grants capacity.
+func (s *DynamicSubscriptionService) ApproveCapacity(ctx context.Context, subscriptionID int64, reviewID string) error {
+	if s.disabled {
+		return ErrDynamicQuotaUnavailable
+	}
+	if _, err := uuid.Parse(reviewID); err != nil {
+		return ErrDynamicQuotaChanged
+	}
+	var accountID int64
+	if err := s.db.QueryRowContext(ctx, `SELECT p.account_id FROM dynamic_subscription_policies p WHERE p.subscription_id=$1 AND `+dynamicActiveMemberSQL, subscriptionID).Scan(&accountID); err != nil {
+		return ErrDynamicQuotaBinding.WithCause(err)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	p, err := lockDynamicPool(ctx, tx, accountID)
+	if err != nil {
+		return err
+	}
+	var eligible bool
+	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM dynamic_subscription_policies p WHERE p.subscription_id=$1 AND p.account_id=$2 AND `+dynamicActiveMemberSQL+`)`, subscriptionID, accountID).Scan(&eligible); err != nil {
+		return err
+	}
+	if !eligible {
+		return ErrDynamicQuotaBinding
+	}
+	now := time.Now().UTC()
+	r := p.CapacityReview
+	if r == nil || r.ID != reviewID || !r.ManualRequired {
+		return ErrDynamicQuotaChanged
+	}
+	if !validDynamicAmount(r.ProposedUSD) || r.ProposedUSD <= p.CapacityUSD ||
+		r.Observations < dynamicQuotaGuardChecks || p.Health.Failures > 0 ||
+		p.Snapshot == nil || !p.Snapshot.Valid(now) || now.Sub(r.LastObservedAt) > dynamicQuotaFreshness ||
+		(p.Status != "active" && p.Status != "learning") {
+		return ErrDynamicQuotaUnavailable
+	}
+	var identity string
+	if err = tx.QueryRowContext(ctx, `SELECT COALESCE(credentials->>'chatgpt_account_id','') FROM accounts WHERE id=$1 AND deleted_at IS NULL AND platform='openai' AND type='oauth'`, accountID).Scan(&identity); err != nil {
+		return ErrDynamicQuotaBinding.WithCause(err)
+	}
+	if identity == "" || shortOpenAIAutoResetHash(identity) != p.Snapshot.Identity {
+		return ErrDynamicQuotaBinding
+	}
+	p.CapacityUSD, p.CapacityReview, p.Status = r.ProposedUSD, nil, "active"
+	p.LastAllocationAt = time.Time{}
+	if err = s.reallocate(ctx, tx, accountID, p, now); err != nil {
+		return err
+	}
+	if err = writeDynamicPool(ctx, tx, accountID, p); err != nil {
+		return err
+	}
+	if err = recordDynamicGuardEvent(ctx, tx, accountID, p, "quota_capacity_approved"); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 type DynamicQuotaReservation struct {
@@ -715,11 +876,11 @@ func (s *DynamicSubscriptionService) Begin(ctx context.Context, apiKeyID, accoun
 		return nil, nil
 	}
 	var protected bool
-	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM dynamic_subscription_policies WHERE account_id=$1 AND enabled)`, accountID).Scan(&protected); err != nil {
+	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM dynamic_subscription_policies p WHERE p.account_id=$1 AND `+dynamicActiveMemberSQL+`)`, accountID).Scan(&protected); err != nil {
 		return nil, err
 	}
 	now := time.Now().UTC()
-	if protected && (p.Snapshot == nil || !p.Snapshot.Valid(now) || (p.Status != "active" && p.Status != "learning")) {
+	if status := p.accessStatus(now); protected && status != "active" && status != "learning" {
 		return nil, ErrDynamicQuotaUnavailable
 	}
 	if protected {
@@ -895,7 +1056,7 @@ func (s *DynamicSubscriptionService) Start() {
 				return
 			case <-ticker.C:
 				ctx, cancel := context.WithTimeout(context.Background(), 50*time.Second)
-				rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT account_id FROM dynamic_subscription_policies WHERE enabled ORDER BY account_id`)
+				rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT p.account_id FROM dynamic_subscription_policies p WHERE `+dynamicActiveMemberSQL+` ORDER BY p.account_id`)
 				var ids []int64
 				if err == nil {
 					for rows.Next() {

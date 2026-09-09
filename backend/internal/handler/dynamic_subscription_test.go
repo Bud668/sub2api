@@ -138,13 +138,19 @@ func TestDynamicQuotaWSFirstFrameReconnectAndTurns(t *testing.T) {
 }
 
 func TestDynamicQuotaPublicProjectionAndOps(t *testing.T) {
-	sub := &service.UserSubscription{ID: 11, DynamicQuota: &service.DynamicSubscriptionQuota{Enabled: true, AccountID: 4, CapacityEstimateUSD: 12345, SampleCount: 3, LimitUSD: 200, UsedUSD: 20, RemainingUSD: 180}}
+	sub := &service.UserSubscription{ID: 11, DynamicQuota: &service.DynamicSubscriptionQuota{Enabled: true, AccountID: 4, CapacityEstimateUSD: 12345, SampleCount: 3, LimitUSD: 200, UsedUSD: 20, RemainingUSD: 180,
+		GrowthFrozen: true, CapacityApprovalReady: true, CapacityReview: &service.DynamicQuotaCapacityReview{ID: "private-review-id", ProposedUSD: 9000, ManualRequired: true}}}
 	public, err := json.Marshal(dto.UserSubscriptionFromService(sub))
 	require.NoError(t, err)
 	require.NotContains(t, string(public), "account_id")
 	require.NotContains(t, string(public), "capacity_estimate_usd")
 	require.NotContains(t, string(public), "sample_count")
 	require.NotContains(t, string(public), "pool_settings")
+	require.NotContains(t, string(public), "capacity_review")
+	require.NotContains(t, string(public), "capacity_approval_ready")
+	require.NotContains(t, string(public), "private-review-id")
+	require.True(t, dto.UserSubscriptionFromService(sub).DynamicQuota.GrowthFrozen)
+	require.Equal(t, "private-review-id", dto.UserSubscriptionFromServiceAdmin(sub).DynamicQuota.CapacityReview.ID)
 	require.Equal(t, int64(4), dto.UserSubscriptionFromServiceAdmin(sub).DynamicQuota.AccountID)
 	for _, ws := range []bool{false, true} {
 		setupOpsErrorLogTestQueue(t, 4)

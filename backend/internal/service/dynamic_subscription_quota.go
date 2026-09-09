@@ -6,13 +6,34 @@ import (
 	"math"
 	"sort"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 const (
 	dynamicQuotaFreshness      = 10 * time.Minute
 	dynamicQuotaConfirmDelay   = 30 * time.Second
 	dynamicQuotaResetTolerance = 2 * time.Minute
+	dynamicQuotaGuardChecks    = 3
+	dynamicQuotaMaxGrowth      = 1.2
 )
+
+type DynamicQuotaCapacityReview struct {
+	ID             string    `json:"id"`
+	ProposedUSD    float64   `json:"proposed_usd"`
+	Observations   int       `json:"observations"`
+	LastObservedAt time.Time `json:"last_observed_at"`
+	ManualRequired bool      `json:"manual_required"`
+	AnomalyChecks  int       `json:"anomaly_checks"`
+}
+
+type dynamicQuotaHealth struct {
+	Failures       int       `json:"failures"`
+	Recoveries     int       `json:"recoveries"`
+	LastAttemptAt  time.Time `json:"last_attempt_at"`
+	LastFailureAt  time.Time `json:"last_failure_at"`
+	LastRecoveryAt time.Time `json:"last_recovery_at"`
+}
 
 // DynamicQuotaObservation is a fresh, account-identity-checked quota query, not
 // a cached account card. A missing field is an error, never a synthetic zero.
@@ -26,17 +47,101 @@ type DynamicQuotaObservation struct {
 }
 
 type DynamicQuotaPoolState struct {
-	ceilingPercent   float64                  // Read from native account/global 7d auto-pause settings; never persisted here.
-	Cycle            int64                    `json:"cycle"`
-	StartedAt        time.Time                `json:"started_at"`
-	ConfirmedAt      *time.Time               `json:"confirmed_at,omitempty"`
-	Snapshot         *DynamicQuotaObservation `json:"snapshot,omitempty"`
-	Candidate        *DynamicQuotaObservation `json:"candidate,omitempty"`
-	Status           string                   `json:"status"`
-	CapacityUSD      float64                  `json:"capacity_usd"`
-	Samples          []float64                `json:"samples,omitempty"`
-	SampleAnchor     *DynamicQuotaObservation `json:"sample_anchor,omitempty"`
-	LastAllocationAt time.Time                `json:"last_allocation_at"`
+	ceilingPercent   float64                     // Read from native account/global 7d auto-pause settings; never persisted here.
+	Cycle            int64                       `json:"cycle"`
+	StartedAt        time.Time                   `json:"started_at"`
+	ConfirmedAt      *time.Time                  `json:"confirmed_at,omitempty"`
+	Snapshot         *DynamicQuotaObservation    `json:"snapshot,omitempty"`
+	Candidate        *DynamicQuotaObservation    `json:"candidate,omitempty"`
+	Status           string                      `json:"status"`
+	CapacityUSD      float64                     `json:"capacity_usd"`
+	Samples          []float64                   `json:"samples,omitempty"`
+	SampleAnchor     *DynamicQuotaObservation    `json:"sample_anchor,omitempty"`
+	LastAllocationAt time.Time                   `json:"last_allocation_at"`
+	CapacityReview   *DynamicQuotaCapacityReview `json:"capacity_review,omitempty"`
+	Health           dynamicQuotaHealth          `json:"health,omitempty"`
+}
+
+func (p *DynamicQuotaPoolState) growthFrozen() bool {
+	return p.CapacityReview != nil || p.Health.Failures > 0
+}
+
+func (p *DynamicQuotaPoolState) accessStatus(now time.Time) string {
+	if p.Snapshot == nil || !p.Snapshot.Valid(now) {
+		return "quota_unavailable"
+	}
+	if p.Status != "active" && p.Status != "learning" {
+		return p.Status
+	}
+	if p.Health.Failures >= dynamicQuotaGuardChecks || (p.CapacityReview != nil && p.CapacityReview.AnomalyChecks >= dynamicQuotaGuardChecks) {
+		return "quota_paused"
+	}
+	return p.Status
+}
+
+func (p *DynamicQuotaPoolState) recordFailure(at time.Time) {
+	if (p.Snapshot != nil && !at.After(p.Snapshot.FetchedAt)) || !at.After(p.Health.LastAttemptAt) {
+		return // A late failed query cannot invalidate a newer verified result.
+	}
+	p.Health.LastAttemptAt, p.Health.Recoveries = at, 0
+	if p.Health.Failures == 0 || at.Sub(p.Health.LastFailureAt) >= dynamicQuotaConfirmDelay {
+		p.Health.Failures++
+		p.Health.LastFailureAt = at
+	}
+}
+
+func (p *DynamicQuotaPoolState) recordHealthy(at time.Time) {
+	if !at.After(p.Health.LastAttemptAt) {
+		return
+	}
+	p.Health.LastAttemptAt = at
+	if p.Health.Failures > 0 && (p.Health.Recoveries == 0 || at.Sub(p.Health.LastRecoveryAt) >= dynamicQuotaConfirmDelay) {
+		p.Health.Recoveries++
+		p.Health.LastRecoveryAt = at
+		if p.Health.Recoveries >= dynamicQuotaGuardChecks {
+			p.Health.Failures, p.Health.Recoveries = 0, 0
+		}
+	}
+}
+
+// Capacity growth is evidence to review, never a grant from a single response.
+// The review ID binds approval to one source/cycle/proposal and survives restarts.
+func (p *DynamicQuotaPoolState) considerCapacity(value float64, at time.Time) {
+	if !validDynamicAmount(value) || value <= 0 {
+		return
+	}
+	old := p.CapacityReview
+	anomaly := p.CapacityUSD > 0 && value > p.CapacityUSD*dynamicQuotaMaxGrowth
+	if old != nil && old.AnomalyChecks >= dynamicQuotaGuardChecks && !anomaly && p.Health.Failures < dynamicQuotaGuardChecks {
+		p.Health.Failures, p.Health.Recoveries = dynamicQuotaGuardChecks, 0
+	}
+	if value <= p.CapacityUSD {
+		p.CapacityUSD, p.CapacityReview = value, nil // Reductions never wait for approval.
+		return
+	}
+	if old != nil && at.Sub(old.LastObservedAt) < dynamicQuotaConfirmDelay {
+		return
+	}
+	checks := 0
+	if anomaly {
+		checks = 1
+		if old != nil {
+			checks += old.AnomalyChecks
+		}
+	}
+	if old == nil || math.Abs(value-old.ProposedUSD) > old.ProposedUSD*0.05 {
+		p.CapacityReview = &DynamicQuotaCapacityReview{ID: uuid.NewString(), ProposedUSD: value, Observations: 1,
+			LastObservedAt: at, ManualRequired: p.CapacityUSD <= 0 || anomaly, AnomalyChecks: checks}
+	} else {
+		old.ProposedUSD = math.Min(old.ProposedUSD, value)
+		old.Observations++
+		old.ManualRequired = old.ManualRequired || anomaly
+		old.LastObservedAt, old.AnomalyChecks = at, checks
+	}
+	r := p.CapacityReview
+	if r.Observations >= dynamicQuotaGuardChecks && !r.ManualRequired && p.Health.Failures == 0 {
+		p.CapacityUSD, p.CapacityReview = r.ProposedUSD, nil
+	}
 }
 
 func (p *DynamicQuotaPoolState) stopPercent() float64 {
@@ -69,20 +174,33 @@ func (p *DynamicQuotaPoolState) Observe(o DynamicQuotaObservation, now time.Time
 	if p.Snapshot == nil {
 		p.Cycle, p.StartedAt, p.Snapshot, p.SampleAnchor = 1, now, &o, &o
 		p.Status = "learning"
+		p.recordHealthy(o.FetchedAt)
 		return false // First connection is a baseline, never a reset.
 	}
 	old := p.Snapshot
 	if old.Identity != o.Identity {
 		p.Status = "identity_changed"
 		p.Candidate = nil
+		p.CapacityReview = nil
 		return false // Replacing credentials is not a quota reset.
 	}
 	if !o.FetchedAt.After(old.FetchedAt) {
 		return false
 	}
+	if now.Sub(old.FetchedAt) > dynamicQuotaFreshness && p.Health.Failures == 0 {
+		p.Health.Failures, p.Health.Recoveries = dynamicQuotaGuardChecks, 0
+	}
 	boundaryChanged := math.Abs(o.ResetAt.Sub(old.ResetAt).Seconds()) > dynamicQuotaResetTolerance.Seconds()
+	// An unused rolling window moves with the query time. Refresh its baseline
+	// after a polling gap only when neither upstream nor local usage advanced.
+	if boundaryChanged && p.Candidate == nil && now.Before(old.ResetAt) &&
+		old.UsedPercent == 0 && o.UsedPercent == 0 && old.LocalStandardTotal == o.LocalStandardTotal &&
+		math.Abs(o.ResetAt.Sub(old.ResetAt).Seconds()-o.FetchedAt.Sub(old.FetchedAt).Seconds()) <= dynamicQuotaResetTolerance.Seconds() {
+		boundaryChanged = false
+	}
 	dropped := o.UsedPercent < old.UsedPercent-0.5
 	if boundaryChanged || dropped || p.Candidate != nil {
+		p.CapacityReview = nil // Never approve capacity evidence from another cycle.
 		// A due clock, percentage-only drop, extension of a deadline or changed
 		// window length are insufficient. No automatic fallback to "+7 days".
 		newStart := o.ResetAt.Add(-time.Duration(o.WindowSeconds) * time.Second)
@@ -95,6 +213,7 @@ func (p *DynamicQuotaPoolState) Observe(o DynamicQuotaObservation, now time.Time
 			p.Candidate = nil
 			return false
 		}
+		p.recordHealthy(o.FetchedAt)
 		if c := p.Candidate; c != nil && c.Valid(now) && c.Identity == o.Identity &&
 			math.Abs(c.ResetAt.Sub(o.ResetAt).Seconds()) <= dynamicQuotaResetTolerance.Seconds() &&
 			(o.FetchedAt.Sub(c.FetchedAt) >= dynamicQuotaConfirmDelay || (p.Status == "settling" && o.FetchedAt.After(c.FetchedAt))) && o.UsedPercent >= c.UsedPercent {
@@ -105,6 +224,11 @@ func (p *DynamicQuotaPoolState) Observe(o DynamicQuotaObservation, now time.Time
 		p.Candidate = &o
 		p.Status = "confirming"
 		return false
+	}
+	p.recordHealthy(o.FetchedAt)
+	proposal := p.CapacityUSD
+	if p.CapacityReview != nil {
+		proposal = p.CapacityReview.ProposedUSD
 	}
 	if anchor := p.SampleAnchor; anchor != nil {
 		deltaPercent, deltaCost := o.UsedPercent-anchor.UsedPercent, o.LocalStandardTotal-anchor.LocalStandardTotal
@@ -119,11 +243,12 @@ func (p *DynamicQuotaPoolState) Observe(o DynamicQuotaObservation, now time.Time
 				sort.Float64s(sorted)
 				// ponytail: lower-quartile recent samples assume a reasonably stable
 				// model mix; split by model family if measured prediction error requires it.
-				p.CapacityUSD = sorted[(len(sorted)-1)/4] * 0.9
+				proposal = sorted[(len(sorted)-1)/4] * 0.9
 			}
 			p.SampleAnchor = &o
 		}
 	}
+	p.considerCapacity(proposal, o.FetchedAt)
 	p.Snapshot = &o
 	p.Status = "active"
 	if p.CapacityUSD <= 0 {
@@ -137,6 +262,7 @@ func (p *DynamicQuotaPoolState) Confirm(now time.Time) {
 	p.StartedAt, p.ConfirmedAt = now, &now
 	p.Snapshot, p.SampleAnchor = p.Candidate, p.Candidate
 	p.Candidate = nil
+	p.CapacityReview = nil
 	p.LastAllocationAt = time.Time{}
 	p.Status = "active"
 	if p.CapacityUSD <= 0 {
@@ -145,7 +271,7 @@ func (p *DynamicQuotaPoolState) Confirm(now time.Time) {
 }
 
 func (p *DynamicQuotaPoolState) Available(now time.Time, settledTotal, holds float64) float64 {
-	if p.Snapshot == nil || !p.Snapshot.Valid(now) || p.CapacityUSD <= 0 || p.Status != "active" {
+	if p.CapacityUSD <= 0 || p.accessStatus(now) != "active" {
 		return 0
 	}
 	remaining := p.CapacityUSD * math.Max(0, (p.stopPercent()-p.Snapshot.UsedPercent)/100)

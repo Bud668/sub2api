@@ -158,9 +158,12 @@ func TestDynamicQuotaEstimateAndReserve(t *testing.T) {
 	o.UsedPercent = 50
 	o.LocalStandardTotal = 200
 	p.Observe(o, o.FetchedAt)
-	if math.Abs(p.CapacityUSD-900) > 1e-8 {
-		t.Fatalf("bad estimate %v", p.CapacityUSD)
+	if p.CapacityUSD != 0 || p.CapacityReview == nil || !p.CapacityReview.ManualRequired || math.Abs(p.CapacityReview.ProposedUSD-900) > 1e-8 {
+		t.Fatalf("first estimate must await approval: %+v", p)
 	}
+	// The store tests exercise the real approval transaction. Check the reserve
+	// arithmetic here with the explicitly accepted capacity.
+	p.CapacityUSD, p.CapacityReview, p.Status = 900, nil, "active"
 	if got := p.Available(o.FetchedAt, 220, 3); math.Abs(got-427) > 1e-8 {
 		t.Fatalf("unreported/in-flight costs not reserved: %v", got)
 	}

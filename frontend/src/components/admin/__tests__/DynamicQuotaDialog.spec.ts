@@ -5,8 +5,8 @@ import zh from '@/i18n/locales/zh'
 import type { DynamicQuotaAdminStatus, UserSubscription } from '@/types'
 import DynamicQuotaDialog from '../DynamicQuotaDialog.vue'
 
-const { get, save } = vi.hoisted(() => ({ get: vi.fn(), save: vi.fn() }))
-vi.mock('@/api/admin', () => ({ adminAPI: { subscriptions: { getDynamicQuota: get, saveDynamicQuota: save } } }))
+const { get, save, approve } = vi.hoisted(() => ({ get: vi.fn(), save: vi.fn(), approve: vi.fn() }))
+vi.mock('@/api/admin', () => ({ adminAPI: { subscriptions: { getDynamicQuota: get, saveDynamicQuota: save, approveDynamicCapacity: approve } } }))
 const initial = (): DynamicQuotaAdminStatus => ({
   policy: { enabled: false, revision: 0, weight: 1, max_limit_usd: 700, increase_threshold_usd: 10, cycle: 0, status: 'disabled', used_usd: 0, limit_usd: 0, remaining_usd: 0, reserved_usd: 0, started_at: '', updated_at: '' },
   sources: [{ id: 4, name: 'Test source' }, { id: 5, name: 'Other source' }]
@@ -64,5 +64,70 @@ describe('dynamic quota settings', () => {
     expect(save.mock.calls[0][1].account_id).toBe(5)
     expect(wrapper.emitted('close')).toBeUndefined()
     expect(wrapper.emitted('saved')).toBeUndefined()
+  })
+
+  const review = (): DynamicQuotaAdminStatus => {
+    const result = initial()
+    result.policy = { ...result.policy, enabled: true, revision: 1, account_id: 4, status: 'quota_paused', growth_frozen: true,
+      capacity_estimate_usd: 2000, capacity_approval_ready: true,
+      capacity_review: { id: 'review-1', proposed_usd: 9000, observations: 3, last_observed_at: '', manual_required: true, anomaly_checks: 3 } }
+    return result
+  }
+
+  it('requires a separate acknowledged approval and keeps the result open for review', async () => {
+    get.mockResolvedValue(review())
+    const wrapper = mountDialog(); await flushPromises()
+    expect(wrapper.text()).toContain('$2000.00')
+    expect(wrapper.text()).toContain('$9000.00')
+    expect(wrapper.get('[data-testid=capacity-approve]').attributes('disabled')).toBeDefined()
+    await wrapper.get('[data-testid=capacity-acknowledge]').setValue(true)
+    const accepted = review()
+    delete accepted.policy.capacity_review
+    accepted.policy.capacity_approval_ready = false
+    accepted.policy.growth_frozen = false
+    accepted.policy.status = 'active'
+    accepted.policy.capacity_estimate_usd = 9000
+    approve.mockResolvedValue(accepted)
+    await wrapper.get('[data-testid=capacity-approve]').trigger('click'); await flushPromises()
+    expect(approve).toHaveBeenCalledTimes(1)
+    expect(approve).toHaveBeenCalledWith(11, 'review-1')
+    expect(save).not.toHaveBeenCalled()
+    expect(wrapper.emitted('saved')).toHaveLength(1)
+    expect(wrapper.emitted('close')).toBeUndefined()
+    expect(wrapper.find('[data-testid=capacity-review]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('容量已确认')
+  })
+
+  it('preserves edits on refresh and does not let save or a dirty form approve capacity', async () => {
+    get.mockResolvedValue(review())
+    const wrapper = mountDialog(); await flushPromises()
+    await wrapper.get('[data-testid=capacity-acknowledge]').setValue(true)
+    await wrapper.get('#dynamic-cap').setValue(500)
+    expect(wrapper.get('[data-testid=capacity-approve]').attributes('disabled')).toBeDefined()
+    const changed = review()
+    changed.policy.capacity_review!.id = 'review-2'
+    changed.policy.capacity_approval_ready = false
+    get.mockResolvedValue(changed)
+    await wrapper.get('[data-testid=capacity-review] button').trigger('click'); await flushPromises()
+    expect((wrapper.get('#dynamic-cap').element as HTMLInputElement).value).toBe('500')
+    expect((wrapper.get('[data-testid=capacity-acknowledge]').element as HTMLInputElement).checked).toBe(false)
+    expect(wrapper.get('[data-testid=capacity-approve]').attributes('disabled')).toBeDefined()
+    save.mockResolvedValue({ ...changed, policy: { ...changed.policy, revision: 2, max_limit_usd: 500 } })
+    await wrapper.get('form').trigger('submit'); await flushPromises()
+    expect(save.mock.calls[0][1]).not.toHaveProperty('review_id')
+    expect(approve).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-testid=capacity-review]').exists()).toBe(true)
+  })
+
+  it('requires renewed acknowledgment after a stale approval is rejected', async () => {
+    get.mockResolvedValue(review())
+    approve.mockRejectedValue({ response: { data: { reason: 'DYNAMIC_QUOTA_CHANGED' } } })
+    const wrapper = mountDialog(); await flushPromises()
+    await wrapper.get('[data-testid=capacity-acknowledge]').setValue(true)
+    await wrapper.get('[data-testid=capacity-approve]').trigger('click'); await flushPromises()
+    expect(wrapper.get('[role=alert]').text()).toContain('配置已被其他操作修改')
+    expect(wrapper.get('[data-testid=capacity-approve]').attributes('disabled')).toBeDefined()
+    expect(wrapper.emitted('saved')).toBeUndefined()
+    expect(wrapper.emitted('close')).toBeUndefined()
   })
 })

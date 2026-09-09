@@ -91,6 +91,39 @@ func (h *SubscriptionHandler) SaveDynamicQuota(c *gin.Context) {
 	h.GetDynamicQuota(c)
 }
 
+// ApproveDynamicCapacity confirms the displayed source/cycle proposal separately from policy edits.
+func (h *SubscriptionHandler) ApproveDynamicCapacity(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	middleware2.SetAuditAction(c, "admin.subscription.dynamic_quota.approve_capacity")
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.BadRequest(c, "Invalid subscription ID")
+		return
+	}
+	if h.subscriptionService.DynamicQuotas == nil {
+		response.ErrorFrom(c, service.ErrDynamicQuotaUnavailable)
+		return
+	}
+	var in struct {
+		ReviewID string `json:"review_id"`
+	}
+	decoder := json.NewDecoder(http.MaxBytesReader(c.Writer, c.Request.Body, 1024))
+	decoder.DisallowUnknownFields()
+	if err = decoder.Decode(&in); err != nil {
+		response.BadRequest(c, "Invalid capacity confirmation")
+		return
+	}
+	if err = decoder.Decode(new(any)); err != io.EOF {
+		response.BadRequest(c, "Expected one JSON object")
+		return
+	}
+	if err = h.subscriptionService.DynamicQuotas.ApproveCapacity(c.Request.Context(), id, in.ReviewID); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	h.GetDynamicQuota(c)
+}
+
 // AssignSubscriptionRequest represents assign subscription request
 type AssignSubscriptionRequest struct {
 	UserID       int64  `json:"user_id" binding:"required"`

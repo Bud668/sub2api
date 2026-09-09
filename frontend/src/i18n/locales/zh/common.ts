@@ -4,6 +4,14 @@ export default {
     optInHint: '默认关闭。开启者均计入份额，管理员也不例外；关闭者保留原规则，其真实消耗仍影响上游余量。开关切换不清空已用额度。',
     source: '绑定上游额度来源', chooseSource: '请选择上游账号', sourceUnavailable: '当前不在可选来源中',
     poolRequests: '此上游待结算 / 未知结果请求',
+    capacityReviewTitle: '上游容量待管理员确认', trustedCapacity: '上次可信容量（0 表示尚未确认）', proposedCapacity: '待确认估算容量',
+    capacityReviewHint: '首次容量估算或超过可信容量 20% 的增长不会自动生效。确认前至少需要 3 次独立查询；持续异常会暂停此来源的新请求。此金额是标准计费容量估算，不是官方承诺。',
+    capacityWaiting: '数据尚未稳定、查询未恢复或确认已过期，请稍后刷新状态。',
+    capacityAcknowledge: '我已核对上游容量变化，确认将此估算用于该上游所有参与动态额度的订阅；已用量不清零。',
+    capacityUnsaved: '请先保存或撤回上面的配置修改，再确认容量。',
+    refreshStatus: '刷新确认状态', approveCapacity: '确认并应用本次容量',
+    capacityApproved: '容量已确认，已重新计算分配；已用量和周期保持不变。',
+    growthFrozen: '额度上调已冻结，原已用量保留。异常持续时暂不可请求，待数据恢复或管理员确认。',
     noSources: '此分组没有可用的直接授权 OpenAI OAuth 来源；不能跨分组绑定。',
     bindingHint: '保存后固定绑定此账号。换源须单独迁移，不能通过关闭再开启换源补额。',
     weight: '分配权重（1 = 一份）', cap: '本周期个人上限（美元）',
@@ -20,7 +28,7 @@ export default {
     pending: '仍有在途或待核对费用，暂不能切换配置。请等待结算；未知结果需运维核对，不会自动退回占用。',
     bindingError: '绑定与分组不一致，或试图变更已保存的来源。请核对账号归属。',
     unavailable: '尚未取得新鲜且身份一致的完整周额度，未启用修改。请核对来源并稍后重试。',
-    statuses: { active: '同步正常', learning: '额度学习中', confirming: '确认上游重置中', settling: '等待旧请求结算', reset_unconfirmed: '重置信号待核对', identity_changed: '上游身份变更待核对', quota_unavailable: '额度数据待同步', invalid_billing_rate: '计费倍率待核对', upstream_reserve: '已到安全保留线', disabled: '未开启' }
+    statuses: { active: '同步正常', learning: '额度学习中', confirming: '确认上游重置中', settling: '等待旧请求结算', reset_unconfirmed: '重置信号待核对', identity_changed: '上游身份变更待核对', quota_unavailable: '额度数据待同步', quota_paused: '额度异常，已暂停请求', invalid_billing_rate: '计费倍率待核对', upstream_reserve: '已到安全保留线', disabled: '未开启' }
   },
   common: {
     loading: '加载中...',

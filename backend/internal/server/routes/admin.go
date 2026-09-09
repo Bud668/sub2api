@@ -679,6 +679,7 @@ func registerSubscriptionRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		subscriptions.GET("/:id/progress", h.Admin.Subscription.GetProgress)
 		subscriptions.GET("/:id/dynamic-quota", h.Admin.Subscription.GetDynamicQuota)
 		subscriptions.PUT("/:id/dynamic-quota", h.Admin.Subscription.SaveDynamicQuota)
+		subscriptions.POST("/:id/dynamic-quota/approve-capacity", h.Admin.Subscription.ApproveDynamicCapacity)
 		subscriptions.POST("/assign", h.Admin.Subscription.Assign)
 		subscriptions.POST("/bulk-assign", h.Admin.Subscription.BulkAssign)
 		subscriptions.POST("/:id/extend", h.Admin.Subscription.Extend)

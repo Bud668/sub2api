@@ -197,6 +197,10 @@ export const subscriptionsAPI = {
     const { data } = await apiClient.get<DynamicQuotaAdminStatus>(`/admin/subscriptions/${id}/dynamic-quota`)
     return data
   },
+  approveDynamicCapacity: async (id: number, reviewId: string): Promise<DynamicQuotaAdminStatus> => {
+    const { data } = await apiClient.post<DynamicQuotaAdminStatus>(`/admin/subscriptions/${id}/dynamic-quota/approve-capacity`, { review_id: reviewId })
+    return data
+  },
   saveDynamicQuota: async (id: number, input: DynamicQuotaInput): Promise<DynamicQuotaAdminStatus> => {
     const { data } = await apiClient.put<DynamicQuotaAdminStatus>(`/admin/subscriptions/${id}/dynamic-quota`, input)
     return data
