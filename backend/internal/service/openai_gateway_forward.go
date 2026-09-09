@@ -885,7 +885,7 @@ func (s *OpenAIGatewayService) forwardDynamicQuotaChecked(ctx context.Context, c
 				wsLastFailureReason,
 				&agentTaskRecoveryTried,
 			)
-			if wsErr == nil {
+			if wsErr == nil || (wsResult != nil && wsResult.ClientDisconnect) {
 				break
 			}
 			if c != nil && c.Writer != nil && c.Writer.Written() {
@@ -966,25 +966,29 @@ func (s *OpenAIGatewayService) forwardDynamicQuotaChecked(ctx context.Context, c
 			}
 			break
 		}
-		if wsErr == nil {
-			firstTokenMs := int64(0)
-			hasFirstTokenMs := wsResult != nil && wsResult.FirstTokenMs != nil
-			if hasFirstTokenMs {
-				firstTokenMs = int64(*wsResult.FirstTokenMs)
+		// Canceled clients can still have billable partial output. Preserve the
+		// result and billing metadata; do not synthesize failure or replay it.
+		if wsErr == nil || (wsResult != nil && wsResult.ClientDisconnect) {
+			if wsErr == nil {
+				firstTokenMs := int64(0)
+				hasFirstTokenMs := wsResult != nil && wsResult.FirstTokenMs != nil
+				if hasFirstTokenMs {
+					firstTokenMs = int64(*wsResult.FirstTokenMs)
+				}
+				requestID := ""
+				if wsResult != nil {
+					requestID = strings.TrimSpace(wsResult.RequestID)
+				}
+				logOpenAIWSModeDebug(
+					"forward_succeeded account_id=%d request_id=%s stream=%v has_first_token_ms=%v first_token_ms=%d ws_attempts=%d",
+					account.ID,
+					requestID,
+					reqStream,
+					hasFirstTokenMs,
+					firstTokenMs,
+					wsAttempts,
+				)
 			}
-			requestID := ""
-			if wsResult != nil {
-				requestID = strings.TrimSpace(wsResult.RequestID)
-			}
-			logOpenAIWSModeDebug(
-				"forward_succeeded account_id=%d request_id=%s stream=%v has_first_token_ms=%v first_token_ms=%d ws_attempts=%d",
-				account.ID,
-				requestID,
-				reqStream,
-				hasFirstTokenMs,
-				firstTokenMs,
-				wsAttempts,
-			)
 			wsResult.UpstreamModel = upstreamModel
 			if wsResult.BillingModel == "" {
 				wsResult.BillingModel = billingModel
@@ -994,7 +998,7 @@ func (s *OpenAIGatewayService) forwardDynamicQuotaChecked(ctx context.Context, c
 				wsResult.ImageInputSize = imageInputSize
 				wsResult.BillingModel = imageBillingModel
 			}
-			return wsResult, nil
+			return wsResult, wsErr
 		}
 		s.writeOpenAIWSFallbackErrorResponse(c, account, wsErr)
 		return nil, wsErr

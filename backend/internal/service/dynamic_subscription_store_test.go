@@ -361,11 +361,15 @@ func TestDynamicQuotaPostgresNativeProtectionSettings(t *testing.T) {
 	require.NoError(t, db.QueryRow(`SELECT usage_ceiling_percent FROM dynamic_quota_pools WHERE account_id=4`).Scan(&legacy))
 	require.Equal(t, 1.0, legacy, "leave applied migration and historical settings intact but unused")
 	// A settings failure must stop new protected traffic, not lose an already billed request.
+	dynamicTestSave(t, s, 21, 5, false)
 	r, err = s.Begin(ctx, 101, 4)
 	require.NoError(t, err)
 	dynamicExec(t, db, `UPDATE settings SET value='invalid json'`)
 	_, err = s.Begin(ctx, 101, 4)
 	require.ErrorIs(t, err, ErrDynamicQuotaUnavailable)
+	q, err = s.Load(ctx, 21)
+	require.NoError(t, err, "disabled subscriptions do not acquire a new settings dependency")
+	require.False(t, q.Enabled)
 	dynamicTestSettle(t, db, r, 101, 11, 1, 1)
 	var resets int
 	require.NoError(t, db.QueryRow(`SELECT count(*) FROM dynamic_quota_events WHERE kind='reset_confirmed'`).Scan(&resets))

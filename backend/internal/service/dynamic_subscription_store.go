@@ -230,8 +230,10 @@ func loadDynamicSubscription(ctx context.Context, db dynamicQuotaQuerier, subscr
 	if json.Unmarshal(raw, &q.pool) != nil {
 		return nil, ErrDynamicQuotaUnavailable
 	}
-	if q.pool.ceilingPercent, err = loadDynamicNativeCeiling(ctx, db, q.AccountID); err != nil {
-		return nil, ErrDynamicQuotaUnavailable.WithCause(err)
+	if q.Enabled {
+		if q.pool.ceilingPercent, err = loadDynamicNativeCeiling(ctx, db, q.AccountID); err != nil {
+			return nil, ErrDynamicQuotaUnavailable.WithCause(err)
+		}
 	}
 	q.rate *= peak.PeakMultiplierAt(now)
 	if !validDynamicAmount(q.rate) || q.rate <= 0 {

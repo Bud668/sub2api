@@ -19,73 +19,93 @@ import (
 // reproduces the HTTP/SSE ingress bug: the client cancels after partial output,
 // while the upstream WS still has a terminal event available for usage billing.
 func TestForwardOpenAIWSV2_ClientCancellationDrainsWithoutSyntheticFailure(t *testing.T) {
-	gin.SetMode(gin.TestMode)
+	for _, complete := range []bool{true, false} {
+		t.Run(map[bool]string{true: "terminal", false: "incomplete"}[complete], func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	writer := &cancelOnFirstWriteResponseWriter{cancel: cancel}
-	c, _ := gin.CreateTestContext(writer)
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil).WithContext(ctx)
-	c.Request.Header.Set("User-Agent", "unit-test-agent/1.0")
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			writer := &cancelOnFirstWriteResponseWriter{cancel: cancel}
+			c, _ := gin.CreateTestContext(writer)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil).WithContext(ctx)
+			c.Request.Header.Set("User-Agent", "unit-test-agent/1.0")
 
-	captureConn := &openAIWSCancelSafeConn{openAIWSCaptureConn: &openAIWSCaptureConn{
-		events: [][]byte{
-			[]byte(`{"type":"response.created","response":{"id":"resp_cancel_1","model":"gpt-5.5"}}`),
-			[]byte(`{"type":"response.output_text.delta","delta":"partial"}`),
-			[]byte(`{"type":"response.completed","response":{"id":"resp_cancel_1","model":"gpt-5.5","usage":{"input_tokens":3,"output_tokens":5}}}`),
-		},
-		readDelays: []time.Duration{0, 0, 50 * time.Millisecond},
-	}}
+			captureConn := &openAIWSCancelSafeConn{openAIWSCaptureConn: &openAIWSCaptureConn{
+				events: [][]byte{
+					[]byte(`{"type":"response.created","response":{"id":"resp_cancel_1","model":"gpt-5.5"}}`),
+					[]byte(`{"type":"response.output_text.delta","delta":"partial"}`),
+					[]byte(`{"type":"response.output_item.done","item":{"id":"image_cancel_1","type":"image_generation_call","status":"completed","result":"synthetic-image"}}`),
+					[]byte(`{"type":"response.completed","response":{"id":"resp_cancel_1","model":"gpt-5.5","usage":{"input_tokens":3,"output_tokens":5}}}`),
+				},
+				readDelays: []time.Duration{0, 0, 50 * time.Millisecond},
+			}}
+			if !complete {
+				captureConn.events = captureConn.events[:len(captureConn.events)-1]
+			}
 
-	cfg := &config.Config{}
-	cfg.Security.URLAllowlist.Enabled = false
-	cfg.Security.URLAllowlist.AllowInsecureHTTP = true
-	cfg.Gateway.OpenAIWS.Enabled = true
-	cfg.Gateway.OpenAIWS.APIKeyEnabled = true
-	cfg.Gateway.OpenAIWS.ResponsesWebsocketsV2 = true
-	cfg.Gateway.OpenAIWS.ModeRouterV2Enabled = true
-	cfg.Gateway.OpenAIWS.IngressModeDefault = OpenAIWSIngressModeCtxPool
-	cfg.Gateway.OpenAIWS.MaxConnsPerAccount = 1
-	cfg.Gateway.OpenAIWS.MinIdlePerAccount = 0
-	cfg.Gateway.OpenAIWS.MaxIdlePerAccount = 1
-	cfg.Gateway.OpenAIWS.QueueLimitPerConn = 8
-	cfg.Gateway.OpenAIWS.DialTimeoutSeconds = 3
-	cfg.Gateway.OpenAIWS.ReadTimeoutSeconds = 5
-	cfg.Gateway.OpenAIWS.WriteTimeoutSeconds = 3
+			cfg := &config.Config{}
+			cfg.Security.URLAllowlist.Enabled = false
+			cfg.Security.URLAllowlist.AllowInsecureHTTP = true
+			cfg.Gateway.OpenAIWS.Enabled = true
+			cfg.Gateway.OpenAIWS.APIKeyEnabled = true
+			cfg.Gateway.OpenAIWS.ResponsesWebsocketsV2 = true
+			cfg.Gateway.OpenAIWS.ModeRouterV2Enabled = true
+			cfg.Gateway.OpenAIWS.IngressModeDefault = OpenAIWSIngressModeCtxPool
+			cfg.Gateway.OpenAIWS.MaxConnsPerAccount = 1
+			cfg.Gateway.OpenAIWS.MinIdlePerAccount = 0
+			cfg.Gateway.OpenAIWS.MaxIdlePerAccount = 1
+			cfg.Gateway.OpenAIWS.QueueLimitPerConn = 8
+			cfg.Gateway.OpenAIWS.DialTimeoutSeconds = 3
+			cfg.Gateway.OpenAIWS.ReadTimeoutSeconds = 5
+			cfg.Gateway.OpenAIWS.WriteTimeoutSeconds = 3
 
-	pool := newOpenAIWSConnPool(cfg)
-	pool.setClientDialerForTest(&openAIWSClientConnCancelDialer{conn: captureConn})
-	svc := &OpenAIGatewayService{
-		cfg:              cfg,
-		httpUpstream:     &httpUpstreamRecorder{},
-		cache:            &stubGatewayCache{},
-		openaiWSResolver: NewOpenAIWSProtocolResolver(cfg),
-		toolCorrector:    NewCodexToolCorrector(),
-		openaiWSPool:     pool,
+			pool := newOpenAIWSConnPool(cfg)
+			pool.setClientDialerForTest(&openAIWSClientConnCancelDialer{conn: captureConn})
+			svc := &OpenAIGatewayService{
+				cfg:              cfg,
+				httpUpstream:     &httpUpstreamRecorder{},
+				cache:            &stubGatewayCache{},
+				openaiWSResolver: NewOpenAIWSProtocolResolver(cfg),
+				toolCorrector:    NewCodexToolCorrector(),
+				openaiWSPool:     pool,
+			}
+			account := &Account{
+				ID:          9101,
+				Name:        "openai-ws-client-cancel",
+				Platform:    PlatformOpenAI,
+				Type:        AccountTypeAPIKey,
+				Status:      StatusActive,
+				Schedulable: true,
+				Concurrency: 1,
+				Credentials: map[string]any{"api_key": "sk-test"},
+				Extra: map[string]any{
+					"openai_apikey_responses_websockets_v2_mode": OpenAIWSIngressModeCtxPool,
+				},
+			}
+
+			result, err := svc.Forward(ctx, c, account, []byte(`{"model":"gpt-5.5","reasoning":{"effort":"high"},"stream":true,"input":[{"type":"input_text","text":"hello"}]}`))
+
+			if complete {
+				require.NoError(t, err, "client cancellation must not surface as an upstream failure")
+			} else {
+				require.ErrorIs(t, err, context.Canceled)
+			}
+			require.NotNil(t, result)
+			require.True(t, result.ClientDisconnect)
+			require.Equal(t, "resp_cancel_1", result.RequestID)
+			if complete {
+				require.Equal(t, 3, result.Usage.InputTokens)
+				require.Equal(t, 5, result.Usage.OutputTokens)
+			}
+			require.Equal(t, 1, result.ImageCount, "partial output still needs billing")
+			require.NotNil(t, result.RequestedReasoningEffort, "keep requested effort when moving result construction")
+			require.Equal(t, "high", *result.RequestedReasoningEffort)
+			evidence := &UserModelRequestEvidence{}
+			evidence.Observe(result, err, true)
+			require.False(t, evidence.RefundHTTP(200, err), "client cancellation cannot refund consumed model allowance")
+			require.NotContains(t, writer.body.String(), "response.failed")
+		})
 	}
-	account := &Account{
-		ID:          9101,
-		Name:        "openai-ws-client-cancel",
-		Platform:    PlatformOpenAI,
-		Type:        AccountTypeAPIKey,
-		Status:      StatusActive,
-		Schedulable: true,
-		Concurrency: 1,
-		Credentials: map[string]any{"api_key": "sk-test"},
-		Extra: map[string]any{
-			"openai_apikey_responses_websockets_v2_mode": OpenAIWSIngressModeCtxPool,
-		},
-	}
-
-	result, err := svc.Forward(ctx, c, account, []byte(`{"model":"gpt-5.5","stream":true,"input":[{"type":"input_text","text":"hello"}]}`))
-
-	require.NoError(t, err, "client cancellation must not surface as an upstream failure")
-	require.NotNil(t, result)
-	require.True(t, result.ClientDisconnect)
-	require.Equal(t, "resp_cancel_1", result.RequestID)
-	require.Equal(t, 3, result.Usage.InputTokens)
-	require.Equal(t, 5, result.Usage.OutputTokens)
-	require.NotContains(t, writer.body.String(), "response.failed")
 }
 
 type cancelOnFirstWriteResponseWriter struct {

@@ -74,8 +74,10 @@ fi
         ./internal/pkg/requestmodel ./internal/pkg/httputil ./migrations
 	go test -tags=unit ./internal/server/middleware \
 		-run 'CyberSuspension' -count=1
+    go test -race -tags=unit ./internal/service \
+        -run 'CancelsUpstreamBeforeClosingBody' -count=1
     go test -race ./internal/service ./internal/service/openai_ws_v2 ./internal/handler ./internal/repository \
-        -run 'Cyber|RedactContentModeration|Relay|Passthrough|HTTPBridge|ModelAllowlist|AuthCacheInvalidation' -count=1
+        -run 'Cyber|RedactContentModeration|Relay|Passthrough|HTTPBridge|ModelAllowlist|AuthCacheInvalidation|ClientCancellation|ClientDisconnect|SkipsCanceledClient|HTTP2|OpenAI429|OAuth429' -count=1
 	go test -race -tags=unit ./internal/server/middleware \
 		-run 'CyberSuspension' -count=100
     if [[ "$model_quota_release" == true ]]; then
