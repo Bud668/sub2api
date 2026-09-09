@@ -17,10 +17,12 @@ var ErrUsageBillingRequestConflict = errors.New("usage billing request fingerpri
 
 // UsageBillingCommand describes one billable request that must be applied at most once.
 type UsageBillingCommand struct {
-	RequestID          string
-	APIKeyID           int64
-	RequestFingerprint string
-	RequestPayloadHash string
+	DynamicQuotaReservationID string
+	DynamicStandardCost       float64
+	RequestID                 string
+	APIKeyID                  int64
+	RequestFingerprint        string
+	RequestPayloadHash        string
 
 	UserID              int64
 	AccountID           int64
@@ -81,6 +83,7 @@ const UsageBillingMonetaryScale = 8
 // 在参数进入 SQL 之前量化一次，两条语句就都拿到已经落在 8 位刻度上的同一个金额，
 // 存储阶段不再发生任何舍入，delta 精确相等。
 func (c *UsageBillingCommand) quantizeMonetaryFields() {
+	c.DynamicStandardCost = QuantizeUsageBillingAmount(c.DynamicStandardCost)
 	c.BalanceCost = QuantizeUsageBillingAmount(c.BalanceCost)
 	c.SubscriptionCost = QuantizeUsageBillingAmount(c.SubscriptionCost)
 	c.APIKeyQuotaCost = QuantizeUsageBillingAmount(c.APIKeyQuotaCost)

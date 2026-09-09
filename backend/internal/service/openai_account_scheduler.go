@@ -1763,6 +1763,9 @@ func (s *defaultOpenAIAccountScheduler) isAccountRequestCompatible(ctx context.C
 // openAISelectionFilterStats so that "no available accounts" errors state why
 // each candidate was dropped instead of failing silently (#4599).
 func (s *defaultOpenAIAccountScheduler) isAccountRequestCompatibleReason(ctx context.Context, account *Account, req OpenAIAccountScheduleRequest) (bool, string) {
+	if !dynamicQuotaAccountAllowed(ctx, account) {
+		return false, "dynamic_quota_binding"
+	}
 	if account == nil {
 		return false, "account_nil"
 	}
@@ -2417,6 +2420,9 @@ func (s *OpenAIGatewayService) isOpenAIAccountTransportCompatible(account *Accou
 }
 
 func (s *OpenAIGatewayService) ReportOpenAIAccountScheduleResult(account *Account, model string, success bool, firstTokenMs *int, observedErr ...error) bool {
+	if len(observedErr) > 0 && isDynamicQuotaError(observedErr[0]) {
+		return false
+	}
 	if account == nil {
 		return false
 	}
@@ -2444,6 +2450,9 @@ func (s *OpenAIGatewayService) ReportOpenAIAccountScheduleResult(account *Accoun
 // ObserveOpenAIAccountHealthFailure records failures that cannot reach the
 // scheduler-result path, for example after semantic response bytes were sent.
 func (s *OpenAIGatewayService) ObserveOpenAIAccountHealthFailure(ctx context.Context, account *Account, observedErr error) bool {
+	if isDynamicQuotaError(observedErr) {
+		return false
+	}
 	if s == nil || s.rateLimitService == nil || account == nil || observedErr == nil {
 		return false
 	}

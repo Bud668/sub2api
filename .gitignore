@@ -135,6 +135,7 @@ vite.config.js
 docs/*
 !docs/CUSTOM-FORK.md
 !docs/UPSTREAM-INTEGRATION.md
+!docs/DYNAMIC-SUBSCRIPTIONS.md
 !docs/UPSTREAM-LEDGER.md
 !docs/PAYMENT.md
 !docs/PAYMENT_CN.md

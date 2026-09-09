@@ -100,7 +100,8 @@
                   </span>
                 </div>
 
-                <div v-if="subscription.group?.weekly_limit_usd" class="flex items-center gap-2">
+                <DynamicQuotaCard v-if="subscription.dynamic_quota?.enabled" :quota="subscription.dynamic_quota" />
+                <div v-else-if="subscription.group?.weekly_limit_usd" class="flex items-center gap-2">
                   <span class="w-8 flex-shrink-0 text-[10px] text-gray-500">{{
                     t('subscriptionProgress.weekly')
                   }}</span>
@@ -181,6 +182,7 @@
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
+import DynamicQuotaCard from '@/components/common/DynamicQuotaCard.vue'
 import { useSubscriptionStore } from '@/stores'
 import type { UserSubscription } from '@/types'
 
@@ -209,7 +211,10 @@ function getMaxUsagePercentage(sub: UserSubscription): number {
   if (sub.group?.daily_limit_usd) {
     percentages.push(((sub.daily_usage_usd || 0) / sub.group.daily_limit_usd) * 100)
   }
-  if (sub.group?.weekly_limit_usd) {
+  if (sub.dynamic_quota?.enabled) {
+    const q = sub.dynamic_quota
+    percentages.push(q.limit_usd > 0 ? q.used_usd / q.limit_usd * 100 : 100)
+  } else if (sub.group?.weekly_limit_usd) {
     percentages.push(((sub.weekly_usage_usd || 0) / sub.group.weekly_limit_usd) * 100)
   }
   if (sub.group?.monthly_limit_usd) {
@@ -221,7 +226,7 @@ function getMaxUsagePercentage(sub: UserSubscription): number {
 function isUnlimited(sub: UserSubscription): boolean {
   return (
     !sub.group?.daily_limit_usd &&
-    !sub.group?.weekly_limit_usd &&
+    !sub.group?.weekly_limit_usd && !sub.dynamic_quota?.enabled &&
     !sub.group?.monthly_limit_usd
   )
 }

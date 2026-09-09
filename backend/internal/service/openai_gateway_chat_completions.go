@@ -59,7 +59,9 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	promptCacheKey string,
 	defaultMappedModel string,
 ) (*OpenAIForwardResult, error) {
-	return s.forwardAsChatCompletions(ctx, c, account, body, promptCacheKey, defaultMappedModel, false)
+	return s.withDynamicQuotaForward(ctx, c, account, func(inner context.Context) (*OpenAIForwardResult, error) {
+		return s.forwardAsChatCompletions(inner, c, account, body, promptCacheKey, defaultMappedModel, false)
+	})
 }
 
 func (s *OpenAIGatewayService) forwardAsChatCompletions(

@@ -2031,7 +2031,53 @@ export interface ChangePasswordRequest {
 
 // ==================== User Subscription Types ====================
 
+export interface DynamicSubscriptionQuota {
+  enabled: boolean
+  revision: number
+  account_id?: number
+  weight: number
+  max_limit_usd: number
+  increase_threshold_usd: number
+  pool_settings?: DynamicQuotaPoolSettings
+  cycle: number
+  status: string
+  limit_usd: number
+  used_usd: number
+  remaining_usd: number
+  reserved_usd: number
+  started_at: string
+  confirmed_at?: string
+  synced_at?: string
+  expected_reset_at?: string
+  updated_at: string
+  capacity_estimate_usd?: number
+  sample_count?: number
+}
+
+export interface DynamicQuotaInput {
+  enabled: boolean
+  revision: number
+  account_id: number
+  weight: number
+  max_limit_usd: number
+  increase_threshold_usd: number
+  pool_settings?: DynamicQuotaPoolSettings
+}
+
+export interface DynamicQuotaPoolSettings {
+  revision: number
+  usage_ceiling_percent: number
+}
+
+export interface DynamicQuotaAdminStatus {
+  policy: DynamicSubscriptionQuota
+  sources: { id: number; name: string; pool_settings: DynamicQuotaPoolSettings }[]
+  pending_requests?: number
+  uncertain_requests?: number
+}
+
 export interface UserSubscription {
+  dynamic_quota?: DynamicSubscriptionQuota | null
   id: number
   user_id: number
   group_id: number

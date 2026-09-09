@@ -189,6 +189,16 @@ func ProvideOpenAIQuotaService(
 	return service
 }
 
+func ProvideDynamicSubscriptionService(db *sql.DB, accounts AccountRepository, quota *OpenAIQuotaService, subscriptions *SubscriptionService, billing *BillingCacheService, gateway *OpenAIGatewayService) *DynamicSubscriptionService {
+	svc := NewDynamicSubscriptionService(db, accounts, quota, subscriptions)
+	svc.disabled = gateway.cfg != nil && gateway.cfg.RunMode == config.RunModeSimple
+	subscriptions.DynamicQuotas = svc
+	billing.DynamicQuotas = svc
+	gateway.DynamicQuotas = svc
+	svc.Start()
+	return svc
+}
+
 // ProvideOpenAIQuotaAutoResetService 启动账号级自动用卡队列与补偿扫描。
 func ProvideOpenAIQuotaAutoResetService(
 	accountRepo AccountRepository,
@@ -868,6 +878,7 @@ var ProviderSet = wire.NewSet(
 	ProvideGrokTokenProvider,
 	ProvideOpenAITokenProvider,
 	ProvideOpenAIQuotaService,
+	ProvideDynamicSubscriptionService,
 	ProvideOpenAIQuotaAutoResetService,
 	ProvideGrokQuotaService,
 	ProvideCNProviderQuotaService,

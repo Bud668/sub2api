@@ -72,16 +72,17 @@ type usageLogBestEffortWriter interface {
 
 // postUsageBillingParams 统一扣费所需的参数
 type postUsageBillingParams struct {
-	Cost                  *CostBreakdown
-	User                  *User
-	APIKey                *APIKey
-	Account               *Account
-	Subscription          *UserSubscription
-	RequestPayloadHash    string
-	IsSubscriptionBill    bool
-	AccountRateMultiplier float64
-	APIKeyService         APIKeyQuotaUpdater
-	Platform              string // 来自 APIKey 关联 Group 的平台标识
+	DynamicQuotaReservationID string
+	Cost                      *CostBreakdown
+	User                      *User
+	APIKey                    *APIKey
+	Account                   *Account
+	Subscription              *UserSubscription
+	RequestPayloadHash        string
+	IsSubscriptionBill        bool
+	AccountRateMultiplier     float64
+	APIKeyService             APIKeyQuotaUpdater
+	Platform                  string // 来自 APIKey 关联 Group 的平台标识
 }
 
 // PlatformFromAPIKey 从 APIKey 关联的 Group 推导 platform 名称。
@@ -280,12 +281,14 @@ func buildUsageBillingCommand(requestID string, usageLog *UsageLog, p *postUsage
 	}
 
 	cmd := &UsageBillingCommand{
-		RequestID:          requestID,
-		APIKeyID:           p.APIKey.ID,
-		UserID:             p.User.ID,
-		AccountID:          p.Account.ID,
-		AccountType:        p.Account.Type,
-		RequestPayloadHash: strings.TrimSpace(p.RequestPayloadHash),
+		DynamicQuotaReservationID: p.DynamicQuotaReservationID,
+		DynamicStandardCost:       p.Cost.TotalCost,
+		RequestID:                 requestID,
+		APIKeyID:                  p.APIKey.ID,
+		UserID:                    p.User.ID,
+		AccountID:                 p.Account.ID,
+		AccountType:               p.Account.Type,
+		RequestPayloadHash:        strings.TrimSpace(p.RequestPayloadHash),
 	}
 	if usageLog != nil {
 		cmd.Model = usageLog.Model
@@ -310,7 +313,7 @@ func buildUsageBillingCommand(requestID string, usageLog *UsageLog, p *postUsage
 	// user-specific) rate multiplier consumes subscription quota at the expected
 	// speed. TotalCost remains the raw (pre-multiplier) value; downstream guards
 	// on "> 0" still correctly skip free subscriptions (RateMultiplier == 0).
-	if p.IsSubscriptionBill && p.Subscription != nil && p.Cost.TotalCost > 0 {
+	if p.IsSubscriptionBill && p.Subscription != nil && (p.Cost.TotalCost > 0 || p.DynamicQuotaReservationID != "") {
 		cmd.SubscriptionID = &p.Subscription.ID
 		cmd.SubscriptionCost = p.Cost.ActualCost
 	} else if p.Cost.ActualCost > 0 {
@@ -338,6 +341,9 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 
 	cmd := buildUsageBillingCommand(requestID, usageLog, p)
 	if cmd == nil || cmd.RequestID == "" || repo == nil {
+		if p.DynamicQuotaReservationID != "" {
+			return false, ErrDynamicQuotaUnavailable
+		}
 		postUsageBilling(ctx, p, deps)
 		return true, nil
 	}

@@ -79,6 +79,7 @@ type OpenAIRateLimitResetCredits struct {
 // Fields not relevant to the quota card are intentionally omitted to keep the
 // surface narrow; full upstream payload preservation is unnecessary.
 type OpenAIQuotaUsage struct {
+	dynamicObservation    *DynamicQuotaObservation
 	UserID                string                       `json:"user_id,omitempty"`
 	AccountID             string                       `json:"account_id,omitempty"`
 	Email                 string                       `json:"email,omitempty"`
@@ -144,6 +145,21 @@ func NewOpenAIQuotaService(
 // OAuth account. Returns infraerrors so the handler layer can map them to
 // stable error codes / HTTP statuses.
 func (s *OpenAIQuotaService) QueryUsage(ctx context.Context, accountID int64) (*OpenAIQuotaUsage, error) {
+	return s.queryUsage(ctx, accountID, true)
+}
+
+func (s *OpenAIQuotaService) QueryDynamicUsage(ctx context.Context, accountID int64) (DynamicQuotaObservation, error) {
+	usage, err := s.queryUsage(ctx, accountID, false)
+	if err != nil {
+		return DynamicQuotaObservation{}, err
+	}
+	if usage.dynamicObservation == nil {
+		return DynamicQuotaObservation{}, ErrDynamicQuotaUnavailable
+	}
+	return *usage.dynamicObservation, nil
+}
+
+func (s *OpenAIQuotaService) queryUsage(ctx context.Context, accountID int64, includeCredits bool) (*OpenAIQuotaUsage, error) {
 	accessToken, chatGPTAccountID, proxyURL, fedRAMP, err := s.prepareUpstreamCall(ctx, accountID)
 	if err != nil {
 		return nil, err
@@ -189,10 +205,21 @@ func (s *OpenAIQuotaService) QueryUsage(ctx context.Context, accountID int64) (*
 			slog.Warn("openai_quota_query_failed", "account_id", accountID, "status", status, "body", body)
 			return nil, infraerrors.Newf(mapUpstreamStatus(status), "OPENAI_QUOTA_UPSTREAM_ERROR", "upstream returned %d: %s", status, body)
 		}
+		if !includeCredits {
+			o, decodeErr := decodeDynamicQuotaObservation([]byte(resp.String()), chatGPTAccountID, time.Now().UTC())
+			if decodeErr != nil {
+				return nil, ErrDynamicQuotaUnavailable.WithCause(decodeErr)
+			}
+			o.Identity = shortOpenAIAutoResetHash(o.Identity)
+			payload.dynamicObservation = &o
+		}
 		break
 	}
 
 	payload.FetchedAt = time.Now().Unix()
+	if !includeCredits {
+		return &payload, nil
+	}
 	details := s.queryResetCreditDetails(callCtx, client, accessToken, chatGPTAccountID, fedRAMP, accountID)
 	if details != nil {
 		payload.autoResetCandidates = details.AutoResetCandidates

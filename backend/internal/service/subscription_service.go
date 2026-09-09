@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math"
 	"math/rand/v2"
 	"strconv"
 	"strings"
@@ -44,6 +45,7 @@ var (
 
 // SubscriptionService 订阅服务
 type SubscriptionService struct {
+	DynamicQuotas       *DynamicSubscriptionService
 	groupRepo           GroupRepository
 	userSubRepo         UserSubscriptionRepository
 	billingCacheService *BillingCacheService
@@ -719,7 +721,27 @@ func (s *SubscriptionService) ExtendSubscription(ctx context.Context, subscripti
 
 // GetByID 根据ID获取订阅
 func (s *SubscriptionService) GetByID(ctx context.Context, id int64) (*UserSubscription, error) {
-	return s.userSubRepo.GetByID(ctx, id)
+	sub, err := s.userSubRepo.GetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return s.hydrateDynamicSubscription(ctx, sub)
+}
+
+func (s *SubscriptionService) hydrateDynamicSubscription(ctx context.Context, sub *UserSubscription) (*UserSubscription, error) {
+	if err := s.DynamicQuotas.Hydrate(ctx, sub); err != nil {
+		return nil, err
+	}
+	return sub, nil
+}
+
+func (s *SubscriptionService) hydrateDynamicSubscriptions(ctx context.Context, subs []UserSubscription) error {
+	for i := range subs {
+		if err := s.DynamicQuotas.Hydrate(ctx, &subs[i]); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // GetActiveSubscription 获取用户对特定分组的有效订阅
@@ -733,7 +755,7 @@ func (s *SubscriptionService) GetActiveSubscription(ctx context.Context, userID,
 		if v, ok := s.subCacheL1.Get(key); ok {
 			if sub, ok := v.(*UserSubscription); ok {
 				cp := *sub
-				return &cp, nil
+				return s.hydrateDynamicSubscription(ctx, &cp)
 			}
 		}
 	}
@@ -759,13 +781,16 @@ func (s *SubscriptionService) GetActiveSubscription(ctx context.Context, userID,
 		return nil, ErrSubscriptionNotFound
 	}
 	cp := *sub
-	return &cp, nil
+	return s.hydrateDynamicSubscription(ctx, &cp)
 }
 
 // ListUserSubscriptions 获取用户的所有订阅
 func (s *SubscriptionService) ListUserSubscriptions(ctx context.Context, userID int64) ([]UserSubscription, error) {
 	subs, err := s.userSubRepo.ListByUserID(ctx, userID)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.hydrateDynamicSubscriptions(ctx, subs); err != nil {
 		return nil, err
 	}
 	normalizeExpiredWindows(subs)
@@ -779,6 +804,9 @@ func (s *SubscriptionService) ListActiveUserSubscriptions(ctx context.Context, u
 	if err != nil {
 		return nil, err
 	}
+	if err := s.hydrateDynamicSubscriptions(ctx, subs); err != nil {
+		return nil, err
+	}
 	normalizeExpiredWindows(subs)
 	return subs, nil
 }
@@ -788,6 +816,9 @@ func (s *SubscriptionService) ListGroupSubscriptions(ctx context.Context, groupI
 	params := pagination.PaginationParams{Page: page, PageSize: pageSize}
 	subs, pag, err := s.userSubRepo.ListByGroupID(ctx, groupID, params)
 	if err != nil {
+		return nil, nil, err
+	}
+	if err := s.hydrateDynamicSubscriptions(ctx, subs); err != nil {
 		return nil, nil, err
 	}
 	normalizeExpiredWindows(subs)
@@ -800,6 +831,9 @@ func (s *SubscriptionService) List(ctx context.Context, page, pageSize int, user
 	params := pagination.PaginationParams{Page: page, PageSize: pageSize}
 	subs, pag, err := s.userSubRepo.List(ctx, params, userID, groupID, status, platform, sortBy, sortOrder)
 	if err != nil {
+		return nil, nil, err
+	}
+	if err := s.hydrateDynamicSubscriptions(ctx, subs); err != nil {
 		return nil, nil, err
 	}
 	normalizeExpiredWindows(subs)
@@ -875,6 +909,12 @@ func (s *SubscriptionService) AdminResetQuota(ctx context.Context, subscriptionI
 	if err != nil {
 		return nil, err
 	}
+	if err = s.DynamicQuotas.Hydrate(ctx, sub); err != nil {
+		return nil, err
+	}
+	if resetWeekly && sub.DynamicQuota != nil && sub.DynamicQuota.Enabled {
+		return nil, infraerrors.Conflict("DYNAMIC_QUOTA_FOLLOWS_UPSTREAM", "Dynamic weekly quota can reset only after its bound upstream reset is verified")
+	}
 	now := s.now()
 	// 日窗口锚点取当天 0 点：手动重置只清空用量，不改变“每天 0 点刷新”的节奏。
 	// 周/月窗口保持锚定重置时刻（期限对齐滚动窗口语义）。
@@ -909,7 +949,7 @@ func (s *SubscriptionService) CheckAndResetWindows(ctx context.Context, sub *Use
 	}
 
 	// 周窗口重置（7天）
-	if windowStart, ok := sub.automaticWindowStartAt(sub.WeeklyWindowStart, 7*24*time.Hour, now); ok {
+	if windowStart, ok := sub.automaticWindowStartAt(sub.WeeklyWindowStart, 7*24*time.Hour, now); ok && (sub.DynamicQuota == nil || !sub.DynamicQuota.Enabled) {
 		expectedWindowStart := sub.WeeklyWindowStart
 		if err := s.userSubRepo.ResetWeeklyUsage(ctx, sub.ID, expectedWindowStart, windowStart); err != nil {
 			return err
@@ -964,16 +1004,22 @@ func (s *SubscriptionService) EnsureWindowMaintenance(ctx context.Context, sub *
 		return nil, err
 	}
 	s.InvalidateSubCacheSync(sub.UserID, sub.GroupID)
-	return refreshed, nil
+	return s.hydrateDynamicSubscription(ctx, refreshed)
 }
 
 // CheckUsageLimits 检查使用限额（返回错误如果超限）
 // 用于中间件的快速预检查，additionalCost 通常为 0
 func (s *SubscriptionService) CheckUsageLimits(ctx context.Context, sub *UserSubscription, group *Group, additionalCost float64) error {
+	if err := sub.DynamicQuota.checkReady(); err != nil {
+		return err
+	}
 	if !sub.CheckDailyLimit(group, additionalCost) {
 		return ErrDailyLimitExceeded
 	}
 	if !sub.CheckWeeklyLimit(group, additionalCost) {
+		if sub.DynamicQuota != nil && sub.DynamicQuota.Enabled {
+			return ErrDynamicQuotaExhausted
+		}
 		return ErrWeeklyLimitExceeded
 	}
 	if !sub.CheckMonthlyLimit(group, additionalCost) {
@@ -987,6 +1033,9 @@ func (s *SubscriptionService) CheckUsageLimits(ctx context.Context, sub *UserSub
 // 返回 needsMaintenance 表示是否需要执行窗口维护并回读数据库快照。
 func (s *SubscriptionService) ValidateAndCheckLimits(sub *UserSubscription, group *Group) (needsMaintenance bool, err error) {
 	now := s.now()
+	if err := sub.DynamicQuota.checkReady(); err != nil {
+		return false, err
+	}
 	// 1. 验证订阅状态
 	if sub.Status == SubscriptionStatusExpired {
 		return false, ErrSubscriptionExpired
@@ -1021,6 +1070,9 @@ func (s *SubscriptionService) ValidateAndCheckLimits(sub *UserSubscription, grou
 		return needsMaintenance, ErrDailyLimitExceeded
 	}
 	if !sub.CheckWeeklyLimit(group, 0) {
+		if sub.DynamicQuota != nil && sub.DynamicQuota.Enabled {
+			return needsMaintenance, ErrDynamicQuotaExhausted
+		}
 		return needsMaintenance, ErrWeeklyLimitExceeded
 	}
 	if !sub.CheckMonthlyLimit(group, 0) {
@@ -1079,13 +1131,14 @@ func (s *SubscriptionService) RecordUsage(ctx context.Context, subscriptionID in
 
 // SubscriptionProgress 订阅进度
 type SubscriptionProgress struct {
-	ID            int64                `json:"id"`
-	GroupName     string               `json:"group_name"`
-	ExpiresAt     time.Time            `json:"expires_at"`
-	ExpiresInDays int                  `json:"expires_in_days"`
-	Daily         *UsageWindowProgress `json:"daily,omitempty"`
-	Weekly        *UsageWindowProgress `json:"weekly,omitempty"`
-	Monthly       *UsageWindowProgress `json:"monthly,omitempty"`
+	DynamicQuota  *DynamicSubscriptionQuota `json:"dynamic_quota,omitempty"`
+	ID            int64                     `json:"id"`
+	GroupName     string                    `json:"group_name"`
+	ExpiresAt     time.Time                 `json:"expires_at"`
+	ExpiresInDays int                       `json:"expires_in_days"`
+	Daily         *UsageWindowProgress      `json:"daily,omitempty"`
+	Weekly        *UsageWindowProgress      `json:"weekly,omitempty"`
+	Monthly       *UsageWindowProgress      `json:"monthly,omitempty"`
 }
 
 // UsageWindowProgress 使用窗口进度
@@ -1101,7 +1154,7 @@ type UsageWindowProgress struct {
 
 // GetSubscriptionProgress 获取订阅使用进度
 func (s *SubscriptionService) GetSubscriptionProgress(ctx context.Context, subscriptionID int64) (*SubscriptionProgress, error) {
-	sub, err := s.userSubRepo.GetByID(ctx, subscriptionID)
+	sub, err := s.GetByID(ctx, subscriptionID)
 	if err != nil {
 		return nil, ErrSubscriptionNotFound
 	}
@@ -1120,6 +1173,7 @@ func (s *SubscriptionService) GetSubscriptionProgress(ctx context.Context, subsc
 // calculateProgress 根据已加载的订阅和分组数据计算使用进度（纯内存计算，无 DB 查询）
 func (s *SubscriptionService) calculateProgress(sub *UserSubscription, group *Group) *SubscriptionProgress {
 	progress := &SubscriptionProgress{
+		DynamicQuota:  sub.DynamicQuota.Public(),
 		ID:            sub.ID,
 		GroupName:     group.Name,
 		ExpiresAt:     sub.ExpiresAt,
@@ -1154,8 +1208,8 @@ func (s *SubscriptionService) calculateProgress(sub *UserSubscription, group *Gr
 	}
 
 	// 周进度
-	if group.HasWeeklyLimit() && sub.WeeklyWindowStart != nil {
-		limit := *group.WeeklyLimitUSD
+	if effective := sub.EffectiveWeeklyLimit(group); effective != nil && *effective > 0 && sub.WeeklyWindowStart != nil {
+		limit := *effective
 		resetsAt := sub.WeeklyWindowStart.Add(7 * 24 * time.Hour)
 		if weeklyResetTime := sub.WeeklyResetTime(); weeklyResetTime != nil {
 			resetsAt = *weeklyResetTime
@@ -1178,6 +1232,19 @@ func (s *SubscriptionService) calculateProgress(sub *UserSubscription, group *Gr
 		if progress.Weekly.ResetsInSeconds < 0 {
 			progress.Weekly.ResetsInSeconds = 0
 		}
+	}
+
+	// Dynamic cycles never derive a reset from a local seven-day deadline.
+	if q := sub.DynamicQuota; q != nil && q.Enabled {
+		w := &UsageWindowProgress{LimitUSD: q.LimitUSD, UsedUSD: q.UsedUSD, RemainingUSD: q.RemainingUSD, WindowStart: q.StartedAt}
+		if q.LimitUSD > 0 {
+			w.Percentage = math.Min(100, q.UsedUSD/q.LimitUSD*100)
+		}
+		if q.ExpectedResetAt != nil {
+			w.ResetsAt = *q.ExpectedResetAt
+			w.ResetsInSeconds = int64(math.Max(0, time.Until(w.ResetsAt).Seconds()))
+		}
+		progress.Weekly = w
 	}
 
 	// 月进度
@@ -1213,7 +1280,7 @@ func (s *SubscriptionService) calculateProgress(sub *UserSubscription, group *Gr
 // GetUserSubscriptionsWithProgress 获取用户所有订阅及进度
 func (s *SubscriptionService) GetUserSubscriptionsWithProgress(ctx context.Context, userID int64) ([]SubscriptionProgress, error) {
 	// ListActiveByUserID 已使用 .WithGroup() eager-load Group 关联，1 次查询获取所有数据
-	subs, err := s.userSubRepo.ListActiveByUserID(ctx, userID)
+	subs, err := s.ListActiveUserSubscriptions(ctx, userID)
 	if err != nil {
 		return nil, err
 	}

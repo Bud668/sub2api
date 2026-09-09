@@ -862,6 +862,7 @@ func UserSubscriptionFromService(sub *service.UserSubscription) *UserSubscriptio
 		return nil
 	}
 	out := userSubscriptionFromServiceBase(sub)
+	out.DynamicQuota = sub.DynamicQuota.Public()
 	return &out
 }
 
@@ -882,6 +883,7 @@ func UserSubscriptionFromServiceAdmin(sub *service.UserSubscription) *AdminUserS
 
 func userSubscriptionFromServiceBase(sub *service.UserSubscription) UserSubscription {
 	return UserSubscription{
+		DynamicQuota:       sub.DynamicQuota,
 		ID:                 sub.ID,
 		UserID:             sub.UserID,
 		GroupID:            sub.GroupID,

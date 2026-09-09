@@ -9,9 +9,10 @@ import (
 const subscriptionDayDuration = 24 * time.Hour
 
 type UserSubscription struct {
-	ID      int64
-	UserID  int64
-	GroupID int64
+	DynamicQuota *DynamicSubscriptionQuota
+	ID           int64
+	UserID       int64
+	GroupID      int64
 
 	StartsAt  time.Time
 	ExpiresAt time.Time
@@ -88,6 +89,9 @@ func (s *UserSubscription) NeedsWeeklyReset() bool {
 }
 
 func (s *UserSubscription) NeedsWeeklyResetAt(now time.Time) bool {
+	if s.DynamicQuota != nil && s.DynamicQuota.Enabled {
+		return false
+	}
 	if s.WeeklyWindowStart == nil {
 		return false
 	}
@@ -129,6 +133,9 @@ func (s *UserSubscription) automaticDailyWindowStartAt(now time.Time) (time.Time
 }
 
 func (s *UserSubscription) canAutomaticallyResetWeeklyAt(now time.Time) bool {
+	if s.DynamicQuota != nil && s.DynamicQuota.Enabled {
+		return false
+	}
 	_, ok := s.automaticWindowStartAt(s.WeeklyWindowStart, 7*24*time.Hour, now)
 	return ok
 }
@@ -189,6 +196,9 @@ func (s *UserSubscription) DailyResetTime() *time.Time {
 }
 
 func (s *UserSubscription) WeeklyResetTime() *time.Time {
+	if s.DynamicQuota != nil && s.DynamicQuota.Enabled {
+		return s.DynamicQuota.ExpectedResetAt
+	}
 	if s.WeeklyWindowStart == nil {
 		return nil
 	}
@@ -212,10 +222,23 @@ func (s *UserSubscription) CheckDailyLimit(group *Group, additionalCost float64)
 }
 
 func (s *UserSubscription) CheckWeeklyLimit(group *Group, additionalCost float64) bool {
+	if s.DynamicQuota != nil && s.DynamicQuota.Enabled {
+		return validDynamicAmount(additionalCost) && s.DynamicQuota.RemainingUSD > 0 && additionalCost <= s.DynamicQuota.RemainingUSD
+	}
 	if !group.HasWeeklyLimit() {
 		return true
 	}
 	return s.WeeklyUsageUSD+additionalCost <= *group.WeeklyLimitUSD
+}
+
+func (s *UserSubscription) EffectiveWeeklyLimit(group *Group) *float64 {
+	if s.DynamicQuota != nil && s.DynamicQuota.Enabled {
+		return &s.DynamicQuota.LimitUSD
+	}
+	if group == nil {
+		return nil
+	}
+	return group.WeeklyLimitUSD
 }
 
 func (s *UserSubscription) CheckMonthlyLimit(group *Group, additionalCost float64) bool {

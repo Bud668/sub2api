@@ -746,9 +746,10 @@ type Setting struct {
 }
 
 type UserSubscription struct {
-	ID      int64 `json:"id"`
-	UserID  int64 `json:"user_id"`
-	GroupID int64 `json:"group_id"`
+	DynamicQuota *service.DynamicSubscriptionQuota `json:"dynamic_quota,omitempty"`
+	ID           int64                             `json:"id"`
+	UserID       int64                             `json:"user_id"`
+	GroupID      int64                             `json:"group_id"`
 
 	StartsAt  time.Time `json:"starts_at"`
 	ExpiresAt time.Time `json:"expires_at"`

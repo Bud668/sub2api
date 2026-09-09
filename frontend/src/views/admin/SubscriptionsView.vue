@@ -254,7 +254,8 @@
               </div>
 
               <!-- Weekly Usage -->
-              <div v-if="row.group?.weekly_limit_usd" class="usage-row">
+              <DynamicQuotaCard v-if="row.dynamic_quota?.enabled" :quota="row.dynamic_quota" />
+              <div v-else-if="row.group?.weekly_limit_usd" class="usage-row">
                 <div class="flex items-center gap-2">
                   <span class="usage-label">{{ t('admin.subscriptions.weekly') }}</span>
                   <div class="h-1.5 flex-1 rounded-full bg-gray-200 dark:bg-dark-600">
@@ -331,7 +332,7 @@
               <div
                 v-if="
                   !row.group?.daily_limit_usd &&
-                  !row.group?.weekly_limit_usd &&
+                  !row.group?.weekly_limit_usd && !row.dynamic_quota?.enabled &&
                   !row.group?.monthly_limit_usd
                 "
                 class="flex items-center gap-2 rounded-lg bg-gradient-to-r from-emerald-50 to-teal-50 px-3 py-2 dark:from-emerald-900/20 dark:to-teal-900/20"
@@ -387,6 +388,7 @@
 
           <template #cell-actions="{ row }">
             <div class="flex items-center gap-1">
+              <button v-if="row.group?.platform === 'openai'" type="button" class="btn btn-secondary text-xs" @click="dynamicSubscription = row">{{ t('dynamicQuota.title') }}</button>
               <button
                 v-if="row.status === 'active' || row.status === 'expired'"
                 @click="handleExtend(row)"
@@ -580,6 +582,8 @@
         </div>
       </template>
     </BaseDialog>
+
+    <DynamicQuotaDialog v-if="dynamicSubscription" :key="dynamicSubscription.id" :subscription="dynamicSubscription" @close="dynamicSubscription = null" @saved="loadSubscriptions" />
 
     <!-- Adjust Subscription Modal -->
     <BaseDialog
@@ -785,6 +789,8 @@ import Select from '@/components/common/Select.vue'
 import GroupBadge from '@/components/common/GroupBadge.vue'
 import GroupOptionItem from '@/components/common/GroupOptionItem.vue'
 import Icon from '@/components/icons/Icon.vue'
+import DynamicQuotaCard from '@/components/common/DynamicQuotaCard.vue'
+import DynamicQuotaDialog from '@/components/admin/DynamicQuotaDialog.vue'
 import {
   getRemainingDurationParts,
   getRemainingExpiryDuration,
@@ -795,6 +801,7 @@ import { GROUP_PLATFORM_OPTIONS } from '@/constants/platforms'
 
 const { t } = useI18n()
 const appStore = useAppStore()
+const dynamicSubscription = ref<UserSubscription | null>(null)
 
 interface GroupOption {
   value: number

@@ -1,4 +1,27 @@
 export default {
+  dynamicQuota: {
+    title: '跟随上游动态额度', enable: '参与动态分配并跟随上游重置',
+    optInHint: '默认关闭。开启者均计入份额，管理员也不例外；关闭者保留原规则，其真实消耗仍影响上游余量。开关切换不清空已用额度。',
+    source: '绑定上游额度来源', chooseSource: '请选择上游账号', sourceUnavailable: '当前不在可选来源中',
+    poolRequests: '此上游待结算 / 未知结果请求',
+    noSources: '此分组没有可用的直接授权 OpenAI OAuth 来源；不能跨分组绑定。',
+    bindingHint: '保存后固定绑定此账号。换源须单独迁移，不能通过关闭再开启换源补额。',
+    weight: '分配权重（1 = 一份）', cap: '本周期个人上限（美元）',
+    increaseThreshold: '自动上调最小增量（美元）',
+    thresholdHint: '默认 $10，可选 $5。以上次已生效额度为基准累计比较，常规上调每 30 分钟检查；下调每次同步精确收紧，不受门槛限制。首次分配、确认重置或手动改变分配配置立即重算。',
+    poolProtection: '上游账号级额度保护', usageCeiling: '最多使用上游总周额度（%）',
+    protectionHint: '此设置影响绑定这个上游的全部订阅，不影响其他上游。目标保留 {reserve}%，另留 1 个百分点误差余量；报告用量达到 {stop}% 时停止新请求。在途和站外消耗可能超出预估，设置比例不触发重置。',
+    allocationHint: '按权重保留基础份额，并将有限余量分给接近额度的订阅；个人上限不是保证可用额。容量持续保守估算，并预留误差和在途余量；没有样本时暂按个人上限学习，不承诺精准用满。',
+    cycle: '上游同步周期', used: '本周期已用', limit: '当前额度', remaining: '剩余可用', reserved: '在途预占',
+    synced: '最近额度同步', confirmed: '最近重置确认', notReset: '尚未确认重置', expected: '上游预计重置（待确认）',
+    cycleHint: '调额不清用量，仅在绑定上游重置确认后换周期。剩余可用还受标准成本份额、计费倍率及在途预占约束。',
+    saved: '保存成功，已显示服务器确认的配置，可继续核对。', failed: '读取或保存失败，请刷新后重试；当前输入已保留。',
+    conflict: '配置已被其他操作修改，请关闭并重新打开后核对；未覆盖他人的修改。',
+    pending: '仍有在途或待核对费用，暂不能切换配置。请等待结算；未知结果需运维核对，不会自动退回占用。',
+    bindingError: '绑定与分组不一致，或试图变更已保存的来源。请核对账号归属。',
+    unavailable: '尚未取得新鲜且身份一致的完整周额度，未启用修改。请核对来源并稍后重试。',
+    statuses: { active: '同步正常', learning: '额度学习中', confirming: '确认上游重置中', settling: '等待旧请求结算', reset_unconfirmed: '重置信号待核对', identity_changed: '上游身份变更待核对', quota_unavailable: '额度数据待同步', invalid_billing_rate: '计费倍率待核对', upstream_reserve: '已到安全保留线', disabled: '未开启' }
+  },
   common: {
     loading: '加载中...',
     submitting: '提交中...',

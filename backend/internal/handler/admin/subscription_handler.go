@@ -2,6 +2,9 @@ package admin
 
 import (
 	"context"
+	"encoding/json"
+	"io"
+	"net/http"
 	"strconv"
 
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
@@ -36,6 +39,56 @@ func NewSubscriptionHandler(subscriptionService *service.SubscriptionService) *S
 	return &SubscriptionHandler{
 		subscriptionService: subscriptionService,
 	}
+}
+
+// Admin middleware owns authentication; no user endpoint can change a binding.
+func (h *SubscriptionHandler) GetDynamicQuota(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.BadRequest(c, "Invalid subscription ID")
+		return
+	}
+	if h.subscriptionService.DynamicQuotas == nil {
+		response.ErrorFrom(c, service.ErrDynamicQuotaUnavailable)
+		return
+	}
+	out, err := h.subscriptionService.DynamicQuotas.AdminStatus(c.Request.Context(), id)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, out)
+}
+
+func (h *SubscriptionHandler) SaveDynamicQuota(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	middleware2.SetAuditAction(c, "admin.subscription.dynamic_quota.update")
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.BadRequest(c, "Invalid subscription ID")
+		return
+	}
+	if h.subscriptionService.DynamicQuotas == nil {
+		response.ErrorFrom(c, service.ErrDynamicQuotaUnavailable)
+		return
+	}
+	var in service.DynamicSubscriptionInput
+	decoder := json.NewDecoder(http.MaxBytesReader(c.Writer, c.Request.Body, 8192))
+	decoder.DisallowUnknownFields()
+	if err = decoder.Decode(&in); err != nil {
+		response.BadRequest(c, "Invalid dynamic quota settings")
+		return
+	}
+	if err = decoder.Decode(new(any)); err != io.EOF {
+		response.BadRequest(c, "Expected one JSON object")
+		return
+	}
+	if err = h.subscriptionService.DynamicQuotas.Save(c.Request.Context(), id, in); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	h.GetDynamicQuota(c)
 }
 
 // AssignSubscriptionRequest represents assign subscription request

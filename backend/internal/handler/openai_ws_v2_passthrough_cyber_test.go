@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/repository"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/Wei-Shaw/sub2api/internal/testutil"
@@ -80,7 +81,7 @@ func newOpenAIWSPassthroughHandlerHarness(t *testing.T, upstreamURL string, cybe
 	billingCacheSvc := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg, nil)
 	gatewaySvc := service.NewOpenAIGatewayService(
 		accountRepo, usageRepo, nil, nil, nil, nil, gatewayCache, cfg, nil, nil,
-		service.NewBillingService(cfg, nil), nil, billingCacheSvc, nil, &service.DeferredService{},
+		service.NewBillingService(cfg, nil), nil, billingCacheSvc, repository.NewHTTPUpstream(cfg), &service.DeferredService{},
 		nil, nil, nil, nil, nil, settingSvc, nil,
 	)
 	concurrencyCache := &concurrencyCacheMock{

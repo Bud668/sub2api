@@ -1093,7 +1093,9 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 
 		quotaValue, _ := c.Get(service.OpsUserModelQuotaErrorKey)
 		quota, _ := quotaValue.(*service.ModelRequestQuotaError)
-		if reason, rejected := middleware2.GetIngressRejectReason(c); rejected && (reason != middleware2.IngressRejectModelNotAllowed || quota == nil) {
+		dynamicValue, _ := c.Get(service.OpsDynamicQuotaErrorKey)
+		dynamicErr, _ := dynamicValue.(error)
+		if reason, rejected := middleware2.GetIngressRejectReason(c); rejected && dynamicErr == nil && (reason != middleware2.IngressRejectModelNotAllowed || quota == nil) {
 			return
 		}
 
@@ -1112,6 +1114,10 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 		}
 		if quota != nil {
 			logOpsUserModelQuotaRejected(c, ops, quota)
+			return
+		}
+		if dynamicErr != nil {
+			logOpsDynamicQuotaRejected(c, ops, dynamicErr)
 			return
 		}
 

@@ -32,7 +32,8 @@ commit=$(jq -r .commit "$manifest")
 build_date=$(jq -r .build_date "$manifest")
 source_commit=$(jq -r '.source_commit // empty' "$manifest")
 model_quota_release=$(jq -r '.features.user_model_request_quotas // false' "$manifest")
-if [[ "$model_quota_release" == true ]]; then
+dynamic_quota_release=$(jq -r '.features.dynamic_subscription_quotas // false' "$manifest")
+if [[ "$model_quota_release" == true || "$dynamic_quota_release" == true ]]; then
     [[ -n ${SUB2API_MODEL_QUOTA_TEST_DSN:-} ]] || fail "用户模型配额发布必须提供隔离 PostgreSQL 的 SUB2API_MODEL_QUOTA_TEST_DSN；测试代码拒绝生产库名"
 fi
 [[ $(git -C "$upstream_dir" rev-parse "refs/tags/$tag^{commit}") == "$base" ]] || fail "官方 tag/commit 不一致"
@@ -62,6 +63,11 @@ else
 fi
 (
     cd "$release_dir/source/backend"
+    if [[ -f migrations/238_dynamic_subscription_quotas.sql ]]; then
+        [[ "$dynamic_quota_release" == true ]] || fail "动态额度源码必须在候选清单声明 dynamic_subscription_quotas 并通过隔离数据库回归"
+    elif [[ "$dynamic_quota_release" == true ]]; then
+        fail "清单声明动态额度，但固定源码不包含对应迁移"
+    fi
     [[ $(go env GOVERSION) == "$(jq -r .go_version "$manifest")" ]] || fail "Go 版本不一致"
     go test ./internal/service ./internal/service/openai_ws_v2 ./internal/handler ./internal/handler/admin \
         ./internal/server/... ./internal/repository ./internal/pkg/apicompat ./internal/pkg/openai \
@@ -75,6 +81,10 @@ fi
     if [[ "$model_quota_release" == true ]]; then
         go test -race ./internal/service ./internal/handler ./internal/server/middleware \
             -run 'UserModel' -count=2
+    fi
+    if [[ "$dynamic_quota_release" == true ]]; then
+        go test -race ./internal/service ./internal/handler/... ./internal/server/... ./internal/repository \
+            -run 'DynamicQuota' -count=2
     fi
 )
 (
@@ -101,6 +111,11 @@ fi
             src/i18n/__tests__/localesNoKeyCollision.spec.ts
     fi
     pnpm run build
+    if [[ "$dynamic_quota_release" == true ]]; then
+        pnpm exec vitest run src/components/admin/__tests__/DynamicQuotaDialog.spec.ts \
+            src/components/common/__tests__/DynamicQuotaCard.spec.ts \
+            src/views/admin/__tests__/SubscriptionsView.userUsageLink.spec.ts
+    fi
 )
 (
     cd "$release_dir/source/backend"

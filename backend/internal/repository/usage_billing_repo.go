@@ -47,6 +47,15 @@ func (r *usageBillingRepository) Apply(ctx context.Context, cmd *service.UsageBi
 		return nil, err
 	}
 	if !applied {
+		if cmd.DynamicQuotaReservationID != "" {
+			if err := service.RejectDuplicateDynamicQuota(ctx, tx, cmd); err != nil {
+				return nil, err
+			}
+			if err := tx.Commit(); err != nil {
+				return nil, err
+			}
+			tx = nil
+		}
 		return &service.UsageBillingApplyResult{Applied: false}, nil
 	}
 
@@ -172,6 +181,11 @@ func (r *usageBillingRepository) applyBatchImageBalanceHold(
 }
 
 func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, tx *sql.Tx, cmd *service.UsageBillingCommand, result *service.UsageBillingApplyResult) error {
+	if cmd.DynamicQuotaReservationID != "" {
+		if err := service.SettleDynamicQuota(ctx, tx, cmd); err != nil {
+			return err
+		}
+	}
 	if cmd.SubscriptionCost > 0 && cmd.SubscriptionID != nil {
 		if err := incrementUsageBillingSubscription(ctx, tx, *cmd.SubscriptionID, cmd.SubscriptionCost); err != nil {
 			return err

@@ -1,4 +1,27 @@
 export default {
+  dynamicQuota: {
+    title: 'Upstream-linked dynamic quota', enable: 'Join allocation and follow upstream resets',
+    optInHint: 'Off by default. Every opted-in subscription counts, including administrators. Others retain their rules; their actual consumption still reduces upstream capacity. Toggling never clears usage.',
+    source: 'Bound quota source', chooseSource: 'Choose an upstream account', sourceUnavailable: 'Not currently an eligible source',
+    poolRequests: 'Source requests: pending / unknown outcome',
+    noSources: 'No directly authorized OpenAI OAuth source in this group. Cross-group binding is not allowed.',
+    bindingHint: 'The saved source is fixed. Changing it requires a separate migration; toggling cannot change the source or refill quota.',
+    weight: 'Allocation weight (1 = one share)', cap: 'Personal cycle ceiling (USD)',
+    increaseThreshold: 'Minimum automatic increase (USD)',
+    thresholdHint: 'Default $10, optionally $5. Compare cumulatively with the last applied allowance; routine increases are checked every 30 minutes. Decreases apply precisely on every sync. Initial grants, confirmed resets and manual allocation changes apply immediately.',
+    poolProtection: 'Shared upstream quota protection', usageCeiling: 'Maximum upstream weekly usage (%)',
+    protectionHint: 'Applies to all subscriptions bound to this source, never other sources. Target reserve: {reserve}%, plus 1 percentage point for uncertainty; reported usage of {stop}% stops new requests. In-flight and external consumption may overshoot estimates. Changing this setting never resets usage.',
+    allocationHint: 'Weighted base shares plus bounded surplus for subscriptions approaching their share. The ceiling is not guaranteed capacity. Estimates include uncertainty and in-flight reserves. Without samples, learning uses personal ceilings; exact utilization is not guaranteed.',
+    cycle: 'Upstream-linked cycle', used: 'Used this cycle', limit: 'Current allowance', remaining: 'Available', reserved: 'In-flight reserve',
+    synced: 'Latest quota sync', confirmed: 'Last confirmed reset', notReset: 'No confirmed reset yet', expected: 'Expected upstream reset (unconfirmed)',
+    cycleHint: 'Allocation changes preserve usage; only a confirmed bound-source reset changes the cycle. Available funds also honor standard-cost shares, billing rates and in-flight reserves.',
+    saved: 'Saved successfully. Server-confirmed settings remain open for review.', failed: 'Unable to load or save. Retry after refreshing; your input has been kept.',
+    conflict: 'Settings changed elsewhere. Close and reopen to review; no concurrent changes were overwritten.',
+    pending: 'In-flight or unresolved charges prevent this change. Wait for settlement; unknown outcomes need operator reconciliation and are never automatically refunded.',
+    bindingError: 'Source and group do not match, or an existing binding was changed. Check account membership.',
+    unavailable: 'Fresh, identity-matched weekly quota data is unavailable. The change was not enabled. Check the source and retry.',
+    statuses: { active: 'Synchronized', learning: 'Learning capacity', confirming: 'Confirming reset', settling: 'Waiting for settlement', reset_unconfirmed: 'Reset needs review', identity_changed: 'Identity needs review', quota_unavailable: 'Waiting for quota data', invalid_billing_rate: 'Review billing rate', upstream_reserve: 'Safety reserve reached', disabled: 'Disabled' }
+  },
   common: {
     loading: 'Loading...',
     submitting: 'Submitting...',

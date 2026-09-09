@@ -10,6 +10,8 @@ import type {
   AssignSubscriptionRequest,
   BulkAssignSubscriptionRequest,
   ExtendSubscriptionRequest,
+  DynamicQuotaInput,
+  DynamicQuotaAdminStatus,
   PaginatedResponse
 } from '@/types'
 
@@ -191,6 +193,14 @@ export async function listByUser(
 }
 
 export const subscriptionsAPI = {
+  getDynamicQuota: async (id: number): Promise<DynamicQuotaAdminStatus> => {
+    const { data } = await apiClient.get<DynamicQuotaAdminStatus>(`/admin/subscriptions/${id}/dynamic-quota`)
+    return data
+  },
+  saveDynamicQuota: async (id: number, input: DynamicQuotaInput): Promise<DynamicQuotaAdminStatus> => {
+    const { data } = await apiClient.put<DynamicQuotaAdminStatus>(`/admin/subscriptions/${id}/dynamic-quota`, input)
+    return data
+  },
   list,
   getById,
   getProgress,

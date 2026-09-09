@@ -138,7 +138,8 @@
             </div>
 
             <!-- Weekly Usage -->
-            <div v-if="subscription.group?.weekly_limit_usd" class="space-y-2">
+            <DynamicQuotaCard v-if="subscription.dynamic_quota?.enabled" :quota="subscription.dynamic_quota" />
+            <div v-else-if="subscription.group?.weekly_limit_usd" class="space-y-2">
               <div class="flex items-center justify-between">
                 <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
                   {{ t('userSubscriptions.weekly') }}
@@ -223,7 +224,7 @@
             <div
               v-if="
                 !subscription.group?.daily_limit_usd &&
-                !subscription.group?.weekly_limit_usd &&
+                !subscription.group?.weekly_limit_usd && !subscription.dynamic_quota?.enabled &&
                 !subscription.group?.monthly_limit_usd
               "
               class="flex items-center justify-center rounded-xl bg-gradient-to-r from-emerald-50 to-teal-50 py-6 dark:from-emerald-900/20 dark:to-teal-900/20"
@@ -248,6 +249,7 @@
 </template>
 
 <script setup lang="ts">
+import DynamicQuotaCard from '@/components/common/DynamicQuotaCard.vue'
 import { ref, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
@@ -16,6 +17,13 @@ import (
 func writeUserModelPolicyWSError(c *gin.Context, ctx context.Context, conn *coderws.Conn, err error) error {
 	code, message, status := infraerrors.Reason(err), infraerrors.Message(err), infraerrors.Code(err)
 	entry := map[string]any{"type": "invalid_request_error", "code": code, "message": message}
+	dynamic := strings.HasPrefix(code, "DYNAMIC_QUOTA_")
+	if dynamic {
+		service.MarkDynamicQuotaRejected(c, err)
+		if status == 429 {
+			entry["type"] = "rate_limit_error"
+		}
+	}
 	var quota *service.ModelRequestQuotaError
 	if errors.As(err, &quota) {
 		status = 429
@@ -25,8 +33,10 @@ func writeUserModelPolicyWSError(c *gin.Context, ctx context.Context, conn *code
 	if status >= 500 {
 		entry["type"] = "server_error"
 	} else {
-		service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalModelConfiguration)
-		middleware.MarkIngressRejected(c, middleware.IngressRejectModelNotAllowed)
+		if !dynamic {
+			service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalModelConfiguration)
+			middleware.MarkIngressRejected(c, middleware.IngressRejectModelNotAllowed)
+		}
 	}
 	payload, _ := json.Marshal(map[string]any{"type": "error", "status": status, "error": entry})
 	writeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
@@ -39,5 +49,9 @@ func writeUserModelPolicyWSError(c *gin.Context, ctx context.Context, conn *code
 		closeCode = coderws.StatusInternalError
 	}
 	// Close only this connection, never disable the user or mark a cyber event.
-	return service.NewOpenAIWSClientCloseError(closeCode, "model permission or request quota rejected; see error event", err)
+	reason := "model permission or request quota rejected; see error event"
+	if dynamic {
+		reason = "dynamic quota rejected; see error event"
+	}
+	return service.NewOpenAIWSClientCloseError(closeCode, reason, err)
 }

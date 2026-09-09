@@ -104,6 +104,7 @@ type subscriptionCacheInvalidationPubSub interface {
 // BillingCacheService 计费缓存服务
 // 负责余额和订阅数据的缓存管理，提供高性能的计费资格检查
 type BillingCacheService struct {
+	DynamicQuotas         *DynamicSubscriptionService
 	cache                 BillingCache
 	userRepo              UserRepository
 	subRepo               UserSubscriptionRepository
@@ -898,6 +899,13 @@ func (s *BillingCacheService) checkBalanceEligibility(ctx context.Context, userI
 
 // checkSubscriptionEligibility 检查订阅模式资格
 func (s *BillingCacheService) checkSubscriptionEligibility(ctx context.Context, userID int64, group *Group, subscription *UserSubscription) error {
+	if subscription != nil {
+		cp := *subscription
+		subscription = &cp
+	}
+	if err := s.DynamicQuotas.Hydrate(ctx, subscription); err != nil {
+		return err
+	}
 	// 获取订阅缓存数据
 	subData, err := s.GetSubscriptionStatus(ctx, userID, group.ID)
 	if err != nil {
@@ -926,7 +934,15 @@ func (s *BillingCacheService) checkSubscriptionEligibility(ctx context.Context, 
 		return ErrDailyLimitExceeded
 	}
 
-	if group.HasWeeklyLimit() && subData.WeeklyUsage >= *group.WeeklyLimitUSD {
+	if subscription != nil && subscription.DynamicQuota != nil && subscription.DynamicQuota.Enabled {
+		q := subscription.DynamicQuota
+		if err := q.checkReady(); err != nil {
+			return err
+		}
+		if q.RemainingUSD <= 0 {
+			return ErrDynamicQuotaExhausted
+		}
+	} else if group.HasWeeklyLimit() && subData.WeeklyUsage >= *group.WeeklyLimitUSD {
 		return ErrWeeklyLimitExceeded
 	}
 

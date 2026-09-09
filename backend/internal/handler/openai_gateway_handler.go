@@ -2273,6 +2273,22 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	}
 	modelQuotaTurns := service.NewUserModelRequestWSTracker(modelPolicies, apiKey.UserID)
 	defer modelQuotaTurns.Close()
+	var dynamicTurnsMu sync.Mutex
+	dynamicTurns := map[int]*service.DynamicQuotaReservation{}
+	takeDynamicTurn := func(turn int) *service.DynamicQuotaReservation {
+		dynamicTurnsMu.Lock()
+		defer dynamicTurnsMu.Unlock()
+		r := dynamicTurns[turn]
+		delete(dynamicTurns, turn)
+		return r
+	}
+	defer func() {
+		dynamicTurnsMu.Lock()
+		defer dynamicTurnsMu.Unlock()
+		for _, r := range dynamicTurns {
+			r.Finish(nil, context.Canceled, false)
+		}
+	}()
 	maxIngressConnections := 0
 	if h.cfg != nil {
 		maxIngressConnections = h.cfg.Gateway.OpenAIWS.MaxIngressConnectionsPerAPIKey
@@ -2484,6 +2500,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
 	requestPlatform := openAICompatibleRequestPlatform(ctx, apiKey)
+	ctx = service.WithDynamicQuotaWSContext(ctx)
 	requiredTransport := service.OpenAIUpstreamTransportResponsesWebsocketV2Ingress
 	if requestPlatform == service.PlatformGrok {
 		requiredTransport = service.OpenAIUpstreamTransportHTTPSSE
@@ -2751,6 +2768,19 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		// turn 级定价：首轮回退到 TurnStarted 的所属 turn 时刻；后续 turn 由
 		// BeforeTurn 重新冻结 pricingAt 并按最新门复核当前账号。
 		var turnPricing openAIWSTurnPricing
+		beginDynamicTurn := func(turn int) error {
+			r, err := h.gatewayService.DynamicQuotas.Begin(ctx, apiKey.ID, account.ID)
+			if err != nil {
+				return writeUserModelPolicyWSError(c, ctx, wsConn, err)
+			}
+			// WS adapters can return before a terminal event. Unknown outcomes
+			// retain their hold; known local failures explicitly release it below.
+			r.MarkDispatched()
+			dynamicTurnsMu.Lock()
+			dynamicTurns[turn] = r
+			dynamicTurnsMu.Unlock()
+			return nil
+		}
 		hooks := &service.OpenAIWSIngressHooks{
 			ClientLifecycleContext:      clientLifecycleCtx,
 			InitialRequestModel:         reqModel,
@@ -2801,7 +2831,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 					if err := modelQuotaTurns.Begin(ctx, turn, model); err != nil {
 						return writeUserModelPolicyWSError(c, ctx, wsConn, err)
 					}
-					return nil
+					return beginDynamicTurn(turn)
 				}
 				if key := findBlockedCyberSessionKey(ctx, h.gatewayService, apiKey.ID, c, payload); key != "" {
 					closeStatus := writeCyberSessionBlockedWSError(ctx, wsConn, key)
@@ -2815,9 +2845,15 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				if err := modelQuotaTurns.Begin(ctx, turn, model); err != nil {
 					return writeUserModelPolicyWSError(c, ctx, wsConn, err)
 				}
-				return nil
+				return beginDynamicTurn(turn)
 			},
-			MapRequestModel: func(turn int, originalModel string) (string, error) {
+			MapRequestModel: func(turn int, originalModel string) (mapped string, mapErr error) {
+				defer func() {
+					if mapErr != nil {
+						takeDynamicTurn(turn).RejectBeforeForward()
+						modelQuotaTurns.RejectBeforeForward(turn)
+					}
+				}()
 				model := strings.TrimSpace(originalModel)
 				if model == "" {
 					model = reqModel
@@ -2838,6 +2874,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				defer func() {
 					if turnErr != nil {
 						modelQuotaTurns.RejectBeforeForward(turn)
+						takeDynamicTurn(turn).RejectBeforeForward()
 					}
 				}()
 				// turn==1 的会话屏蔽已由握手层检查覆盖；连接内 flag 只拦截后续 turn。
@@ -2887,6 +2924,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				return nil
 			},
 			AfterTurn: func(turn int, result *service.OpenAIForwardResult, turnErr error) {
+				takeDynamicTurn(turn).Finish(result, turnErr, result != nil && result.SucceededForScheduling())
 				modelQuotaTurns.After(turn, result, turnErr)
 				turnStart := getTurnStart(turn)
 				cyberBlockBody := takeCyberTurnBody(turn)
@@ -3021,6 +3059,15 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			err := hooks.BeforeRequest(1, wsFirstMessage, "")
 			if err == nil {
 				err = h.gatewayService.ProxyResponsesWebSocketFromClient(ctx, c, wsConn, account, token, wsFirstMessage, hooks)
+			}
+			// A pre-terminal adapter failure may not have called AfterTurn.
+			// Settle that attempt before any retry can reuse its turn number.
+			dynamicTurnsMu.Lock()
+			leftover := dynamicTurns
+			dynamicTurns = map[int]*service.DynamicQuotaReservation{}
+			dynamicTurnsMu.Unlock()
+			for _, r := range leftover {
+				r.Finish(nil, err, false)
 			}
 			if cyberBlockedThisConn || cyberBlockPendingAfterFailover {
 				closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "session blocked by cyber-security policy")

@@ -9,6 +9,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
@@ -193,6 +194,7 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 		}
 
 		// ── 5. 按端点需要加载订阅 ───────────────────────────────────
+		c.Set(string(ContextKeyAPIKey), apiKey) // Authenticated identity for local quota error records.
 
 		var subscription *service.UserSubscription
 		isSubscriptionType := apiKey.Group != nil && apiKey.Group.IsSubscriptionType()
@@ -206,6 +208,11 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 			)
 			if subErr != nil {
 				if !skipBilling {
+					if errors.Is(subErr, service.ErrDynamicQuotaUnavailable) {
+						service.MarkDynamicQuotaRejected(c, subErr)
+						AbortWithError(c, 503, "DYNAMIC_QUOTA_UNAVAILABLE", infraerrors.Message(subErr))
+						return
+					}
 					AbortWithError(c, 403, "SUBSCRIPTION_NOT_FOUND", "No active subscription found for this group")
 					return
 				}
@@ -251,8 +258,17 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 					_, validateErr = subscriptionService.ValidateAndCheckLimits(subscription, apiKey.Group)
 				}
 				if validateErr != nil {
+					if strings.HasPrefix(infraerrors.Reason(validateErr), "DYNAMIC_QUOTA_") {
+						service.MarkDynamicQuotaRejected(c, validateErr)
+						AbortWithError(c, infraerrors.Code(validateErr), infraerrors.Reason(validateErr), infraerrors.Message(validateErr))
+						return
+					}
 					code := "SUBSCRIPTION_INVALID"
 					status := 403
+					if errors.Is(validateErr, service.ErrDynamicQuotaUnavailable) {
+						code = "DYNAMIC_QUOTA_UNAVAILABLE"
+						status = 503
+					}
 					if errors.Is(validateErr, service.ErrDailyLimitExceeded) ||
 						errors.Is(validateErr, service.ErrWeeklyLimitExceeded) ||
 						errors.Is(validateErr, service.ErrMonthlyLimitExceeded) {
@@ -275,6 +291,22 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 
 		if subscription != nil {
 			c.Set(string(ContextKeySubscription), subscription)
+			if q := subscription.DynamicQuota; q != nil && q.Enabled {
+				forced, _ := c.Request.Context().Value(ctxkey.ForcePlatform).(string)
+				if apiKey.Group.Platform != service.PlatformOpenAI || (forced != "" && forced != service.PlatformOpenAI) {
+					service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalPolicyDenied)
+					AbortWithError(c, 400, "DYNAMIC_QUOTA_UNSUPPORTED_PLATFORM", "Dynamic subscriptions require their bound OpenAI platform")
+					return
+				}
+				c.Request = c.Request.WithContext(service.WithDynamicQuotaSource(c.Request.Context(), q.AccountID))
+				path := c.Request.URL.Path
+				textEndpoint := strings.HasSuffix(path, "/responses") || strings.HasSuffix(path, "/responses/compact") || strings.HasSuffix(path, "/chat/completions") || strings.HasSuffix(path, "/messages")
+				readEndpoint := c.Request.Method == http.MethodGet && !strings.Contains(path, "/realtime") || strings.HasSuffix(path, "/count_tokens") || strings.HasSuffix(path, "/input_tokens")
+				if !textEndpoint && !readEndpoint {
+					AbortWithError(c, 400, "DYNAMIC_QUOTA_UNSUPPORTED_ENDPOINT", "Dynamic subscriptions currently support text Responses, Chat Completions and Messages")
+					return
+				}
+			}
 		}
 		c.Set(string(ContextKeyAPIKey), apiKey)
 		c.Set(string(ContextKeyUser), AuthSubject{
