@@ -4,6 +4,7 @@
  */
 
 import { apiClient } from '../client'
+import type { WindowStats } from '@/types'
 
 export type Provider =
   | 'openai'
@@ -35,6 +36,7 @@ export interface MonitorQuotaTier {
   limit?: number
   /** RFC3339；空表示无重置时间 */
   reset_at?: string
+  window_stats?: WindowStats | null
 }
 
 export interface MonitorBalance {

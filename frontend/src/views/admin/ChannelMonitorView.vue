@@ -152,6 +152,7 @@
     <MonitorRunResultDialog
       :show="showRunResult"
       :results="runResults"
+      :provider="runProvider"
       @close="showRunResult = false"
     />
 
@@ -229,6 +230,7 @@ const showDeleteDialog = ref(false)
 const deleting = ref<ChannelMonitor | null>(null)
 const showRunResult = ref(false)
 const runResults = ref<CheckResult[]>([])
+const runProvider = ref<Provider>()
 const duplicatingIds = reactive(new Set<number>())
 
 let abortController: AbortController | null = null
@@ -334,6 +336,7 @@ async function handleRunNow(row: ChannelMonitor) {
   try {
     const res = await adminAPI.channelMonitor.runNow(row.id)
     runResults.value = res.results || []
+    runProvider.value = row.provider
     showRunResult.value = true
     appStore.showSuccess(t('admin.channelMonitor.runSuccess'))
     // Refresh row to get latest status from backend

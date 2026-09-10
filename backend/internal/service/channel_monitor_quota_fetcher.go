@@ -318,6 +318,10 @@ func appendProgressTier(tiers *[]domain.MonitorQuotaTier, window, label string, 
 	if p.ResetsAt != nil {
 		tier.ResetAt = p.ResetsAt.UTC().Format(time.RFC3339)
 	}
+	if p.WindowStats != nil {
+		stats := *p.WindowStats
+		tier.WindowStats = &stats
+	}
 	if p.LimitRequests > 0 {
 		tier.Used = float64(p.UsedRequests)
 		tier.Limit = float64(p.LimitRequests)

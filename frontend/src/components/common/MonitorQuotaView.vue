@@ -8,17 +8,23 @@
     </div>
 
     <!-- 用量窗口条形图（复用账号页 UsageProgressBar：同阈值配色、同倒计时格式） -->
-    <div v-if="snapshot.success && tierRows.length" class="space-y-1">
+    <div v-if="snapshot.success && tierRows.length" class="space-y-2">
       <UsageProgressBar
         v-for="row in tierRows"
         :key="row.key"
         data-testid="monitor-quota-tier"
+        :class="{ 'rounded-lg bg-gray-50 p-2.5 dark:bg-dark-700/40': row.tier.window_stats }"
         :label="row.label"
         :title="row.title"
         label-width="auto"
         :color="row.color"
         :utilization="row.tier.used_percent"
         :resets-at="row.tier.reset_at ?? null"
+        :window-stats="row.tier.window_stats"
+        :estimated-total-cost="provider === 'openai' && row.tier.window === '7d'
+          ? estimateUsageWindowTotalCost(row.tier.window_stats?.cost, row.tier.used_percent)
+          : null"
+        :show-now-when-idle="provider === 'openai'"
       />
     </div>
 
@@ -42,8 +48,9 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import type { MonitorQuotaSnapshot, MonitorQuotaTier } from '@/api/admin/channelMonitor'
+import type { MonitorQuotaSnapshot, MonitorQuotaTier, Provider } from '@/api/admin/channelMonitor'
 import UsageProgressBar from '@/components/account/UsageProgressBar.vue'
+import { estimateUsageWindowTotalCost } from '@/utils/usagePricing'
 
 /**
  * 配额快照渲染（管理端监控列表/运行结果 + 用户端监控卡片共用）。
@@ -54,6 +61,7 @@ import UsageProgressBar from '@/components/account/UsageProgressBar.vue'
  */
 const props = defineProps<{
   snapshot?: MonitorQuotaSnapshot | null
+  provider?: Provider
 }>()
 
 const { t, te } = useI18n()

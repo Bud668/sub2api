@@ -4,6 +4,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"testing"
@@ -142,6 +143,36 @@ func TestQuotaFetcher_OverseasAccountUsesUsageService(t *testing.T) {
 	require.Equal(t, "7d", snapshot.Tiers[1].Window)
 	require.Equal(t, 1, usage.getCalls())
 	require.Equal(t, 0, cnQuota.calls)
+}
+
+func TestQuotaFetcher_WindowStatsSurviveSnapshotWithoutExtraUsageCalls(t *testing.T) {
+	fetcher, usage, _, _, accounts := newQuotaFetcherTestSetup(t)
+	accounts.accounts[7] = &Account{ID: 7, Platform: domain.PlatformOpenAI}
+	fiveHour := &WindowStats{Requests: 490, Tokens: 54000000, Cost: 93.18, StandardCost: 46.59, UserCost: 23.295}
+	sevenDay := &WindowStats{Requests: 11900, Tokens: 1500000000, Cost: 1615.59, StandardCost: 807.795, UserCost: 403.8975}
+	usage.usage = &UsageInfo{
+		FiveHour:       &UsageProgress{Utilization: 0, WindowStats: fiveHour},
+		SevenDay:       &UsageProgress{Utilization: 74, WindowStats: sevenDay},
+		SevenDaySonnet: &UsageProgress{Utilization: 12},
+	}
+
+	snapshot := fetcher.Fetch(context.Background(), 7)
+	require.True(t, snapshot.Success)
+	require.Equal(t, fiveHour, snapshot.Tiers[0].WindowStats)
+	require.Equal(t, sevenDay, snapshot.Tiers[1].WindowStats)
+	require.Nil(t, snapshot.Tiers[2].WindowStats, "missing statistics must not become zero usage")
+
+	// Historical JSON and the TTL cache must keep their own copy of the measured values.
+	fiveHour.Cost = 0
+	require.Equal(t, 93.18, snapshot.Tiers[0].WindowStats.Cost)
+	data, err := json.Marshal(snapshot)
+	require.NoError(t, err)
+	var restored domain.MonitorQuotaSnapshot
+	require.NoError(t, json.Unmarshal(data, &restored))
+	require.Equal(t, snapshot.Tiers, restored.Tiers)
+	require.NotContains(t, string(data), `"window_stats":null`)
+	require.Equal(t, snapshot, fetcher.Fetch(context.Background(), 7))
+	require.Equal(t, 1, usage.getCalls())
 }
 
 func TestQuotaFetcher_CodingPlanAccountUsesCNQuota(t *testing.T) {

@@ -56,7 +56,7 @@
     />
 
     <!-- 配额模式：最新用量/余额快照（服务端已按系统开关剥离，此处 flag 为纵深防御） -->
-    <MonitorQuotaView v-if="quotaVisible" :snapshot="item.latest_quota" class="mt-2" />
+    <MonitorQuotaView v-if="quotaVisible" :snapshot="item.latest_quota" :provider="item.provider" class="mt-2 w-full min-w-0" />
 
     <!-- Divider -->
     <div class="mt-4 border-t border-gray-100 dark:border-dark-700/60"></div>

@@ -3,13 +3,17 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { MonitorQuotaSnapshot } from '@/api/admin/channelMonitor'
 import MonitorQuotaView from '../MonitorQuotaView.vue'
+import UsageProgressBar from '@/components/account/UsageProgressBar.vue'
 
 vi.mock('vue-i18n', async () => {
   const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
   return {
     ...actual,
     // te() 恒真：已知 token 直接返回 i18n key，便于断言 window/label 映射。
-    useI18n: () => ({ t: (key: string) => key, te: () => true }),
+    useI18n: () => ({
+      t: (key: string, params?: { cost: string }) => params?.cost ? `${key} $${params.cost}` : key,
+      te: () => true,
+    }),
   }
 })
 
@@ -73,6 +77,63 @@ describe('MonitorQuotaView', () => {
       },
     })
     expect(wrapper.html()).toContain('width: 100%')
+  })
+
+  it('renders both measured windows, distinct A/U costs, reset and the account-cost weekly estimate', () => {
+    const wrapper = mount(MonitorQuotaView, {
+      props: {
+        provider: 'openai',
+        snapshot: makeSnapshot({ tiers: [
+          { window: '5h', used_percent: 0, window_stats: { requests: 490, tokens: 54000000, cost: 93.18, user_cost: 46.59 } },
+          { window: '7d', used_percent: 74, reset_at: new Date(Date.now() + 112 * 3600000 + 60000).toISOString(),
+            window_stats: { requests: 11900, tokens: 1500000000, cost: 1615.59, user_cost: 807.79 } },
+        ] }),
+      },
+    })
+    const rows = wrapper.findAllComponents(UsageProgressBar)
+    expect(rows[0].text()).toContain('490 req')
+    expect(rows[0].text()).toContain('54.0M')
+    expect(rows[0].text()).toContain('A $93.18')
+    expect(rows[0].text()).toContain('U $46.59')
+    expect(rows[0].text()).toContain('0%')
+    expect(rows[0].text()).toContain('usage.resetNow')
+    expect(rows[0].find('[data-test="estimated-total-cost"]').exists()).toBe(false)
+    expect(rows[1].text()).toContain('11.9K req')
+    expect(rows[1].text()).toContain('1.5B')
+    expect(rows[1].text()).toContain('A $1615.59')
+    expect(rows[1].text()).toContain('U $807.79')
+    expect(rows[1].text()).toContain('74%')
+    expect(rows[1].text()).toContain('4d 16h')
+    expect(rows[1].get('[data-test="estimated-total-cost"]').text()).toContain('$2183.23')
+    wrapper.unmount()
+  })
+
+  it('does not invent costs for legacy snapshots or estimates for zero/invalid usage', async () => {
+    const wrapper = mount(MonitorQuotaView, {
+      props: { provider: 'openai', snapshot: makeSnapshot({ tiers: [{ window: '7d', used_percent: 74 }] }) },
+    })
+    expect(wrapper.text()).not.toContain('A $')
+    expect(wrapper.find('[data-test="estimated-total-cost"]').exists()).toBe(false)
+    for (const [cost, percent] of [[1615.59, 0], [0, 74], [NaN, 74], [Infinity, 74], [10, NaN], [10, Infinity], [Number.MAX_VALUE, 0.1]]) {
+      await wrapper.setProps({ snapshot: makeSnapshot({ tiers: [{
+        window: '7d', used_percent: percent, window_stats: { requests: 1, tokens: 1, cost },
+      }] }) })
+      expect(wrapper.find('[data-test="estimated-total-cost"]').exists()).toBe(false)
+    }
+    wrapper.unmount()
+  })
+
+  it('uses the unrounded percentage and keeps the estimate specific to OpenAI weekly usage', async () => {
+    const wrapper = mount(MonitorQuotaView, {
+      props: { provider: 'openai', snapshot: makeSnapshot({ tiers: [{
+        window: '7d', used_percent: 74.4, window_stats: { requests: 1, tokens: 1, cost: 1615.59 },
+      }] }) },
+    })
+    expect(wrapper.findComponent(UsageProgressBar).props('estimatedTotalCost')).toBeCloseTo(1615.59 * 100 / 74.4)
+    await wrapper.setProps({ provider: 'anthropic' })
+    expect(wrapper.find('[data-test="estimated-total-cost"]').exists()).toBe(false)
+    expect(wrapper.findComponent(UsageProgressBar).props('showNowWhenIdle')).toBe(false)
+    wrapper.unmount()
   })
 
   it('shows the plan level badge and multi-currency balances', () => {

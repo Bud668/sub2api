@@ -75,6 +75,8 @@ fi
 	go test -tags=unit ./internal/server/middleware \
 		-run 'CyberSuspension' -count=1
     go test -race -tags=unit ./internal/service \
+        -run 'QuotaFetcher|UsageQuotaTiers' -count=1
+    go test -race -tags=unit ./internal/service \
         -run 'CancelsUpstreamBeforeClosingBody|RuntimeBlock|OpsSystemLog|RuntimeLog|ComputeEffective|OpsCleanup' -count=1
     go test -race ./internal/service \
         -run 'CoderOpenAIWSClient|KeepLeaseAcrossTurns|IdlePing' -count=3

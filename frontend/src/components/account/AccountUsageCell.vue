@@ -653,6 +653,7 @@ import { adminAPI } from '@/api/admin'
 import type { Account, AccountUsageInfo, GeminiCredentials, WindowStats } from '@/types'
 import { buildOpenAIUsageRefreshKey } from '@/utils/accountUsageRefresh'
 import { enqueueUsageRequest } from '@/utils/usageLoadQueue'
+import { estimateUsageWindowTotalCost } from '@/utils/usagePricing'
 import { formatCompactNumber } from '@/utils/format'
 import UsageProgressBar from './UsageProgressBar.vue'
 import AccountQuotaInfo from './AccountQuotaInfo.vue'
@@ -788,21 +789,7 @@ const hasOpenAIUsageFallback = computed(() => {
 
 const openAISevenDayEstimatedTotalCost = computed(() => {
   const sevenDay = usageInfo.value?.seven_day
-  const utilization = sevenDay?.utilization
-  const currentCost = sevenDay?.window_stats?.cost
-  if (
-    typeof utilization !== 'number' ||
-    typeof currentCost !== 'number' ||
-    !Number.isFinite(utilization) ||
-    !Number.isFinite(currentCost) ||
-    utilization <= 0 ||
-    currentCost <= 0
-  ) {
-    return null
-  }
-
-  const estimate = (currentCost * 100) / utilization
-  return Number.isFinite(estimate) && estimate > 0 ? estimate : null
+  return estimateUsageWindowTotalCost(sevenDay?.window_stats?.cost, sevenDay?.utilization)
 })
 
 const openAIUsageRefreshKey = computed(() => buildOpenAIUsageRefreshKey(props.account))

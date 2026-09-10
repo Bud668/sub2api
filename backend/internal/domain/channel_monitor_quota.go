@@ -2,6 +2,15 @@ package domain
 
 import "time"
 
+// WindowStats 窗口期统计，与账号用量和监控快照共用费用口径。
+type WindowStats struct {
+	Requests     int64   `json:"requests"`
+	Tokens       int64   `json:"tokens"`
+	Cost         float64 `json:"cost"`          // total_cost * account_rate_multiplier
+	StandardCost float64 `json:"standard_cost"` // total_cost，不含倍率
+	UserCost     float64 `json:"user_cost"`     // actual_cost，受分组倍率影响
+}
+
 // 渠道监控「配额模式」的归一化配额快照类型。
 //
 // 配额模式监控不直接对接上游，而是关联一个已有账号，复用账号侧的用量服务
@@ -28,12 +37,13 @@ import "time"
 // Grok requests/tokens），用 Label 区分：Label 是机器 token（requests/tokens/
 // shared/pro/flash 或模型名），前端已知 token 走 i18n，未知原样展示。
 type MonitorQuotaTier struct {
-	Window      string  `json:"window"`
-	Label       string  `json:"label,omitempty"`
-	UsedPercent float64 `json:"used_percent"` // 0-100+；仅有绝对值时按 used/limit 计算
-	Used        float64 `json:"used,omitempty"`
-	Limit       float64 `json:"limit,omitempty"`
-	ResetAt     string  `json:"reset_at,omitempty"` // RFC3339；未知时留空
+	Window      string       `json:"window"`
+	Label       string       `json:"label,omitempty"`
+	UsedPercent float64      `json:"used_percent"` // 0-100+；仅有绝对值时按 used/limit 计算
+	Used        float64      `json:"used,omitempty"`
+	Limit       float64      `json:"limit,omitempty"`
+	ResetAt     string       `json:"reset_at,omitempty"` // RFC3339；未知时留空
+	WindowStats *WindowStats `json:"window_stats,omitempty"`
 }
 
 // MonitorQuotaSnapshot 一次配额查询的完整快照。

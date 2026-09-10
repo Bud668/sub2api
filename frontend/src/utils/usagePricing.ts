@@ -10,6 +10,15 @@ function isFiniteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value)
 }
 
+/** Account-cost estimate using the upstream's unrounded utilization percentage. */
+export function estimateUsageWindowTotalCost(cost?: number, utilization?: number): number | null {
+  if (!isFiniteNumber(cost) || !isFiniteNumber(utilization) || cost <= 0 || utilization <= 0) {
+    return null
+  }
+  const estimate = (cost * 100) / utilization
+  return Number.isFinite(estimate) && estimate > 0 ? estimate : null
+}
+
 export function calculateTokenUnitPrice(
   cost: number | null | undefined,
   tokens: number | null | undefined
