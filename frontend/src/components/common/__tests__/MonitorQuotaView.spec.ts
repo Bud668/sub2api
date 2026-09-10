@@ -108,7 +108,7 @@ describe('MonitorQuotaView', () => {
     expect(rows[1].text()).toContain('4d 16h')
     expect(rows[1].get('[data-test="estimated-total-cost"]').text()).toContain('$2183.23')
     expect(rows[1].get('[data-test="estimated-total-cost"]').classes()).toEqual(expect.arrayContaining([
-      'bg-indigo-100', 'dark:bg-indigo-900/40', 'whitespace-normal', 'block',
+      'bg-emerald-100', 'dark:bg-emerald-900/40', 'whitespace-normal', 'block',
     ]))
     const stats = rows[1].get('[data-test="window-stats"]')
     expect(stats.findAll('span')).toHaveLength(4)
@@ -117,28 +117,56 @@ describe('MonitorQuotaView', () => {
     wrapper.unmount()
   })
 
-  it('does not invent costs for legacy snapshots or estimates for zero/invalid usage', async () => {
+  it('keeps 5h blue and 7d green when windows are missing or reordered', async () => {
+    const wrapper = mount(MonitorQuotaView, { props: { provider: 'openai' } })
+    for (const windows of [['5h'], ['7d'], ['7d', '5h'], ['5h', '7d']]) {
+      await wrapper.setProps({ snapshot: makeSnapshot({ tiers: windows.map(window => ({
+        window, used_percent: 50, window_stats: { requests: 1, tokens: 100, cost: 50 },
+      })) }) })
+      expect(wrapper.findAllComponents(UsageProgressBar).map(row => row.props('color')))
+        .toEqual(windows.map(window => window === '5h' ? 'indigo' : 'emerald'))
+      wrapper.findAllComponents(UsageProgressBar).forEach((row, idx) => {
+        const color = windows[idx] === '5h' ? 'indigo' : 'emerald'
+        expect(row.get('[data-test="estimated-total-cost"]').classes()).toEqual(expect.arrayContaining([
+          `bg-${color}-100`, `dark:bg-${color}-900/40`,
+        ]))
+      })
+    }
+    wrapper.unmount()
+  })
+
+  it.each(['5h', '7d'])('does not invent costs for legacy snapshots or estimates for zero/invalid %s usage', async (window) => {
     const wrapper = mount(MonitorQuotaView, {
-      props: { provider: 'openai', snapshot: makeSnapshot({ tiers: [{ window: '7d', used_percent: 74 }] }) },
+      props: { provider: 'openai', snapshot: makeSnapshot({ tiers: [{ window, used_percent: 74 }] }) },
     })
     expect(wrapper.text()).not.toContain('A $')
     expect(wrapper.find('[data-test="estimated-total-cost"]').exists()).toBe(false)
-    for (const [cost, percent] of [[1615.59, 0], [0, 74], [NaN, 74], [Infinity, 74], [10, NaN], [10, Infinity], [Number.MAX_VALUE, 0.1]]) {
+    for (const [cost, percent] of [[1615.59, 0], [10, -1], [0, 74], [-10, 74], [NaN, 74], [Infinity, 74], [10, NaN], [10, Infinity], [Number.MAX_VALUE, 0.1]]) {
       await wrapper.setProps({ snapshot: makeSnapshot({ tiers: [{
-        window: '7d', used_percent: percent, window_stats: { requests: 1, tokens: 1, cost },
+        window, used_percent: percent, window_stats: { requests: 1, tokens: 1, cost },
       }] }) })
       expect(wrapper.find('[data-test="estimated-total-cost"]').exists()).toBe(false)
     }
     wrapper.unmount()
   })
 
-  it('uses the unrounded percentage and keeps the estimate specific to OpenAI weekly usage', async () => {
+  it('uses account cost and unrounded percentages only for OpenAI 5h/7d estimates', async () => {
     const wrapper = mount(MonitorQuotaView, {
-      props: { provider: 'openai', snapshot: makeSnapshot({ tiers: [{
-        window: '7d', used_percent: 74.4, window_stats: { requests: 1, tokens: 1, cost: 1615.59 },
-      }] }) },
+      props: { provider: 'openai', snapshot: makeSnapshot({ tiers: [
+        { window: '5h', used_percent: 25.6, window_stats: { requests: 1, tokens: 1, cost: 93.18, user_cost: 46.59 } },
+        { window: '7d', used_percent: 74.4, window_stats: { requests: 1, tokens: 1, cost: 1615.59, user_cost: 807.79 } },
+        { window: 'daily', used_percent: 50, window_stats: { requests: 1, tokens: 1, cost: 10 } },
+      ] }) },
     })
-    expect(wrapper.findComponent(UsageProgressBar).props('estimatedTotalCost')).toBeCloseTo(1615.59 * 100 / 74.4)
+    const rows = wrapper.findAllComponents(UsageProgressBar)
+    expect(rows[0].props('estimatedTotalCost')).toBeCloseTo(93.18 * 100 / 25.6)
+    expect(rows[1].props('estimatedTotalCost')).toBeCloseTo(1615.59 * 100 / 74.4)
+    expect(rows[2].props('estimatedTotalCost')).toBeNull()
+    expect(rows[0].get('[data-test="estimated-total-cost"]').text()).toContain('$363.98')
+    for (const row of rows.slice(0, 2)) {
+      expect(row.get('[data-test="window-stats"]').element.nextElementSibling)
+        .toBe(row.get('[data-test="estimated-total-cost"]').element)
+    }
     await wrapper.setProps({ provider: 'anthropic' })
     expect(wrapper.find('[data-test="estimated-total-cost"]').exists()).toBe(false)
     expect(wrapper.findComponent(UsageProgressBar).props('showNowWhenIdle')).toBe(false)

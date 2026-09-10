@@ -26,7 +26,8 @@
       <span
         v-if="estimatedTotalCost != null"
         data-test="estimated-total-cost"
-        class="block w-fit max-w-full whitespace-normal rounded bg-indigo-100 px-1.5 py-0.5 font-medium text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300"
+        class="block w-fit max-w-full whitespace-normal rounded px-1.5 py-0.5 font-medium"
+        :class="labelClass"
         :title="t('admin.accounts.usageWindow.estimatedTotalCostTooltip')"
       >
         {{ t('admin.accounts.usageWindow.estimatedTotalCost', { cost: estimatedTotalCost.toFixed(2) }) }}

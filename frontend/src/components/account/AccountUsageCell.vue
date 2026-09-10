@@ -125,6 +125,7 @@
           :utilization="usageInfo.five_hour.utilization"
           :resets-at="usageInfo.five_hour.resets_at"
           :window-stats="usageInfo.five_hour.window_stats"
+          :estimated-total-cost="estimateUsageWindowTotalCost(usageInfo.five_hour.window_stats?.cost, usageInfo.five_hour.utilization)"
           :show-now-when-idle="true"
           color="indigo"
         />

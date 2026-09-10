@@ -441,13 +441,13 @@ describe('AccountUsageCell', () => {
     expect(wrapper.text()).toContain('7d|36|900')
   })
 
-  it('仅为 OpenAI OAuth 7d 窗口计算预计总费用', async () => {
+  it.each(['openai', 'anthropic'] as const)('仅为 OpenAI OAuth 5h/7d 窗口计算预计总费用 (%s)', async (platform) => {
     getUsage.mockResolvedValue({
       five_hour: {
-        utilization: 25,
+        utilization: 25.6,
         resets_at: null,
         remaining_seconds: 0,
-        window_stats: { requests: 1, tokens: 100, cost: 2 }
+        window_stats: { requests: 1, tokens: 100, cost: 2.56, user_cost: 1.28 }
       },
       seven_day: {
         utilization: 40,
@@ -459,7 +459,7 @@ describe('AccountUsageCell', () => {
 
     const wrapper = mount(AccountUsageCell, {
       props: {
-        account: makeAccount({ id: 6752, platform: 'openai', type: 'oauth' })
+        account: makeAccount({ id: platform === 'openai' ? 6752 : 6753, platform, type: 'oauth' })
       },
       global: {
         stubs: {
@@ -474,8 +474,10 @@ describe('AccountUsageCell', () => {
 
     await flushPromises()
 
-    expect(wrapper.text()).toContain('5h|none')
-    expect(wrapper.text()).toContain('7d|30')
+    expect(wrapper.text()).toContain(platform === 'openai' ? '5h|10' : '5h|none')
+    expect(wrapper.text()).toContain(platform === 'openai' ? '7d|30' : '7d|none')
+    expect(getUsage).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
   })
 
   it.each([
@@ -483,16 +485,17 @@ describe('AccountUsageCell', () => {
     { id: 6802, utilization: -1, cost: 12 },
     { id: 6803, utilization: Number.NaN, cost: 12 },
     { id: 6804, utilization: 40, cost: 0 },
-    { id: 6805, utilization: 40, cost: Number.POSITIVE_INFINITY }
-  ])('OpenAI OAuth 7d 输入无效时不显示预计总费用 (%o)', async ({ id, utilization, cost }) => {
-    getUsage.mockResolvedValue({
-      seven_day: {
-        utilization,
-        resets_at: null,
-        remaining_seconds: 0,
-        window_stats: { requests: 1, tokens: 100, cost }
-      }
-    })
+    { id: 6805, utilization: 40, cost: Number.POSITIVE_INFINITY },
+    { id: 6806, utilization: undefined, cost: 12 },
+    { id: 6807, utilization: 40, cost: undefined }
+  ])('OpenAI OAuth 5h/7d 输入无效时不显示预计总费用 (%o)', async ({ id, utilization, cost }) => {
+    const progress = {
+      utilization,
+      resets_at: null,
+      remaining_seconds: 0,
+      window_stats: { requests: 1, tokens: 100, cost }
+    }
+    getUsage.mockResolvedValue({ five_hour: progress, seven_day: progress })
 
     const wrapper = mount(AccountUsageCell, {
       props: {
@@ -515,8 +518,10 @@ describe('AccountUsageCell', () => {
 
     await flushPromises()
 
+    expect(wrapper.text()).toContain('5h|none')
     expect(wrapper.text()).toContain('7d|none')
     expect(wrapper.text()).not.toMatch(/Infinity|NaN/)
+    wrapper.unmount()
   })
 
   it('OpenAI OAuth 有现成快照时，手动刷新信号会触发 usage 重拉', async () => {

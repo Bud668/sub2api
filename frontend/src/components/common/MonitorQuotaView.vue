@@ -20,7 +20,7 @@
         :utilization="row.tier.used_percent"
         :resets-at="row.tier.reset_at ?? null"
         :window-stats="row.tier.window_stats"
-        :estimated-total-cost="provider === 'openai' && row.tier.window === '7d'
+        :estimated-total-cost="provider === 'openai' && (row.tier.window === '5h' || row.tier.window === '7d')
           ? estimateUsageWindowTotalCost(row.tier.window_stats?.cost, row.tier.used_percent)
           : null"
         :show-now-when-idle="provider === 'openai'"
@@ -108,7 +108,7 @@ function tierLabel(tier: MonitorQuotaTier): string {
   return `${label}/${window}`
 }
 
-// tier 配色按数组顺序轮转（UsageProgressBar 支持的色板）。
+// 5h/7d 与账号页保持同色，避免窗口缺失或重排时变色；其它窗口沿用轮转色板。
 const tierColors: TierColor[] = ['indigo', 'emerald', 'purple', 'amber']
 
 const tierRows = computed<QuotaTierRow[]>(() =>
@@ -116,7 +116,7 @@ const tierRows = computed<QuotaTierRow[]>(() =>
     key: `${tier.window}-${tier.label || ''}-${idx}`,
     label: tierLabel(tier),
     title: tierLabel(tier),
-    color: tierColors[idx % tierColors.length],
+    color: tier.window === '5h' ? 'indigo' : tier.window === '7d' ? 'emerald' : tierColors[idx % tierColors.length],
     tier,
   })),
 )

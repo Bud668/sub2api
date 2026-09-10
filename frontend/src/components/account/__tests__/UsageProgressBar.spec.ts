@@ -87,6 +87,19 @@ describe('UsageProgressBar', () => {
     wrapper.unmount()
   })
 
+  it.each([['5h', 'indigo'], ['7d', 'emerald']] as const)('matches the %s estimate to its window color', (label, color) => {
+    const wrapper = mount(UsageProgressBar, {
+      props: {
+        label, color, utilization: 50, estimatedTotalCost: 100,
+        windowStats: { requests: 1, tokens: 100, cost: 50 },
+      }
+    })
+    expect(wrapper.get('[data-test="estimated-total-cost"]').classes()).toEqual(expect.arrayContaining([
+      `bg-${color}-100`, `text-${color}-700`, `dark:bg-${color}-900/40`, `dark:text-${color}-300`,
+    ]))
+    wrapper.unmount()
+  })
+
   it('resetsAt 已过期且利用率大于 0 时显示「待刷新」', () => {
     const wrapper = mount(UsageProgressBar, {
       props: {
