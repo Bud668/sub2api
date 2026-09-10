@@ -162,12 +162,12 @@ func (h *ChannelMonitorUserHandler) List(c *gin.Context) {
 		response.Success(c, gin.H{"items": []channelMonitorUserListItem{}})
 		return
 	}
-	views, err := h.monitorService.ListUserView(c.Request.Context())
+	includeQuota := h.quotaVisible(c)
+	views, err := h.monitorService.ListUserView(c.Request.Context(), includeQuota)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
-	includeQuota := h.quotaVisible(c)
 	items := make([]channelMonitorUserListItem, 0, len(views))
 	for _, v := range views {
 		items = append(items, userMonitorViewToItem(v, includeQuota))

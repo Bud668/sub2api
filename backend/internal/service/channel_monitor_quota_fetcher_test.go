@@ -26,6 +26,7 @@ type stubMonitorUsageSource struct {
 
 	mu          sync.Mutex
 	calls       int
+	localCalls  int
 	lastCtx     context.Context
 	lastAccount *Account
 }
@@ -46,6 +47,14 @@ func (s *stubMonitorUsageSource) getCalls() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.calls
+}
+
+func (s *stubMonitorUsageSource) GetLocalOpenAIUsage(ctx context.Context, account *Account) (*UsageInfo, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.localCalls++
+	s.lastAccount = account
+	return s.usage, s.err
 }
 
 func (s *stubMonitorUsageSource) getLastAccount() *Account {
@@ -81,12 +90,15 @@ func (s *stubMonitorCNBalanceSource) QueryBalanceForAccount(ctx context.Context,
 }
 
 type stubMonitorAccountSource struct {
+	mu       sync.Mutex
 	accounts map[int64]*Account
 	err      error
 	calls    int
 }
 
 func (s *stubMonitorAccountSource) GetByID(ctx context.Context, id int64) (*Account, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.calls++
 	if s.err != nil {
 		return nil, s.err
@@ -106,7 +118,7 @@ func newQuotaFetcherTestSetup(t *testing.T) (*ChannelMonitorQuotaFetcher, *stubM
 		cnBalance:        cnBalance,
 		accounts:         accounts,
 		balanceThreshold: monitorBalanceThreshold(nil),
-		cache:            make(map[int64]monitorQuotaCacheEntry),
+		cache:            make(map[monitorQuotaCacheKey]monitorQuotaCacheEntry),
 	}
 	return fetcher, usage, cnQuota, cnBalance, accounts
 }
@@ -554,9 +566,9 @@ func TestQuotaFetcher_CachesSuccessSnapshotPerAccount(t *testing.T) {
 
 	// 缓存过期后重新拉取。
 	fetcher.mu.Lock()
-	entry := fetcher.cache[8]
+	entry := fetcher.cache[monitorQuotaCacheKey{accountID: 8}]
 	entry.expiry = time.Now().Add(-time.Second)
-	fetcher.cache[8] = entry
+	fetcher.cache[monitorQuotaCacheKey{accountID: 8}] = entry
 	fetcher.mu.Unlock()
 
 	_ = fetcher.Fetch(context.Background(), 8)
@@ -576,10 +588,10 @@ func TestQuotaFetcher_CachesFailureSnapshotWithShortTTL(t *testing.T) {
 
 	// 失败快照的 TTL 是负缓存时长（而非成功 TTL）。
 	fetcher.mu.Lock()
-	entry := fetcher.cache[4]
+	entry := fetcher.cache[monitorQuotaCacheKey{accountID: 4}]
 	require.WithinDuration(t, entry.snapshot.FetchedAt.Add(monitorQuotaErrorCacheTTL), entry.expiry, time.Second)
 	entry.expiry = time.Now().Add(-time.Second)
-	fetcher.cache[4] = entry
+	fetcher.cache[monitorQuotaCacheKey{accountID: 4}] = entry
 	fetcher.mu.Unlock()
 
 	_ = fetcher.Fetch(context.Background(), 4)
@@ -636,7 +648,7 @@ func TestQuotaFetcher_SharedFetchCacheRecheckAvoidsDuplicateUpstream(t *testing.
 	require.True(t, first.Success)
 	require.Equal(t, 1, usage.getCalls())
 
-	shared := fetcher.fetchShared(13)
+	shared := fetcher.fetchShared(monitorQuotaCacheKey{accountID: 13})
 	require.Equal(t, 1, usage.getCalls(), "重查缓存后不得再打一次上游")
 	require.Same(t, first, shared, "应原样返回已缓存的快照")
 }
@@ -652,12 +664,12 @@ func TestQuotaFetcher_SharedFetchStillRefetchesAfterCacheExpiry(t *testing.T) {
 	require.Equal(t, 1, usage.getCalls())
 
 	fetcher.mu.Lock()
-	entry := fetcher.cache[14]
+	entry := fetcher.cache[monitorQuotaCacheKey{accountID: 14}]
 	entry.expiry = time.Now().Add(-time.Second)
-	fetcher.cache[14] = entry
+	fetcher.cache[monitorQuotaCacheKey{accountID: 14}] = entry
 	fetcher.mu.Unlock()
 
-	require.True(t, fetcher.fetchShared(14).Success)
+	require.True(t, fetcher.fetchShared(monitorQuotaCacheKey{accountID: 14}).Success)
 	require.Equal(t, 2, usage.getCalls(), "缓存过期后必须回源")
 }
 

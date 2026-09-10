@@ -2,10 +2,76 @@ package service
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"testing"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
+	"github.com/stretchr/testify/require"
 )
+
+type localOpenAIWindowRepo struct {
+	usageBatchLogRepoStub
+	starts []time.Time
+	ids    []int64
+	err    error
+}
+
+func (r *localOpenAIWindowRepo) GetAccountWindowStats(_ context.Context, id int64, start time.Time) (*usagestats.AccountStats, error) {
+	r.starts = append(r.starts, start)
+	r.ids = append(r.ids, id)
+	return &usagestats.AccountStats{Requests: 42, Tokens: 12000, Cost: 7.5, StandardCost: 10, UserCost: 8.5}, r.err
+}
+
+func TestAccountUsageService_LocalOpenAIUsageNeverProbes(t *testing.T) {
+	for _, sample := range []string{"fresh", "stale", "missing", "spark"} {
+		t.Run(sample, func(t *testing.T) {
+			now := time.Now().UTC().Truncate(time.Second)
+			fiveReset, sevenReset := now.Add(time.Hour), now.Add(24*time.Hour)
+			account := &Account{ID: 4, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Extra: map[string]any{
+				"codex_5h_used_percent": 25.0, "codex_7d_used_percent": 50.0,
+				"codex_5h_reset_at": fiveReset.Format(time.RFC3339), "codex_7d_reset_at": sevenReset.Format(time.RFC3339),
+				"codex_usage_updated_at": now.Format(time.RFC3339), "openai_oauth_responses_websockets_v2_enabled": true,
+			}}
+			if sample == "stale" || sample == "spark" {
+				account.Extra["codex_usage_updated_at"] = now.Add(-time.Hour).Format(time.RFC3339)
+			}
+			if sample == "missing" {
+				account.Extra = nil
+			}
+			if sample == "spark" {
+				parent := int64(5)
+				account.ParentAccountID, account.QuotaDimension = &parent, QuotaDimensionSpark
+			}
+			repo := &localOpenAIWindowRepo{}
+			svc := &AccountUsageService{usageLogRepo: repo, cache: NewUsageCache()}
+			usage, err := svc.GetLocalOpenAIUsage(context.Background(), account)
+			require.NoError(t, err)
+			require.Equal(t, []int64{4, 4}, repo.ids)
+			require.Equal(t, &WindowStats{Requests: 42, Tokens: 12000, Cost: 7.5, StandardCost: 10, UserCost: 8.5}, usage.FiveHour.WindowStats)
+			require.Equal(t, usage.FiveHour.WindowStats, usage.SevenDay.WindowStats)
+			_, attemptedProbe := svc.cache.openAIProbeCache.Load(account.ID)
+			require.False(t, attemptedProbe, "even stale/missing/shadow snapshots must bypass the upstream probe path")
+			if sample != "missing" {
+				require.Equal(t, 25.0, usage.FiveHour.Utilization)
+				require.Equal(t, 50.0, usage.SevenDay.Utilization)
+				require.True(t, repo.starts[0].Equal(fiveReset.Add(-5*time.Hour)))
+				require.True(t, repo.starts[1].Equal(sevenReset.Add(-7*24*time.Hour)))
+			} else {
+				require.Zero(t, usage.FiveHour.Utilization)
+				require.Nil(t, usage.FiveHour.ResetsAt)
+			}
+		})
+	}
+}
+
+func TestAccountUsageService_LocalOpenAIStatsFailureDoesNotReturnZeroCost(t *testing.T) {
+	svc := &AccountUsageService{usageLogRepo: &localOpenAIWindowRepo{err: errors.New("stats unavailable")}}
+	usage, err := svc.GetLocalOpenAIUsage(context.Background(), &Account{ID: 4, Platform: PlatformOpenAI, Type: AccountTypeOAuth})
+	require.Error(t, err)
+	require.Nil(t, usage)
+}
 
 type accountUsageCodexProbeRepo struct {
 	stubOpenAIAccountRepo

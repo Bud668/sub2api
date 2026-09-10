@@ -55,7 +55,7 @@ func (s *ChannelMonitorService) BatchMonitorStatusSummary(
 //	1 次批量 latest（含 ping_latency_ms）；
 //	1 次批量 7d availability；
 //	1 次批量 timeline（主模型最近 N 条）。
-func (s *ChannelMonitorService) ListUserView(ctx context.Context) ([]*UserMonitorView, error) {
+func (s *ChannelMonitorService) ListUserView(ctx context.Context, includeQuota bool) ([]*UserMonitorView, error) {
 	monitors, err := s.repo.ListEnabled(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list enabled monitors: %w", err)
@@ -72,7 +72,18 @@ func (s *ChannelMonitorService) ListUserView(ctx context.Context) ([]*UserMonito
 	views := make([]*UserMonitorView, 0, len(monitors))
 	for _, m := range monitors {
 		primaryLatest := pickLatest(latestMap[m.ID], m.PrimaryModel)
-		views = append(views, buildUserViewFromSummary(m, summaries[m.ID], primaryLatest, timelineMap[m.ID]))
+		view := buildUserViewFromSummary(m, summaries[m.ID], primaryLatest, timelineMap[m.ID])
+		if !includeQuota {
+			view.LatestQuota = nil
+		} else if m.Provider == MonitorProviderOpenAI {
+			// Historical quota belongs to a probe, possibly to a formerly linked
+			// account. Only the current linked account supplies live usage.
+			view.LatestQuota = nil
+			if m.Enabled && m.AccountID != nil && (m.CheckMode == MonitorCheckModeQuota || m.CheckMode == MonitorCheckModeQuotaProbe) {
+				view.LatestQuota = s.quotaFetcher.FetchLocalOpenAIUsage(ctx, *m.AccountID)
+			}
+		}
+		views = append(views, view)
 	}
 	return views, nil
 }

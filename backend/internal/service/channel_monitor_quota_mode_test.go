@@ -66,7 +66,7 @@ func newQuotaModeFetcher(accounts map[int64]*Account, usage *stubMonitorUsageSou
 	return &ChannelMonitorQuotaFetcher{
 		usage:    usage,
 		accounts: &stubMonitorAccountSource{accounts: accounts},
-		cache:    make(map[int64]monitorQuotaCacheEntry),
+		cache:    make(map[monitorQuotaCacheKey]monitorQuotaCacheEntry),
 	}
 }
 
@@ -179,7 +179,7 @@ func TestRunCheck_QuotaProbeAttachesSnapshotToPrimaryRowOnly(t *testing.T) {
 		FiveHour: &UsageProgress{Utilization: 20},
 	}}
 	svc.SetQuotaFetcher(newQuotaModeFetcher(map[int64]*Account{
-		12: {ID: 12, Platform: domain.PlatformOpenAI},
+		12: {ID: 12, Platform: domain.PlatformOpenAI, Type: AccountTypeOAuth},
 	}, usage))
 
 	results, err := svc.RunCheck(context.Background(), 4)
@@ -198,6 +198,8 @@ func TestRunCheck_QuotaProbeAttachesSnapshotToPrimaryRowOnly(t *testing.T) {
 	require.NotNil(t, repo.history[0].Quota)
 	require.Equal(t, "gpt-test", repo.history[0].Model)
 	require.Nil(t, repo.history[1].Quota)
+	require.Zero(t, usage.getCalls(), "scheduled quota reads must not probe upstream")
+	require.Equal(t, 1, usage.localCalls)
 }
 
 func TestRunCheck_QuotaProbeQuotaFailureKeepsProbeStatus(t *testing.T) {

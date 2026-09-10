@@ -38,6 +38,7 @@ import (
 // 传已加载的 *Account：fetchUncached 只 GetByID 一次，下游不再重复加载。
 type monitorUsageSource interface {
 	GetUsageForAccount(ctx context.Context, account *Account, force ...bool) (*UsageInfo, error)
+	GetLocalOpenAIUsage(ctx context.Context, account *Account) (*UsageInfo, error)
 }
 
 // monitorCNQuotaSource 国产 coding plan 滚动窗口额度探测（CNProviderQuotaService 天然满足）。
@@ -66,8 +67,13 @@ type ChannelMonitorQuotaFetcher struct {
 	balanceThreshold float64
 
 	mu     sync.Mutex
-	cache  map[int64]monitorQuotaCacheEntry
+	cache  map[monitorQuotaCacheKey]monitorQuotaCacheEntry
 	flight singleflight.Group
+}
+
+type monitorQuotaCacheKey struct {
+	accountID int64
+	local     bool
 }
 
 type monitorQuotaCacheEntry struct {
@@ -85,7 +91,7 @@ func NewChannelMonitorQuotaFetcher(
 	cfg *config.Config,
 ) *ChannelMonitorQuotaFetcher {
 	f := &ChannelMonitorQuotaFetcher{
-		cache:            make(map[int64]monitorQuotaCacheEntry),
+		cache:            make(map[monitorQuotaCacheKey]monitorQuotaCacheEntry),
 		balanceThreshold: monitorBalanceThreshold(cfg),
 	}
 	if usage != nil {
@@ -126,6 +132,16 @@ func (f *ChannelMonitorQuotaFetcher) LoadAccount(ctx context.Context, id int64) 
 // Fetch 抓取账号的最新配额快照。永不返回 error：失败降级为
 // Success=false 快照（Error 带摘要），保证检测历史的时间线连续。
 func (f *ChannelMonitorQuotaFetcher) Fetch(ctx context.Context, accountID int64) *domain.MonitorQuotaSnapshot {
+	return f.fetch(ctx, monitorQuotaCacheKey{accountID: accountID})
+}
+
+// FetchLocalOpenAIUsage shares a short cache across viewers, independently of
+// scheduled probes. A page refresh must never initiate or wait for an upstream probe.
+func (f *ChannelMonitorQuotaFetcher) FetchLocalOpenAIUsage(ctx context.Context, accountID int64) *domain.MonitorQuotaSnapshot {
+	return f.fetch(ctx, monitorQuotaCacheKey{accountID: accountID, local: true})
+}
+
+func (f *ChannelMonitorQuotaFetcher) fetch(ctx context.Context, cacheKey monitorQuotaCacheKey) *domain.MonitorQuotaSnapshot {
 	if f == nil {
 		// fail-closed：fetcher 未注入（存量测试构造）时不 panic，降级为错误快照。
 		return quotaErrorSnapshot("usage", "quota fetcher is not configured", time.Now())
@@ -133,15 +149,15 @@ func (f *ChannelMonitorQuotaFetcher) Fetch(ctx context.Context, accountID int64)
 
 	now := time.Now()
 
-	if cached, ok := f.cachedSnapshot(accountID, now); ok {
+	if cached, ok := f.cachedSnapshot(cacheKey, now); ok {
 		return cached
 	}
 
 	// singleflight 合并同账号并发抓取；脱离调用方 ctx（仿 CN 配额服务），
 	// 避免某个监控的取消波及共享同一账号的其他监控。
-	key := "monitor-quota:" + strconv.FormatInt(accountID, 10)
+	key := "monitor-quota:" + strconv.FormatInt(cacheKey.accountID, 10) + ":" + strconv.FormatBool(cacheKey.local)
 	ch := f.flight.DoChan(key, func() (any, error) {
-		return f.fetchShared(accountID), nil
+		return f.fetchShared(cacheKey), nil
 	})
 	select {
 	case <-ctx.Done():
@@ -166,50 +182,63 @@ func (f *ChannelMonitorQuotaFetcher) Fetch(ctx context.Context, accountID int64)
 // 这次重查一定命中，所以合并是确定的而不是尽力而为：storeSnapshot 发生在本函数
 // 返回之前，而 singleflight 删 key 发生在返回之后，因此「能新起一次飞行」必然蕴含
 // 「上一次的快照已经可见」。
-func (f *ChannelMonitorQuotaFetcher) fetchShared(accountID int64) *domain.MonitorQuotaSnapshot {
-	if cached, ok := f.cachedSnapshot(accountID, time.Now()); ok {
+func (f *ChannelMonitorQuotaFetcher) fetchShared(key monitorQuotaCacheKey) *domain.MonitorQuotaSnapshot {
+	if cached, ok := f.cachedSnapshot(key, time.Now()); ok {
 		return cached
 	}
-	fetchCtx, cancel := context.WithTimeout(context.Background(), monitorQuotaFetchTimeout)
+	timeout := monitorQuotaFetchTimeout
+	if key.local {
+		timeout = 5 * time.Second
+	}
+	fetchCtx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	snapshot := f.fetchUncached(fetchCtx, accountID, time.Now())
+	snapshot := f.fetchUncached(fetchCtx, key, time.Now())
 	// 失败也进短 TTL 负缓存：凭据失效/故障期间不必每次调度都打上游。
 	ttl := monitorQuotaFetchCacheTTL
 	if !snapshot.Success {
 		ttl = monitorQuotaErrorCacheTTL
 	}
-	f.storeSnapshot(accountID, snapshot, time.Now().Add(ttl))
+	if key.local {
+		ttl = 30 * time.Second
+	}
+	f.storeSnapshot(key, snapshot, time.Now().Add(ttl))
 	return snapshot
 }
 
-func (f *ChannelMonitorQuotaFetcher) cachedSnapshot(accountID int64, now time.Time) (*domain.MonitorQuotaSnapshot, bool) {
+func (f *ChannelMonitorQuotaFetcher) cachedSnapshot(key monitorQuotaCacheKey, now time.Time) (*domain.MonitorQuotaSnapshot, bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	entry, ok := f.cache[accountID]
+	entry, ok := f.cache[key]
 	if !ok || now.After(entry.expiry) {
 		return nil, false
 	}
 	return entry.snapshot, true
 }
 
-func (f *ChannelMonitorQuotaFetcher) storeSnapshot(accountID int64, snapshot *domain.MonitorQuotaSnapshot, expiry time.Time) {
+func (f *ChannelMonitorQuotaFetcher) storeSnapshot(key monitorQuotaCacheKey, snapshot *domain.MonitorQuotaSnapshot, expiry time.Time) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.cache[accountID] = monitorQuotaCacheEntry{snapshot: snapshot, expiry: expiry}
+	f.cache[key] = monitorQuotaCacheEntry{snapshot: snapshot, expiry: expiry}
 }
 
-func (f *ChannelMonitorQuotaFetcher) fetchUncached(ctx context.Context, accountID int64, now time.Time) *domain.MonitorQuotaSnapshot {
+func (f *ChannelMonitorQuotaFetcher) fetchUncached(ctx context.Context, key monitorQuotaCacheKey, now time.Time) *domain.MonitorQuotaSnapshot {
 	if f == nil {
 		return quotaErrorSnapshot("usage", "quota fetcher is not configured", now)
 	}
 
-	account, err := f.LoadAccount(ctx, accountID)
+	account, err := f.LoadAccount(ctx, key.accountID)
 	if err != nil || account == nil {
 		// FK ON DELETE SET NULL 后 account_id 可能为空/失效；显式报「账号未关联」，
 		// 推导为 degraded（配置问题，不是渠道故障）。
 		slog.Warn("channel_monitor: load linked account failed",
-			"account_id", accountID, "error", err)
+			"account_id", key.accountID, "error", err)
 		return quotaErrorSnapshot("usage", "linked account not found", now)
+	}
+	if key.local {
+		if !account.IsOpenAIOAuth() {
+			return quotaErrorSnapshot("usage", "linked account does not support local OpenAI usage", now)
+		}
+		return f.fetchUsage(ctx, account, now, true)
 	}
 
 	// 账号只在路由前加载这一次；已加载的 account 直接传给数据源
@@ -222,17 +251,26 @@ func (f *ChannelMonitorQuotaFetcher) fetchUncached(ctx context.Context, accountI
 		}
 		return f.fetchCNBalance(ctx, account, now)
 	default:
-		return f.fetchUsage(ctx, account, now)
+		return f.fetchUsage(ctx, account, now, false)
 	}
 }
 
 // fetchUsage 海外平台：AccountUsageService.GetUsageForAccount → 快照。
-func (f *ChannelMonitorQuotaFetcher) fetchUsage(ctx context.Context, account *Account, now time.Time) *domain.MonitorQuotaSnapshot {
+func (f *ChannelMonitorQuotaFetcher) fetchUsage(ctx context.Context, account *Account, now time.Time, local bool) *domain.MonitorQuotaSnapshot {
 	if f.usage == nil {
 		return quotaErrorSnapshot("usage", "usage service is not configured", now)
 	}
-	usage, err := f.usage.GetUsageForAccount(ctx, account)
+	var usage *UsageInfo
+	var err error
+	if local {
+		usage, err = f.usage.GetLocalOpenAIUsage(ctx, account)
+	} else {
+		usage, err = f.usage.GetUsageForAccount(ctx, account)
+	}
 	if err != nil {
+		if local {
+			return quotaErrorSnapshot("usage", "account usage temporarily unavailable", now)
+		}
 		msg := truncateMessage(sanitizeErrorMessage(err.Error()))
 		return &domain.MonitorQuotaSnapshot{
 			Source:            "usage",

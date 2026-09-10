@@ -651,6 +651,10 @@ func (s *ChannelMonitorService) fetchQuotaSnapshot(ctx context.Context, m *Chann
 	if s.quotaFetcher == nil {
 		return quotaErrorSnapshot("usage", "quota fetcher is not configured", time.Now())
 	}
+	if m.Provider == MonitorProviderOpenAI {
+		// Quota display follows account usage; only the latency check may probe.
+		return s.quotaFetcher.FetchLocalOpenAIUsage(ctx, *m.AccountID)
+	}
 	return s.quotaFetcher.Fetch(ctx, *m.AccountID)
 }
 

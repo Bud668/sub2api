@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"log/slog"
@@ -745,25 +746,47 @@ func (s *AccountUsageService) getOpenAIUsage(ctx context.Context, account *Accou
 		}
 	}
 
-	if s.usageLogRepo == nil {
-		return usage, nil
-	}
+	// Keep the admin endpoint's existing partial-data behavior on stats errors.
+	_ = s.fillOpenAIWindowStats(ctx, account.ID, usage, now)
+	return usage, nil
+}
 
-	if stats, err := s.usageLogRepo.GetAccountWindowStats(ctx, account.ID, codexWindowStatsStart(usage.FiveHour, 5*time.Hour, now)); err == nil {
+// GetLocalOpenAIUsage reads the same windows as account management without
+// probing upstream, refreshing credentials, or writing account state.
+func (s *AccountUsageService) GetLocalOpenAIUsage(ctx context.Context, account *Account) (*UsageInfo, error) {
+	if account == nil || !account.IsOpenAIOAuth() {
+		return nil, ErrChannelMonitorAccountNotSupportable
+	}
+	now := time.Now()
+	usage := &UsageInfo{UpdatedAt: &now}
+	applyExtraToUsage(usage, account.Extra, now)
+	if err := s.fillOpenAIWindowStats(ctx, account.ID, usage, now); err != nil {
+		return nil, err
+	}
+	return usage, nil
+}
+
+func (s *AccountUsageService) fillOpenAIWindowStats(ctx context.Context, accountID int64, usage *UsageInfo, now time.Time) error {
+	if s.usageLogRepo == nil {
+		return fmt.Errorf("usage statistics repository is not configured")
+	}
+	stats, fiveHourErr := s.usageLogRepo.GetAccountWindowStats(ctx, accountID, codexWindowStatsStart(usage.FiveHour, 5*time.Hour, now))
+	if fiveHourErr == nil {
 		if usage.FiveHour == nil {
 			usage.FiveHour = &UsageProgress{Utilization: 0}
 		}
 		usage.FiveHour.WindowStats = windowStatsFromAccountStats(stats)
 	}
 
-	if stats, err := s.usageLogRepo.GetAccountWindowStats(ctx, account.ID, codexWindowStatsStart(usage.SevenDay, 7*24*time.Hour, now)); err == nil {
+	stats, sevenDayErr := s.usageLogRepo.GetAccountWindowStats(ctx, accountID, codexWindowStatsStart(usage.SevenDay, 7*24*time.Hour, now))
+	if sevenDayErr == nil {
 		if usage.SevenDay == nil {
 			usage.SevenDay = &UsageProgress{Utilization: 0}
 		}
 		usage.SevenDay.WindowStats = windowStatsFromAccountStats(stats)
 	}
 
-	return usage, nil
+	return errors.Join(fiveHourErr, sevenDayErr)
 }
 
 func shouldRefreshOpenAICodexSnapshot(account *Account, usage *UsageInfo, now time.Time) bool {
