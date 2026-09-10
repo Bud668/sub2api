@@ -3,10 +3,11 @@ export default {
     absorption: {
       unknownTotal: 'Total amount unknown', baseline: 'Before initial baseline',
       title: 'Site-covered usage', count: '{n} requests', total: 'Total', knownTotal: 'Verified subtotal', unknownCount: '{n} unpriced',
-      failed: 'Unable to load; refresh to retry', hint: 'Totals cover all matching records, not just this page. Amounts use verified standard-cost receipts. Unknown amounts are not zero; original holds are reference estimates only. Each source has its own cycle. Confirmed resets archive old liabilities without charging the new cycle. Viewing never charges or writes off usage.',
+      failed: 'Unable to load; refresh to retry', hint: 'These records are already resolved. No manual write-off or additional charge is needed. Totals cover all matching records and use verified standard costs. Unverifiable amounts are not zero; original holds are estimates, not actual bills. A confirmed upstream reset archives that source’s old cycle without charging the new cycle. Viewing details does not charge or write off usage.',
       scope: 'Scope', current: 'Current cycles', history: 'History', archived: 'Archived',
-      user: 'User / group', source: 'Source / cycle', model: 'Model', amount: 'Covered amount', reason: 'Reason', time: 'Time / log ID',
-      cycle: 'Cycle #{n}', unknown: 'Unknown amount', reference: 'Original hold estimate', requested: 'Requested', processed: 'Covered', previous: 'Previous',
+      user: 'User / group', source: 'Source / cycle', model: 'Model', amount: 'Covered amount', reason: 'Status / reason', time: 'Time / log ID',
+      cycle: 'Cycle #{n}', unknown: 'Actual amount unverifiable', reference: 'Original hold estimate', requested: 'Requested', processed: 'Processed', previous: 'Previous',
+      resolvedCovered: 'Resolved · Site covered', resolvedBilled: 'Resolved · Already billed',
       missingEvidence: 'Recovery could not obtain a complete billing receipt', cycleClosed: 'Verified upstream reset closed the old cycle', operatorDecision: 'Explicit operator decision', alreadyBilled: 'Original charge verified; no additional charge'
     },
     title: 'Upstream-linked dynamic quota', enable: 'Join allocation and follow upstream resets',

@@ -3,10 +3,11 @@ export default {
     absorption: {
       unknownTotal: '总金额未知', baseline: '接入前记录',
       title: '站点承担', count: '{n} 条', total: '总金额', knownTotal: '已确认合计', unknownCount: '金额未知 {n} 条',
-      failed: '读取失败，请刷新重试', hint: '统计当前筛选下的全部记录，不限本页。金额为有凭证的标准费用折算；未知金额不按零计算，预占仅供参考。当前周期按各上游独立计算，确认重置后旧账归档、不追扣新周期。此处仅查看，不会扣款或核销。',
+      failed: '读取失败，请刷新重试', hint: '以下均为已处理记录，无需手工核销，不再追加扣款。统计当前筛选下的全部记录，不限本页；金额按已确认的标准费用折算，无法核实的金额不按零计算。原预占仅供参考，不是实际账单。上游确认重置后归档该来源的旧周期记录，不追扣新周期。查看明细不会产生扣款或核销操作。',
       scope: '查看范围', current: '当前周期', history: '历史记录', archived: '已归档',
-      user: '用户 / 分组', source: '上游 / 周期', model: '模型', amount: '承担金额', reason: '处理原因', time: '时间 / 日志编号',
-      cycle: '周期 #{n}', unknown: '金额未知', reference: '原预占参考', requested: '请求', processed: '承担', previous: '上一页',
+      user: '用户 / 分组', source: '上游 / 周期', model: '模型', amount: '承担金额', reason: '处理状态 / 原因', time: '时间 / 日志编号',
+      cycle: '周期 #{n}', unknown: '实际金额无法核实', reference: '原预占参考', requested: '请求', processed: '处理', previous: '上一页',
+      resolvedCovered: '已处理 · 站点承担', resolvedBilled: '已处理 · 原账已计费',
       missingEvidence: '恢复后仍缺少完整计费凭证', cycleClosed: '上游确认重置，旧周期结案', operatorDecision: '管理员确认由站点承担', alreadyBilled: '已核实原账已计费，不再追加'
     },
     title: '跟随上游动态额度', enable: '参与动态分配并跟随上游重置',

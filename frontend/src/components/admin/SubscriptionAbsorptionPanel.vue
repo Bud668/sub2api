@@ -47,7 +47,14 @@
           <td class="p-3">#{{ row.account_id }} · {{ row.account_name }}<div class="mt-1 text-xs text-gray-500">{{ row.cycle ? t('dynamicQuota.absorption.cycle', { n: row.cycle }) : t('dynamicQuota.absorption.baseline') }}</div></td>
           <td class="max-w-48 break-words p-3">{{ row.model || '—' }}</td>
           <td class="whitespace-nowrap p-3 tabular-nums"><span>{{ row.known_standard_usd === null ? t('dynamicQuota.absorption.unknown') : formatCurrency(row.known_standard_usd) }}</span><div class="mt-1 text-xs text-gray-500">{{ t('dynamicQuota.absorption.reference') }} {{ formatCurrency(row.reference_hold_usd) }}</div></td>
-          <td class="max-w-60 p-3">{{ t(reasonKey(row.reason)) }}<div class="mt-1 text-xs text-gray-500">{{ t(row.closed_at ? 'dynamicQuota.absorption.archived' : 'dynamicQuota.absorption.current') }}</div></td>
+          <td class="max-w-60 p-3">
+            <span class="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-300" data-testid="absorption-status">
+              <Icon name="checkCircle" size="sm" class="shrink-0" aria-hidden="true" />
+              {{ t(row.reason === 'already_billed' ? 'dynamicQuota.absorption.resolvedBilled' : 'dynamicQuota.absorption.resolvedCovered') }}
+            </span>
+            <div class="mt-2">{{ t(reasonKey(row.reason)) }}</div>
+            <div class="mt-1 text-xs text-gray-500">{{ t(row.closed_at ? 'dynamicQuota.absorption.archived' : 'dynamicQuota.absorption.current') }}</div>
+          </td>
           <td class="whitespace-nowrap p-3 text-xs">{{ t('dynamicQuota.absorption.requested') }} {{ formatDateTimeToMinute(row.started_at) }}<div class="mt-1">{{ t('dynamicQuota.absorption.processed') }} {{ formatDateTimeToMinute(row.absorbed_at) }}</div><div v-if="row.closed_at" class="mt-1">{{ t('dynamicQuota.absorption.archived') }} {{ formatDateTimeToMinute(row.closed_at) }}</div><span class="mt-1 block max-w-52 whitespace-normal break-all text-gray-400">{{ row.id }}</span></td>
         </tr></tbody>
       </table>
