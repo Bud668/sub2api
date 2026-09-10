@@ -68,6 +68,25 @@ describe('UsageProgressBar', () => {
     expect(wrapper.text()).not.toContain('usage.resetNow')
   })
 
+  it('keeps the label, bar and percentage together while the complete reset time can wrap', () => {
+    const wrapper = mount(UsageProgressBar, {
+      props: {
+        label: '7d', utilization: 74, color: 'emerald',
+        resetsAt: '2026-03-21T16:00:00Z',
+      }
+    })
+    const progress = wrapper.get('.flex-wrap')
+    const group = progress.get('.shrink-0.gap-1')
+    expect(group.text()).toContain('7d')
+    expect(group.text()).toContain('74%')
+    expect(group.find('.h-1\\.5').exists()).toBe(true)
+    const reset = progress.get('span.whitespace-nowrap')
+    expect(reset.element.parentElement).toBe(progress.element)
+    expect(reset.text()).toBe('4d 16h')
+    expect(reset.classes()).toContain('whitespace-nowrap')
+    wrapper.unmount()
+  })
+
   it('resetsAt 已过期且利用率大于 0 时显示「待刷新」', () => {
     const wrapper = mount(UsageProgressBar, {
       props: {

@@ -91,6 +91,8 @@ describe('MonitorQuotaView', () => {
       },
     })
     const rows = wrapper.findAllComponents(UsageProgressBar)
+    expect(rows[0].element.parentElement?.classList.contains('space-y-1')).toBe(true)
+    expect(rows.every(row => !row.classes().includes('p-2.5'))).toBe(true)
     expect(rows[0].text()).toContain('490 req')
     expect(rows[0].text()).toContain('54.0M')
     expect(rows[0].text()).toContain('A $93.18')
@@ -105,6 +107,13 @@ describe('MonitorQuotaView', () => {
     expect(rows[1].text()).toContain('74%')
     expect(rows[1].text()).toContain('4d 16h')
     expect(rows[1].get('[data-test="estimated-total-cost"]').text()).toContain('$2183.23')
+    expect(rows[1].get('[data-test="estimated-total-cost"]').classes()).toEqual(expect.arrayContaining([
+      'bg-indigo-100', 'dark:bg-indigo-900/40', 'whitespace-normal', 'block',
+    ]))
+    const stats = rows[1].get('[data-test="window-stats"]')
+    expect(stats.findAll('span')).toHaveLength(4)
+    expect(stats.classes()).not.toContain('flex-wrap')
+    expect(stats.element.nextElementSibling).toBe(rows[1].get('[data-test="estimated-total-cost"]').element)
     wrapper.unmount()
   })
 

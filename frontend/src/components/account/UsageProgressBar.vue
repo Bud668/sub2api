@@ -1,60 +1,62 @@
 <template>
-  <div>
+  <div class="min-w-0">
     <!-- Window stats row (above progress bar) -->
     <div
       v-if="windowStats && (windowStats.requests > 0 || windowStats.tokens > 0)"
-      class="mb-0.5 flex min-w-0 items-center"
+      class="mb-0.5 space-y-0.5 text-[10px] text-gray-500 dark:text-gray-400"
     >
-      <div class="flex min-w-0 flex-wrap items-center gap-1.5 whitespace-nowrap text-[10px] text-gray-500 dark:text-gray-400">
-        <span class="rounded bg-gray-100 px-1.5 py-0.5 dark:bg-gray-800">
+      <div data-test="window-stats" class="flex items-center gap-1 whitespace-nowrap">
+        <span class="rounded bg-gray-100 px-1 py-0.5 dark:bg-gray-800">
           {{ formatRequests }} req
         </span>
-        <span class="rounded bg-gray-100 px-1.5 py-0.5 dark:bg-gray-800">
+        <span class="rounded bg-gray-100 px-1 py-0.5 dark:bg-gray-800">
           {{ formatTokens }}
         </span>
-        <span class="rounded bg-gray-100 px-1.5 py-0.5 dark:bg-gray-800" :title="t('usage.accountBilled')">
+        <span class="rounded bg-gray-100 px-1 py-0.5 dark:bg-gray-800" :title="t('usage.accountBilled')">
           A ${{ formatAccountCost }}
         </span>
         <span
           v-if="windowStats?.user_cost != null"
-          class="rounded bg-gray-100 px-1.5 py-0.5 dark:bg-gray-800"
+          class="rounded bg-gray-100 px-1 py-0.5 dark:bg-gray-800"
           :title="t('usage.userBilled')"
         >
           U ${{ formatUserCost }}
         </span>
-        <span
-          v-if="estimatedTotalCost != null"
-          data-test="estimated-total-cost"
-          class="rounded bg-gray-100 px-1.5 py-0.5 dark:bg-gray-800"
-          :title="t('admin.accounts.usageWindow.estimatedTotalCostTooltip')"
-        >
-          {{ t('admin.accounts.usageWindow.estimatedTotalCost', { cost: estimatedTotalCost.toFixed(2) }) }}
-        </span>
       </div>
+      <span
+        v-if="estimatedTotalCost != null"
+        data-test="estimated-total-cost"
+        class="block w-fit max-w-full whitespace-normal rounded bg-indigo-100 px-1.5 py-0.5 font-medium text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300"
+        :title="t('admin.accounts.usageWindow.estimatedTotalCostTooltip')"
+      >
+        {{ t('admin.accounts.usageWindow.estimatedTotalCost', { cost: estimatedTotalCost.toFixed(2) }) }}
+      </span>
     </div>
 
     <!-- Progress bar row -->
-    <div class="flex items-center gap-1">
-      <!-- Label badge (label-width: fixed = 定宽居中, auto = 限宽截断左对齐) -->
-      <span :class="[labelSizeClass, labelClass]">
-        {{ label }}
-      </span>
+    <div class="flex flex-wrap items-center gap-x-1 gap-y-0.5">
+      <div class="flex shrink-0 items-center gap-1">
+        <!-- Label badge (label-width: fixed = 定宽居中, auto = 限宽截断左对齐) -->
+        <span :class="[labelSizeClass, labelClass]">
+          {{ label }}
+        </span>
 
-      <!-- Progress bar container -->
-      <div class="h-1.5 w-8 shrink-0 overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700">
-        <div
-          :class="['h-full transition-all duration-300', barClass]"
-          :style="{ width: barWidth }"
-        ></div>
+        <!-- Progress bar container -->
+        <div class="h-1.5 w-8 shrink-0 overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700">
+          <div
+            :class="['h-full transition-all duration-300', barClass]"
+            :style="{ width: barWidth }"
+          ></div>
+        </div>
+
+        <!-- Percentage -->
+        <span :class="['w-[32px] shrink-0 text-right text-[10px] font-medium', textClass]">
+          {{ displayPercent }}
+        </span>
       </div>
 
-      <!-- Percentage -->
-      <span :class="['w-[32px] shrink-0 text-right text-[10px] font-medium', textClass]">
-        {{ displayPercent }}
-      </span>
-
       <!-- Reset time -->
-      <span v-if="shouldShowResetTime" class="shrink-0 text-[10px] text-gray-400">
+      <span v-if="shouldShowResetTime" class="shrink-0 whitespace-nowrap text-[10px] text-gray-400">
         {{ formatResetTime }}
       </span>
     </div>
