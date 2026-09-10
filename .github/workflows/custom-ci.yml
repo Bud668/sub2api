@@ -45,7 +45,9 @@ jobs:
           cache-dependency-path: frontend/pnpm-lock.yaml
       - name: Build the pinned source and run release gates
         run: |
-          git fetch --no-tags https://github.com/Wei-Shaw/sub2api.git refs/tags/v0.2.3:refs/tags/v0.2.3
+          upstream_tag=$(jq -r .upstream_tag deploy/custom-release.example.json)
+          [[ "$upstream_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          git fetch --no-tags https://github.com/Wei-Shaw/sub2api.git "refs/tags/$upstream_tag:refs/tags/$upstream_tag"
           jq --arg source "$(git rev-parse HEAD)" --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             '.source_commit=$source | .commit=$source | .build_date=$date' \
             deploy/custom-release.example.json > "$RUNNER_TEMP/candidate.json"
