@@ -191,12 +191,17 @@
           @select-all-results="handleSelectAllResults"
           @toggle-schedulable="handleBulkToggleSchedulable"
         />
-        <div ref="accountTableRef" class="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div ref="accountTableRef" class="account-table flex min-h-0 flex-1 flex-col overflow-hidden">
         <DataTable
           ref="dataTableRef"
           :columns="cols"
           :data="accounts"
           :loading="loading"
+          :sticky-first-column="false"
+          :sticky-actions-column="false"
+          :expandable-actions="false"
+          :card-layout="useAccountCards"
+          :class="{ 'account-cards': useAccountCards }"
           row-key="id"
           :server-side-sort="true"
           @sort="handleSort"
@@ -219,11 +224,14 @@
           <template #cell-select="{ row }">
             <input type="checkbox" :checked="isSelected(row.id)" @change="toggleSel(row.id)" class="rounded border-gray-300 text-primary-600 focus:ring-primary-500" />
           </template>
+          <template #header-id="{ column }">
+            <span :title="column.label">ID</span>
+          </template>
           <template #cell-id="{ value }">
             <span class="font-mono text-xs text-gray-500 dark:text-gray-400">#{{ value }}</span>
           </template>
           <template #cell-name="{ row, value }">
-            <div class="flex flex-col">
+            <div class="flex min-w-0 flex-col break-words [overflow-wrap:anywhere]">
               <HelpTooltip
                 v-if="accountHomepageUrl(row)"
                 :content="accountHomepageUrl(row)"
@@ -413,7 +421,7 @@
           <template #cell-expires_at="{ row, value }">
             <div class="flex flex-col items-start gap-1">
               <span class="text-sm text-gray-500 dark:text-dark-400">{{ formatExpiresAt(value) }}</span>
-              <div v-if="isExpired(value) || (row.auto_pause_on_expired && value)" class="flex items-center gap-1">
+              <div v-if="isExpired(value) || (row.auto_pause_on_expired && value)" class="flex flex-wrap items-center gap-1">
                 <span
                   v-if="isExpired(value)"
                   class="inline-flex items-center rounded-md bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
@@ -487,7 +495,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, onUnmounted, toRaw, watch } from 'vue'
-import { useIntervalFn } from '@vueuse/core'
+import { useElementSize, useIntervalFn } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
@@ -547,6 +555,7 @@ const accountGroupsForRow = (account: Pick<AccountListItem, 'group_ids'>): Admin
   return groupIDs.map(id => groupsByID.value.get(id)).filter((group): group is AdminGroup => Boolean(group))
 }
 const accountTableRef = ref<HTMLElement | null>(null)
+const { width: accountTableWidth } = useElementSize(accountTableRef)
 const dataTableRef = ref<InstanceType<typeof DataTable> | null>(null)
 type AccountBulkEditTarget =
   | {
@@ -1806,7 +1815,7 @@ const allColumns = computed(() => {
     { key: 'notes', label: t('admin.accounts.columns.notes'), sortable: false },
     { key: 'actions', label: t('admin.accounts.columns.actions'), sortable: false }
   )
-  return c
+  return c.map(column => ({ ...column, class: `account-column-${column.key}` }))
 })
 
 // Columns that can be toggled (exclude select, name, and actions)
@@ -1818,6 +1827,13 @@ const toggleableColumns = computed(() =>
 const cols = computed(() =>
   allColumns.value.filter(col =>
     col.key === 'select' || col.key === 'name' || col.key === 'actions' || !hiddenColumns.has(col.key)
+  )
+)
+
+// ponytail: conservative column/label budget; measure custom cells if future columns need more room.
+const useAccountCards = computed(() =>
+  accountTableWidth.value > 0 && accountTableWidth.value < Math.max(
+    1000, cols.value.reduce((width, column) => width + Math.max(100, column.label.length * 9 + 32), 0)
   )
 )
 
@@ -2582,6 +2598,70 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+.account-table :deep(.table-wrapper > table) {
+  min-width: 0;
+}
+
+.account-table :deep(th),
+.account-table :deep(td) {
+  padding-inline: 0.5rem;
+  white-space: normal;
+}
+
+.account-table :deep(th) {
+  word-break: keep-all;
+  font-size: 0.75rem;
+}
+
+.account-table :deep(.account-column-select),
+.account-table :deep(.account-column-id),
+.account-table :deep(.account-column-capacity),
+.account-table :deep(.account-column-status),
+.account-table :deep(.account-column-schedulable),
+.account-table :deep(.account-column-priority),
+.account-table :deep(.account-column-actions) {
+  width: 1%;
+}
+
+.account-table :deep(.account-column-id) {
+  white-space: nowrap;
+}
+
+.account-table :deep(.account-column-status),
+.account-table :deep(.account-column-priority),
+.account-table :deep(.account-column-last_used_at),
+.account-table :deep(.account-column-actions) {
+  white-space: nowrap;
+}
+
+.account-table :deep(.account-column-name) {
+  width: 11rem;
+  max-width: 13rem;
+}
+
+.account-table :deep(.account-column-usage) {
+  width: 21rem;
+}
+
+.account-table :deep(.account-column-created_at),
+.account-table :deep(.account-column-expires_at) {
+  width: 8rem;
+}
+
+.account-table :deep(.account-cards) {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 28rem), 1fr));
+  align-content: start;
+  gap: 1rem;
+  padding: 0.75rem;
+  overflow-y: auto;
+}
+
+.account-table :deep(.account-cards > *) {
+  min-width: 0;
+  margin-block: 0;
+}
+
 .account-tools-menu-item {
   @apply flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm text-gray-700 transition-colors hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-dark-700;
 }

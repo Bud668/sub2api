@@ -1,5 +1,5 @@
 <template>
-  <div v-if="!isDesktopViewport" class="space-y-3">
+  <div v-if="!useTableLayout" class="space-y-3">
     <template v-if="loading">
       <div v-for="i in 5" :key="i" class="rounded-lg border border-gray-200 bg-white p-4 dark:border-dark-700 dark:bg-dark-900">
         <div class="space-y-3">
@@ -73,7 +73,16 @@
             :data-field="column.key"
             class="flex min-w-0 items-start justify-between gap-4"
           >
-            <span class="text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">
+            <button
+              v-if="cardLayout && column.sortable"
+              type="button"
+              class="text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400"
+              @click.stop="handleSort(column.key)"
+            >
+              {{ column.label }}
+              <span aria-hidden="true">{{ sortKey === column.key ? (sortOrder === 'asc' ? '↑' : '↓') : '↕' }}</span>
+            </button>
+            <span v-else class="text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">
               {{ column.label }}
             </span>
             <div class="min-w-0 max-w-full text-right text-sm text-gray-900 dark:text-gray-100">
@@ -433,6 +442,8 @@ interface Props {
   columns: Column[]
   data: any[]
   loading?: boolean
+  /** Reuse the mobile cards when a dense table cannot fit its container. */
+  cardLayout?: boolean
   stickyFirstColumn?: boolean
   stickyActionsColumn?: boolean
   expandableActions?: boolean
@@ -483,6 +494,8 @@ const props = withDefaults(defineProps<Props>(), {
   selectable: false,
   selectedKeys: () => []
 })
+
+const useTableLayout = computed(() => isDesktopViewport.value && !props.cardLayout)
 
 const sortKey = ref<string>('')
 const sortOrder = ref<'asc' | 'desc'>('asc')
@@ -640,7 +653,7 @@ const columnsSignature = computed(() =>
 )
 
 watch(
-  isDesktopViewport,
+  useTableLayout,
   async (isDesktop) => {
     detachDesktopTableTracking()
     if (!isDesktop) return
@@ -754,7 +767,7 @@ const toggleAllVisible = (checked: boolean) => {
 // 是否启用虚拟化:仅桌面端且行数超过阈值时开启。小列表全量渲染,彻底绕开虚拟器的
 // 估算/测量/滚动补偿链路,消除可变行高导致的滚动抖动。
 const shouldVirtualize = computed(() =>
-  isDesktopViewport.value && (sortedData.value?.length ?? 0) > (props.virtualizeThreshold ?? 100)
+  useTableLayout.value && (sortedData.value?.length ?? 0) > (props.virtualizeThreshold ?? 100)
 )
 
 const rowVirtualizer = useVirtualizer(computed(() => ({

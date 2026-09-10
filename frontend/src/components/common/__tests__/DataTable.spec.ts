@@ -47,6 +47,31 @@ describe('DataTable', () => {
     localStorage.clear()
   })
 
+  it('reuses complete cards on a constrained desktop and restores the table', async () => {
+    const wrapper = mount(DataTable, {
+      props: {
+        columns: [{ key: 'id', label: 'ID', sortable: true }, { key: 'name', label: 'Name' }, { key: 'actions', label: 'Actions' }],
+        data: [{ id: 4, name: 'Account' }],
+        cardLayout: true,
+        serverSideSort: true,
+        virtualizeThreshold: 0
+      },
+      slots: { 'cell-actions': '<button>Edit</button>' }
+    })
+    expect(wrapper.find('table').exists()).toBe(false)
+    expect(wrapper.get('[data-field="id"]').text()).toContain('4')
+    expect(wrapper.get('[data-field="name"]').text()).toContain('Account')
+    expect(wrapper.findAll('button').some(button => button.text() === 'Edit')).toBe(true)
+    expect((wrapper.vm as any).shouldVirtualize).toBe(false)
+    await wrapper.get('[data-field="id"] button').trigger('click')
+    expect(wrapper.emitted('sort')).toEqual([['id', 'asc']])
+    await wrapper.setProps({ cardLayout: false, virtualizeThreshold: 100 })
+    expect(wrapper.find('table').exists()).toBe(true)
+    expect(wrapper.findAll('tbody td')).toHaveLength(3)
+    expect(wrapper.get('th').attributes('aria-sort')).toBe('ascending')
+    wrapper.unmount()
+  })
+
   it('renders paired sort arrows and highlights the active direction', async () => {
     const wrapper = mount(DataTable, {
       props: {
