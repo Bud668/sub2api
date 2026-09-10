@@ -101,6 +101,7 @@
             >
               <Icon name="refresh" size="md" :class="loading ? 'animate-spin' : ''" />
             </button>
+            <SubscriptionAbsorptionPanel :filters="absorptionFilters" :refresh-key="absorptionRefreshKey" />
             <!-- Column Settings Dropdown -->
             <div class="relative" ref="columnDropdownRef">
               <button
@@ -791,6 +792,7 @@ import GroupOptionItem from '@/components/common/GroupOptionItem.vue'
 import Icon from '@/components/icons/Icon.vue'
 import DynamicQuotaCard from '@/components/common/DynamicQuotaCard.vue'
 import DynamicQuotaDialog from '@/components/admin/DynamicQuotaDialog.vue'
+import SubscriptionAbsorptionPanel from '@/components/admin/SubscriptionAbsorptionPanel.vue'
 import {
   getRemainingDurationParts,
   getRemainingExpiryDuration,
@@ -1029,7 +1031,15 @@ const applyFilters = () => {
   loadSubscriptions()
 }
 
+const absorptionRefreshKey = ref(0)
+const absorptionFilters = computed(() => ({
+  status: filters.status || undefined,
+  group_id: filters.group_id ? Number(filters.group_id) : undefined,
+  platform: filters.platform || undefined,
+  user_id: filters.user_id || undefined
+}))
 const loadSubscriptions = async () => {
+  absorptionRefreshKey.value++
   if (abortController) {
     abortController.abort()
   }

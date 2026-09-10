@@ -35,6 +35,15 @@ func TestDynamicQuotaApprovalRequiresAdminRoute(t *testing.T) {
 		} else {
 			require.Equal(t, http.StatusForbidden, r.Code)
 		}
+		req = httptest.NewRequest(http.MethodGet, "/api/v1/admin/subscriptions/absorbed-usage?summary_only=true", nil)
+		req.Header.Set("Authorization", token)
+		r = httptest.NewRecorder()
+		router.ServeHTTP(r, req)
+		if token == "" {
+			require.Equal(t, http.StatusUnauthorized, r.Code)
+		} else {
+			require.Equal(t, http.StatusForbidden, r.Code)
+		}
 	}
 	r := httptest.NewRecorder()
 	router.ServeHTTP(r, httptest.NewRequest(http.MethodPost, "/api/v1/subscriptions/11/dynamic-quota/approve-capacity", nil))

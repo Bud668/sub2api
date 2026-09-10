@@ -1118,6 +1118,9 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 				acceptedTurnStartedAt.Store(&responseCreateAtCopy)
 				acceptedTurn = true
 			}
+			if policyErr == nil && blocked == nil && isResponseCreate && hooks != nil && hooks.BeforeForward != nil {
+				policyErr = hooks.BeforeForward(turnNo)
+			}
 			return out, blocked, policyErr
 		},
 		onBlock: func(blocked *OpenAIFastBlockedError) {
@@ -1135,6 +1138,11 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		},
 	}
 	upstreamFirstMessageSent := false
+	if hooks != nil && hooks.BeforeForward != nil {
+		if err := hooks.BeforeForward(1); err != nil {
+			return err
+		}
+	}
 	firstWriteCtx, cancelFirstWrite := context.WithTimeout(ctx, s.openAIWSWriteTimeout())
 	firstWriteErr := relayUpstreamFrameConn.WriteFrame(firstWriteCtx, coderws.MessageText, firstClientMessage)
 	cancelFirstWrite()
@@ -1293,6 +1301,13 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 				if eventType != "error" {
 					return nil
 				}
+				// A metered error must reach relay observation and canonical billing.
+				// Rejecting it here would discard usage and allow account failover.
+				var usage OpenAIUsage
+				parseOpenAIWSResponseUsageFromCompletedEvent(payload, &usage)
+				if (&OpenAIForwardResult{Usage: usage}).HasBillableUsage() {
+					return nil
+				}
 				if wroteDownstream || !isOpenAIWSRateLimitError(errCodeRaw, errTypeRaw, errMsgRaw) {
 					return nil
 				}
@@ -1328,21 +1343,6 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			},
 		},
 	})
-	if cause := context.Cause(ctx); cause != nil {
-		if isOpenAIWSSessionPreempted(ctx) {
-			return errOpenAIWSSessionPreempted
-		}
-		status := coderws.StatusGoingAway
-		reason := "websocket request canceled"
-		if errors.Is(cause, ErrOpenAIWSIngressLeaseLost) {
-			status = coderws.StatusTryAgainLater
-			reason = "websocket ingress capacity lease lost; please reconnect"
-		}
-		_ = clientConn.Close(status, reason)
-		_ = clientConn.CloseNow()
-		return NewOpenAIWSClientCloseError(status, reason, cause)
-	}
-
 	resultRequestModel, resultUpstreamModel := usageMeta.turnModels(relayResult.RequestModel)
 	result := &OpenAIForwardResult{
 		RequestID: relayResult.RequestID,
@@ -1370,6 +1370,51 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	}
 
 	turnCount := int(completedTurns.Load())
+	// Even a graceful client close may end before the upstream terminal. The
+	// relay's aggregate is for diagnostics, not a bill for the unfinished turn.
+	if partial := relayResult.PartialTurn; partial != nil {
+		requestModel, upstreamModel := usageMeta.turnModels(partial.RequestModel)
+		result = &OpenAIForwardResult{
+			RequestID: partial.RequestID, Model: requestModel, UpstreamModel: openAIWSDifferentModel(requestModel, upstreamModel),
+			Usage: OpenAIUsage{InputTokens: partial.Usage.InputTokens, OutputTokens: partial.Usage.OutputTokens,
+				CacheCreationInputTokens: partial.Usage.CacheCreationInputTokens, CacheReadInputTokens: partial.Usage.CacheReadInputTokens,
+				ImageOutputTokens: partial.Usage.ImageOutputTokens},
+			UpstreamResponseModel: partial.ResponseModel, UpstreamResponseModelConflict: partial.ResponseModelConflict,
+			UpstreamResponseServiceTier: normalizeObservedOpenAIServiceTier(partial.ResponseServiceTier),
+			ServiceTier:                 usageMeta.serviceTier.Load(), ReasoningEffort: usageMeta.reasoningEffort.Load(),
+			RequestedReasoningEffort: usageMeta.requestedReasoningEffort.Load(),
+			Stream:                   true, OpenAIWSMode: true, UpstreamTerminalEvent: "transport_error",
+			Duration: time.Since(partial.StartedAt), FirstTokenMs: partial.FirstTokenMs, ResponseHeaders: cloneHeader(handshakeHeaders),
+		}
+		if relayExit == nil {
+			relayExit = &openaiwsv2.RelayExit{Stage: "missing_terminal", Err: errors.New("websocket closed before upstream terminal")}
+		}
+	} else {
+		// A completed turn was already billed by OnTurnComplete.
+		result.Usage = OpenAIUsage{}
+	}
+	if cause := context.Cause(ctx); cause != nil {
+		// Cancellation/preemption must not skip the unfinished turn's usage.
+		// Completed turns were already settled by OnTurnComplete.
+		if relayResult.PartialTurn != nil && hooks != nil && hooks.AfterTurn != nil {
+			if hooks.TurnStarted != nil {
+				hooks.TurnStarted(turnCount+1, relayResult.PartialTurn.StartedAt)
+			}
+			hooks.AfterTurn(turnCount+1, result, cause)
+		}
+		if isOpenAIWSSessionPreempted(ctx) {
+			return errOpenAIWSSessionPreempted
+		}
+		status := coderws.StatusGoingAway
+		reason := "websocket request canceled"
+		if errors.Is(cause, ErrOpenAIWSIngressLeaseLost) {
+			status = coderws.StatusTryAgainLater
+			reason = "websocket ingress capacity lease lost; please reconnect"
+		}
+		_ = clientConn.Close(status, reason)
+		_ = clientConn.CloseNow()
+		return NewOpenAIWSClientCloseError(status, reason, cause)
+	}
 	if relayExit == nil {
 		logOpenAIWSV2Passthrough(
 			"relay_completed account_id=%d request_id=%s terminal_event=%s duration_ms=%d c2u_frames=%d u2c_frames=%d dropped_frames=%d turns=%d",
@@ -1424,7 +1469,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			"websocket_first_semantic_output",
 			handshakeHeaders,
 		)
-		if turnCount == 0 && !relayExit.WroteDownstream {
+		if turnCount == 0 && !relayExit.WroteDownstream && !result.HasBillableUsage() {
 			relayErr = failoverErr
 		} else {
 			// The handler only retains the initial response.create across
@@ -1461,7 +1506,10 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		if hooks.TurnStarted != nil {
 			hooks.TurnStarted(turnCount+1, time.Now().Add(-result.Duration))
 		}
-		hooks.AfterTurn(turnCount+1, nil, turnErr)
+		if relayResult.PartialTurn == nil {
+			result = nil
+		}
+		hooks.AfterTurn(turnCount+1, result, turnErr)
 	}
 	return turnErr
 }

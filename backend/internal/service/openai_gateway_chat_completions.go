@@ -59,6 +59,7 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	promptCacheKey string,
 	defaultMappedModel string,
 ) (*OpenAIForwardResult, error) {
+	ctx = WithDynamicQuotaRequestMetadata(ctx, gjson.GetBytes(body, "model").String(), "/v1/chat/completions", 0)
 	return s.withDynamicQuotaForward(ctx, c, account, func(inner context.Context) (*OpenAIForwardResult, error) {
 		return s.forwardAsChatCompletions(inner, c, account, body, promptCacheKey, defaultMappedModel, false)
 	})
@@ -402,20 +403,22 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 		result, handleErr = s.handleChatBufferedStreamingResponse(resp, c, account, originalModel, billingModel, upstreamModel, startTime)
 	}
 
-	// cyber_policy：标记已设、error 已按 Chat Completions 格式发给客户端。丢弃 result、
-	// 返回哨兵，使 handler 落入 tokens=0 免费用量行（对齐 /v1/responses），不计费、不 failover。
+	// cyber_policy 已回写客户端，返回哨兵禁止 failover。预占请求若已有真实
+	// usage 则保留 result，交给统一账务结算；其余路径沿用原有审计处理。
 	if GetOpsCyberPolicy(c) != nil {
 		if handleErr == nil {
 			handleErr = errOpenAICyberPolicyForwarded
 		}
-		return nil, handleErr
+		if reservation, _ := ctx.Value(dynamicQuotaRequestContextKey{}).(*DynamicQuotaReservation); !result.HasBillableUsage() || reservation == nil {
+			return nil, handleErr
+		}
 	}
 
 	// Propagate ServiceTier and ReasoningEffort to result for billing.
 	// 计费 tier 优先采用上游回显值；上游未回显时回退到最终出站 body（经过
 	// fast policy filter/force 之后）里的 tier，policy filter 删掉字段后不再
 	// 按原请求 Fast 计费。
-	if handleErr == nil && result != nil {
+	if result != nil {
 		if tier := resolvedOpenAIUpstreamServiceTier(c, extractOpenAIServiceTierFromBody(responsesBody)); tier != nil {
 			result.ServiceTier = tier
 		}

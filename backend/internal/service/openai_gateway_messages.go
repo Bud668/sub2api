@@ -492,21 +492,23 @@ func (s *OpenAIGatewayService) forwardAsAnthropicDynamicQuotaChecked(
 		result, handleErr = s.handleAnthropicBufferedStreamingResponse(resp, c, account, originalModel, billingModel, upstreamModel, startTime)
 	}
 
-	// cyber_policy：标记已设、error 已按 Anthropic 格式发给客户端。丢弃 result、返回哨兵，
-	// 使 handler 落入 tokens=0 免费用量行（对齐 /v1/responses），不计费、不 failover。
+	// cyber_policy 已回写客户端，返回哨兵禁止 failover。预占请求若已有真实
+	// usage 则保留 result，交给统一账务结算；其余路径沿用原有审计处理。
 	if GetOpsCyberPolicy(c) != nil {
 		if handleErr == nil {
 			handleErr = errOpenAICyberPolicyForwarded
 		}
-		return nil, handleErr
+		if reservation, _ := ctx.Value(dynamicQuotaRequestContextKey{}).(*DynamicQuotaReservation); !result.HasBillableUsage() || reservation == nil {
+			return nil, handleErr
+		}
 	}
 
 	// Propagate ServiceTier and ReasoningEffort to result for billing
-	if handleErr == nil && result != nil {
-		if compatContinuationEnabled && promptCacheKey != "" && result.ResponseID != "" {
+	if result != nil {
+		if handleErr == nil && compatContinuationEnabled && promptCacheKey != "" && result.ResponseID != "" {
 			s.bindOpenAICompatSessionResponseID(ctx, c, account, promptCacheKey, result.ResponseID)
 		}
-		if promptCacheKey != "" && anthropicDigestChain != "" {
+		if handleErr == nil && promptCacheKey != "" && anthropicDigestChain != "" {
 			s.bindOpenAICompatAnthropicDigestPromptCacheKey(account, apiKeyID, anthropicDigestChain, promptCacheKey, anthropicMatchedDigestChain)
 		}
 		// 计费 tier 优先采用上游回显值；上游未回显时回退到最终出站 body（经过

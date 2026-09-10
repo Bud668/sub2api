@@ -24,6 +24,19 @@ func newUsageRecordTestPool(t *testing.T) *service.UsageRecordWorkerPool {
 	return pool
 }
 
+func TestDynamicQuotaUsageRecordPersistsBeforeHandlerReturns(t *testing.T) {
+	pool := newUsageRecordTestPool(t)
+	started, release := make(chan struct{}), make(chan struct{})
+	defer close(release)
+	pool.Submit(func(context.Context) { close(started); <-release })
+	<-started
+	h := &OpenAIGatewayHandler{usageRecordWorkerPool: pool}
+	var persisted atomic.Bool
+	h.submitOpenAIUsageRecordTask(context.Background(), &service.OpenAIForwardResult{DynamicQuotaReservationID: "synthetic"},
+		func(context.Context) { persisted.Store(true) })
+	require.True(t, persisted.Load(), "a crash after handler return must not lose a reserved bill in the memory queue")
+}
+
 func TestGatewayHandlerSubmitUsageRecordTask_WithPool(t *testing.T) {
 	pool := newUsageRecordTestPool(t)
 	h := &GatewayHandler{usageRecordWorkerPool: pool}
@@ -218,4 +231,20 @@ func TestOpenAIGatewayHandlerSubmitOpenAIUsageRecordTask_SearchCountUsesMandator
 	close(release)
 
 	require.True(t, called.Load(), "search surcharge usage task must be mandatory when async submit is dropped")
+}
+
+func TestDynamicQuotaUsageRecordTaskNeverDrops(t *testing.T) {
+	pool := service.NewUsageRecordWorkerPoolWithOptions(service.UsageRecordWorkerPoolOptions{
+		WorkerCount: 1, QueueSize: 1, TaskTimeout: time.Second, OverflowPolicy: "drop",
+	})
+	t.Cleanup(pool.Stop)
+	h := &OpenAIGatewayHandler{usageRecordWorkerPool: pool}
+	started, release := make(chan struct{}), make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	pool.Submit(func(context.Context) { close(started); <-release })
+	<-started
+	pool.Submit(func(context.Context) {})
+	var calls atomic.Int32
+	h.submitOpenAIUsageRecordTask(context.Background(), &service.OpenAIForwardResult{DynamicQuotaReservationID: "synthetic-reservation"}, func(context.Context) { calls.Add(1) })
+	require.Equal(t, int32(1), calls.Load(), "a quota settlement must run exactly once even with drop overflow policy")
 }

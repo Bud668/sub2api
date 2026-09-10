@@ -33,6 +33,8 @@ type Usage struct {
 }
 
 type RelayResult struct {
+	// Unfinished turn only, never the cumulative usage from completed turns.
+	PartialTurn           *RelayTurnResult
 	RequestModel          string
 	ResponseModel         string
 	ResponseModelConflict bool
@@ -1246,6 +1248,15 @@ func enrichResult(result *RelayResult, state *relayState, duration time.Duration
 	result.RequestID = state.lastResponseID
 	result.TerminalEventType = state.terminalEventType
 	result.FirstTokenMs = state.firstTokenMs
+	if state.activeTurn != nil {
+		turn := state.activeTurn
+		result.PartialTurn = &RelayTurnResult{
+			RequestID: openAIWSRelayActiveTurnID(state), RequestModel: state.currentRequestModel(),
+			ResponseModel: relayTurnResponseModel(turn), ResponseModelConflict: turn.responseModelConflict,
+			ResponseServiceTier: turn.terminalResponseServiceTier, Usage: state.turnUsage,
+			StartedAt: turn.startAt, FirstTokenMs: openAIWSRelayCloneIntPtr(turn.firstTokenMs),
+		}
+	}
 }
 
 func (s *relayState) setRequestModel(model string) {

@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"strings"
 
@@ -30,6 +31,11 @@ func (r *usageBillingRepository) Apply(ctx context.Context, cmd *service.UsageBi
 	cmd.Normalize()
 	if cmd.RequestID == "" {
 		return nil, service.ErrUsageBillingRequestIDRequired
+	}
+	if cmd.DynamicQuotaReservationID != "" {
+		if err := r.persistDynamicReceipt(ctx, cmd); err != nil {
+			return nil, err
+		}
 	}
 
 	tx, err := r.db.BeginTx(ctx, nil)
@@ -63,12 +69,85 @@ func (r *usageBillingRepository) Apply(ctx context.Context, cmd *service.UsageBi
 	if err := r.applyUsageBillingEffects(ctx, tx, cmd, result); err != nil {
 		return nil, err
 	}
+	if cmd.DynamicQuotaReservationID != "" && cmd.UsageLog != nil {
+		// Reuse the official insert and its request-id constraint. Money, the
+		// usage detail, dedup and reservation settlement commit or roll back together.
+		entry := *cmd.UsageLog
+		if inserted, err := (&usageLogRepository{}).createSingle(ctx, tx, &entry); err != nil {
+			return nil, err
+		} else if !inserted {
+			return nil, service.ErrUsageBillingRequestConflict
+		}
+	}
 
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 	tx = nil
 	return result, nil
+}
+
+func (r *usageBillingRepository) persistDynamicReceipt(ctx context.Context, cmd *service.UsageBillingCommand) error {
+	if cmd.UsageLog == nil {
+		return service.ErrDynamicQuotaUnavailable
+	}
+	entry := cmd.UsageLog
+	if (entry.SubscriptionID == nil) != (cmd.SubscriptionID == nil) ||
+		(entry.SubscriptionID != nil && *entry.SubscriptionID != *cmd.SubscriptionID) {
+		return service.ErrDynamicQuotaBinding
+	}
+	if entry.RequestID != cmd.RequestID || entry.APIKeyID != cmd.APIKeyID || entry.UserID != cmd.UserID || entry.AccountID != cmd.AccountID ||
+		entry.ActualCost != cmd.SubscriptionCost+cmd.BalanceCost || entry.TotalCost != cmd.DynamicStandardCost ||
+		entry.User != nil || entry.APIKey != nil || entry.Account != nil || entry.Group != nil || entry.Subscription != nil {
+		return service.ErrDynamicQuotaBinding
+	}
+	// Keep private metadata in the normal usage row, not in the recovery receipt.
+	// Copy both levels: sanitizing must not mutate the command used by this transaction.
+	receipt, usage := *cmd, *entry
+	usage.UserAgent, usage.IPAddress, usage.SessionID = nil, nil, nil
+	receipt.UsageLog = &usage
+	raw, err := json.Marshal(&receipt) // Original fingerprint and frozen monetary amounts.
+	if err != nil {
+		return err
+	}
+	res, err := r.db.ExecContext(ctx, `UPDATE dynamic_quota_requests SET
+ billing_windows=CASE WHEN billing_receipt IS NULL AND $6::bigint IS NOT NULL THEN
+ (SELECT jsonb_build_array(to_jsonb(us)->'daily_window_start',to_jsonb(us)->'weekly_window_start',to_jsonb(us)->'monthly_window_start')
+ FROM user_subscriptions us WHERE us.id=$6) ELSE billing_windows END,
+ billing_receipt=COALESCE(billing_receipt,$4::jsonb),
+ billing_retry_at=CASE WHEN status IN ('pending','uncertain') THEN COALESCE(billing_retry_at,NOW()+INTERVAL '1 minute') ELSE billing_retry_at END,
+ outcome=CASE WHEN status IN ('pending','uncertain') THEN 'billing_ready' ELSE outcome END
+ WHERE id=$1 AND account_id=$2 AND api_key_id=$3 AND operator_absorbed_at IS NULL
+ AND (owner_user_id IS NULL OR owner_user_id=$5)
+ AND (owner_subscription_id IS NULL OR owner_subscription_id=$6)
+ AND (billing_receipt IS NULL AND status IN ('pending','uncertain')
+      OR billing_receipt IS NOT NULL AND billing_receipt=$4::jsonb)`,
+		cmd.DynamicQuotaReservationID, cmd.AccountID, cmd.APIKeyID, string(raw), cmd.UserID, cmd.SubscriptionID)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil || n != 1 {
+		if err == nil && cmd.DynamicStandardCost >= 0 {
+			// A waived/closed request can acquire a late priced receipt for the
+			// operator's report, but must never re-enter canonical customer billing.
+			_, lateErr := r.db.ExecContext(ctx, `UPDATE dynamic_quota_requests SET
+ late_billing_receipt=COALESCE(late_billing_receipt,$4::jsonb),
+ operator_absorbed_standard_usd=COALESCE(operator_absorbed_standard_usd,
+ CASE WHEN EXISTS(SELECT 1 FROM usage_billing_dedup WHERE request_id=$7 AND api_key_id=$3
+ UNION ALL SELECT 1 FROM usage_billing_dedup_archive WHERE request_id=$7 AND api_key_id=$3) THEN 0 ELSE $5::numeric END)
+ WHERE id=$1 AND account_id=$2 AND api_key_id=$3 AND operator_absorbed_at IS NOT NULL
+ AND (owner_user_id IS NULL OR owner_user_id=$6)
+ AND (owner_subscription_id IS NULL OR owner_subscription_id=$8)
+ AND (billing_receipt IS NULL OR billing_receipt=$4::jsonb)
+ AND (late_billing_receipt IS NULL OR late_billing_receipt=$4::jsonb)`,
+				cmd.DynamicQuotaReservationID, cmd.AccountID, cmd.APIKeyID, string(raw), cmd.DynamicStandardCost, cmd.UserID, cmd.RequestID, cmd.SubscriptionID)
+			if lateErr != nil {
+				return lateErr
+			}
+		}
+		return service.ErrDynamicQuotaBinding
+	}
+	return nil
 }
 
 func (r *usageBillingRepository) claimUsageBillingKey(ctx context.Context, tx *sql.Tx, cmd *service.UsageBillingCommand) (bool, error) {

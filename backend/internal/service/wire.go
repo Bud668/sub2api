@@ -189,12 +189,32 @@ func ProvideOpenAIQuotaService(
 	return service
 }
 
-func ProvideDynamicSubscriptionService(db *sql.DB, accounts AccountRepository, quota *OpenAIQuotaService, subscriptions *SubscriptionService, billing *BillingCacheService, gateway *OpenAIGatewayService) *DynamicSubscriptionService {
+func ProvideDynamicSubscriptionService(db *sql.DB, accounts AccountRepository, quota *OpenAIQuotaService, subscriptions *SubscriptionService, billing *BillingCacheService, gateway *OpenAIGatewayService, keys *APIKeyService) *DynamicSubscriptionService {
 	svc := NewDynamicSubscriptionService(db, accounts, quota, subscriptions)
 	svc.disabled = gateway.cfg != nil && gateway.cfg.RunMode == config.RunModeSimple
 	subscriptions.DynamicQuotas = svc
 	billing.DynamicQuotas = svc
 	gateway.DynamicQuotas = svc
+	svc.replay = func(ctx context.Context, cmd *UsageBillingCommand) error {
+		if _, err := gateway.usageBillingRepo.Apply(ctx, cmd); err != nil {
+			return err
+		}
+		// Reconcile caches from the database instead of applying a second delta.
+		// This is safe even if a worker retries after an ambiguous commit reply.
+		if cmd.SubscriptionID != nil {
+			if err := svc.invalidate(ctx, *cmd.SubscriptionID); err != nil {
+				return err
+			}
+		}
+		if err := billing.InvalidateUserBalance(ctx, cmd.UserID); err != nil {
+			return err
+		}
+		if err := billing.InvalidateAPIKeyRateLimit(ctx, cmd.APIKeyID); err != nil {
+			return err
+		}
+		keys.InvalidateAuthCacheByUserID(ctx, cmd.UserID)
+		return nil
+	}
 	svc.Start()
 	return svc
 }

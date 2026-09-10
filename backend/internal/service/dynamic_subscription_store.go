@@ -94,6 +94,11 @@ type DynamicSubscriptionService struct {
 	done          chan struct{}
 	stopOnce      sync.Once
 	disabled      bool // Simple mode has no canonical billing and cannot use dynamic quotas.
+	workerID      string
+	stopping      atomic.Bool
+	recoveryDone  chan struct{}
+	replay        func(context.Context, *UsageBillingCommand) error
+	active        sync.Map // Reservation IDs still owned by a running forward call.
 }
 
 // One membership definition for polling, allocation and shared-source admission.
@@ -105,7 +110,7 @@ const dynamicActiveMemberSQL = `p.enabled AND EXISTS(SELECT 1 FROM user_subscrip
  AND EXISTS(SELECT 1 FROM account_groups ag WHERE ag.account_id=p.account_id AND ag.group_id=us.group_id))`
 
 func NewDynamicSubscriptionService(db *sql.DB, accounts AccountRepository, quota *OpenAIQuotaService, subscriptions *SubscriptionService) *DynamicSubscriptionService {
-	s := &DynamicSubscriptionService{db: db, accounts: accounts, quota: quota, subscriptions: subscriptions, stop: make(chan struct{}), done: make(chan struct{})}
+	s := &DynamicSubscriptionService{db: db, accounts: accounts, quota: quota, subscriptions: subscriptions, stop: make(chan struct{}), done: make(chan struct{}), workerID: uuid.NewString(), recoveryDone: make(chan struct{})}
 	if quota != nil {
 		s.fetch = quota.QueryDynamicUsage
 	}
@@ -118,11 +123,21 @@ type DynamicQuotaSource struct {
 }
 
 type DynamicQuotaAdminStatus struct {
-	Policy            *DynamicSubscriptionQuota `json:"policy"`
-	Sources           []DynamicQuotaSource      `json:"sources"`
-	PendingRequests   int                       `json:"pending_requests"`
-	UncertainRequests int                       `json:"uncertain_requests"`
+	Policy                          *DynamicSubscriptionQuota `json:"policy"`
+	Sources                         []DynamicQuotaSource      `json:"sources"`
+	PendingRequests                 int                       `json:"pending_requests"`
+	UncertainRequests               int                       `json:"uncertain_requests"`
+	SubscriptionPendingRequests     int                       `json:"subscription_pending_requests"`
+	SubscriptionUncertainRequests   int                       `json:"subscription_uncertain_requests"`
+	SubscriptionReservedStandardUSD float64                   `json:"subscription_reserved_standard_usd"`
 }
+
+// Match the save guard even before a policy/source has been selected. Source-wide
+// counts include other users and cannot explain this subscription's toggle block.
+const dynamicSubscriptionOutstandingSQL = ` FROM dynamic_quota_requests d LEFT JOIN api_keys k ON k.id=d.api_key_id
+ JOIN user_subscriptions us ON d.owner_subscription_id=us.id OR
+ (d.owner_subscription_id IS NULL AND us.user_id=k.user_id AND us.group_id=k.group_id)
+ WHERE us.id=$1 AND d.status IN ('pending','uncertain') AND d.operator_absorbed_at IS NULL`
 
 func (s *DynamicSubscriptionService) AdminStatus(ctx context.Context, id int64) (*DynamicQuotaAdminStatus, error) {
 	var groupID int64
@@ -142,9 +157,14 @@ func (s *DynamicSubscriptionService) AdminStatus(ctx context.Context, id int64) 
 		q = &DynamicSubscriptionQuota{Weight: 1, MaxLimitUSD: ceiling.Float64, IncreaseThresholdUSD: 10, Status: "disabled"}
 	}
 	out := &DynamicQuotaAdminStatus{Policy: q, Sources: []DynamicQuotaSource{}}
+	if err = s.db.QueryRowContext(ctx, `SELECT count(*) FILTER(WHERE d.status='pending'),count(*) FILTER(WHERE d.status='uncertain'),
+ COALESCE(sum(d.hold_standard_usd),0)`+dynamicSubscriptionOutstandingSQL, id).
+		Scan(&out.SubscriptionPendingRequests, &out.SubscriptionUncertainRequests, &out.SubscriptionReservedStandardUSD); err != nil {
+		return nil, err
+	}
 	if q.AccountID > 0 {
 		if err = s.db.QueryRowContext(ctx, `SELECT count(*) FILTER(WHERE status='pending'),count(*) FILTER(WHERE status='uncertain')
- FROM dynamic_quota_requests WHERE account_id=$1 AND status IN('pending','uncertain')`, q.AccountID).Scan(&out.PendingRequests, &out.UncertainRequests); err != nil {
+ FROM dynamic_quota_requests WHERE account_id=$1 AND source_closed_at IS NULL AND status IN('pending','uncertain')`, q.AccountID).Scan(&out.PendingRequests, &out.UncertainRequests); err != nil {
 			return nil, err
 		}
 	}
@@ -226,7 +246,7 @@ func loadDynamicSubscription(ctx context.Context, db dynamicQuotaQuerier, subscr
  p.used_standard_usd,p.allocated_standard_usd,us.weekly_usage_usd,us.user_id,us.group_id,
  COALESCE(r.rate_multiplier,g.rate_multiplier),g.peak_rate_enabled,g.peak_start,g.peak_end,g.peak_rate_multiplier,
  pool.state,p.updated_at,us.weekly_window_start,
- COALESCE((SELECT sum(hold_standard_usd) FROM dynamic_quota_requests WHERE subscription_id=us.id AND status IN ('pending','uncertain')),0),
+ COALESCE((SELECT sum(hold_standard_usd) FROM dynamic_quota_requests WHERE subscription_id=us.id AND status IN ('pending','uncertain') AND operator_absorbed_at IS NULL),0),
  p.increase_threshold_usd,p.applied_limit_usd
  FROM dynamic_subscription_policies p JOIN user_subscriptions us ON us.id=p.subscription_id
  JOIN groups g ON g.id=us.group_id JOIN dynamic_quota_pools pool ON pool.account_id=p.account_id
@@ -410,9 +430,7 @@ func (s *DynamicSubscriptionService) Save(ctx context.Context, subscriptionID in
 		return ErrDynamicQuotaBinding
 	}
 	var pending int
-	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM dynamic_quota_requests d JOIN api_keys k ON k.id=d.api_key_id
- JOIN user_subscriptions us ON us.user_id=k.user_id AND us.group_id=k.group_id
- WHERE us.id=$1 AND d.status IN ('pending','uncertain')`, subscriptionID).Scan(&pending); err != nil {
+	if err = tx.QueryRowContext(ctx, `SELECT count(*)`+dynamicSubscriptionOutstandingSQL, subscriptionID).Scan(&pending); err != nil {
 		return err
 	}
 	if pending > 0 && (revision == 0 || oldEnabled != in.Enabled) {
@@ -482,10 +500,13 @@ func writeDynamicPool(ctx context.Context, tx *sql.Tx, accountID int64, p *Dynam
 }
 
 func dynamicPoolTotals(ctx context.Context, db dynamicQuotaQuerier, accountID int64) (total, held, maxCost float64, pending int, err error) {
+	// Archived debt never carries forward. A genuinely executing cross-boundary
+	// turn still needs a physical hold until it finishes or its process lease dies.
 	err = db.QueryRowContext(ctx, `SELECT p.standard_total_usd,COALESCE(h.held,0),p.max_request_usd,COALESCE(h.pending,0)
  FROM dynamic_quota_pools p LEFT JOIN LATERAL
  (SELECT sum(hold_standard_usd) AS held,count(*) AS pending FROM dynamic_quota_requests
-  WHERE account_id=p.account_id AND status IN ('pending','uncertain')) h ON true WHERE p.account_id=$1`, accountID).Scan(&total, &held, &maxCost, &pending)
+  WHERE account_id=p.account_id AND status IN ('pending','uncertain')
+  AND (source_closed_at IS NULL OR (finished_at IS NULL AND lease_until>NOW()))) h ON true WHERE p.account_id=$1`, accountID).Scan(&total, &held, &maxCost, &pending)
 	return
 }
 
@@ -575,6 +596,9 @@ func (s *DynamicSubscriptionService) Refresh(ctx context.Context, accountID int6
 	if s.fetch == nil {
 		return ErrDynamicQuotaUnavailable
 	}
+	if err := s.recoverBillingReceipts(ctx, accountID); err != nil {
+		return err
+	}
 	// Consumption settling while the network query is in flight may not yet be
 	// included upstream. Keep it outside this snapshot's local watermark.
 	var totalBefore float64
@@ -600,10 +624,6 @@ func (s *DynamicSubscriptionService) Refresh(ctx context.Context, accountID int6
 	if err != nil {
 		return err
 	}
-	_, _, _, pending, err := dynamicPoolTotals(ctx, tx, accountID)
-	if err != nil {
-		return err
-	}
 	o.LocalStandardTotal = totalBefore
 	now := time.Now().UTC()
 	initial := p.Snapshot == nil
@@ -619,7 +639,10 @@ func (s *DynamicSubscriptionService) Refresh(ctx context.Context, accountID int6
 		}
 	}
 	var resetIDs []int64
-	if confirmed && pending == 0 {
+	if confirmed {
+		if err = absorbDynamicRequests(ctx, tx, accountID, p.Cycle, true); err != nil {
+			return err
+		}
 		rows, e := tx.QueryContext(ctx, `SELECT p.subscription_id,us.weekly_usage_usd FROM dynamic_subscription_policies p
  JOIN user_subscriptions us ON us.id=p.subscription_id WHERE p.account_id=$1 AND `+dynamicActiveMemberSQL+`
  ORDER BY p.subscription_id FOR UPDATE OF us,p`, accountID)
@@ -816,10 +839,25 @@ type DynamicQuotaReservation struct {
 	dispatched       atomic.Bool
 }
 
-func (r *DynamicQuotaReservation) MarkDispatched() {
-	if r != nil {
-		r.dispatched.Store(true)
+func (r *DynamicQuotaReservation) MarkDispatched() error {
+	if r == nil {
+		return nil
 	}
+	if r.service.stopping.Load() {
+		return ErrDynamicQuotaUnavailable
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	res, err := r.service.db.ExecContext(ctx, `UPDATE dynamic_quota_requests SET dispatched_at=COALESCE(dispatched_at,NOW())
+ WHERE id=$1 AND status='pending' AND operator_absorbed_at IS NULL`, r.ID)
+	if err != nil {
+		return ErrDynamicQuotaUnavailable.WithCause(err)
+	}
+	if n, err := res.RowsAffected(); err != nil || n != 1 {
+		return ErrDynamicQuotaUnavailable
+	}
+	r.dispatched.Store(true)
+	return nil
 }
 
 func (s *DynamicSubscriptionService) Begin(ctx context.Context, apiKeyID, accountID int64) (_ *DynamicQuotaReservation, returnErr error) {
@@ -830,6 +868,9 @@ func (s *DynamicSubscriptionService) Begin(ctx context.Context, apiKeyID, accoun
 	}()
 	if s == nil || s.disabled || apiKeyID <= 0 {
 		return nil, nil
+	}
+	if s.stopping.Load() {
+		return nil, ErrDynamicQuotaUnavailable
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -933,13 +974,23 @@ func (s *DynamicSubscriptionService) Begin(ctx context.Context, apiKeyID, accoun
 		billSub = subID.Int64
 	}
 	r := &DynamicQuotaReservation{ID: uuid.NewString(), AccountID: accountID, Cycle: p.Cycle, service: s}
-	_, err = tx.ExecContext(ctx, `INSERT INTO dynamic_quota_requests(id,account_id,cycle,subscription_id,api_key_id,hold_standard_usd) VALUES($1,$2,$3,$4,NULLIF($5,0),$6)`, r.ID, accountID, p.Cycle, billSub, apiKeyID, hold)
+	metadata, _ := ctx.Value(dynamicQuotaMetadataKey{}).(dynamicQuotaMetadata)
+	metadata.RequestID = resolveUsageBillingRequestID(ctx, "")
+	raw, err := json.Marshal(metadata)
+	if err != nil {
+		return nil, err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO dynamic_quota_requests(id,account_id,cycle,subscription_id,api_key_id,hold_standard_usd,
+ owner_user_id,owner_subscription_id,worker_id,lease_until,request_context)
+ SELECT $1,$2,$3,$4,NULLIF($5,0),$6,k.user_id,$7,$8,NOW()+INTERVAL '2 minutes',$9::jsonb FROM api_keys k WHERE k.id=$5`,
+		r.ID, accountID, p.Cycle, billSub, apiKeyID, hold, subID, s.workerID, string(raw))
 	if err != nil {
 		return nil, err
 	}
 	if err = tx.Commit(); err != nil {
 		return nil, err
 	}
+	s.active.Store(r.ID, struct{}{})
 	return r, nil
 }
 
@@ -947,6 +998,7 @@ func (r *DynamicQuotaReservation) Finish(result *OpenAIForwardResult, err error,
 	if r == nil {
 		return
 	}
+	defer r.service.active.Delete(r.ID)
 	if result == nil && !r.dispatched.Load() && !wroteOutput {
 		r.RejectBeforeForward()
 		return
@@ -954,22 +1006,59 @@ func (r *DynamicQuotaReservation) Finish(result *OpenAIForwardResult, err error,
 	if result != nil {
 		result.DynamicQuotaReservationID = r.ID
 	}
-	if result != nil && (result.Usage.InputTokens > 0 || result.Usage.OutputTokens > 0 || result.Usage.CacheReadInputTokens > 0 || result.Usage.CacheCreationInputTokens > 0 || result.Usage.ImageOutputTokens > 0 || result.ImageCount > 0 || result.VideoCount > 0) {
-		return
-	} // Billing settles atomically.
-	state := &UserModelRequestEvidence{}
-	state.Observe(result, err, wroteOutput)
 	status := "uncertain"
-	if state.RefundHTTP(200, err) {
+	outcome := "missing_usage"
+	if result.HasBillableUsage() {
+		status, outcome = "pending", "usage_received"
+	} else if dynamicQuotaKnownRejection(err) && !wroteOutput {
 		status = "rejected"
+		outcome = "upstream_rejected"
 		if result != nil {
 			result.DynamicQuotaReservationID = ""
 		}
 	}
+	if result != nil {
+		result.DynamicQuotaUncertain = status == "uncertain"
+	}
+	// This is evidence, not a bill: no estimates, prompts, headers or credentials.
+	evidence := map[string]any{"wrote_output": wroteOutput, "had_error": err != nil}
+	if result != nil {
+		evidence["request_id"], evidence["model"] = result.RequestID, result.Model
+		evidence["usage"], evidence["terminal_event"] = result.Usage, result.UpstreamTerminalEvent
+		evidence["image_count"], evidence["video_count"] = result.ImageCount, result.VideoCount
+	}
+	raw, _ := json.Marshal(evidence)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if _, e := r.service.db.ExecContext(ctx, `UPDATE dynamic_quota_requests SET status=$2,finished_at=NOW() WHERE id=$1 AND status='pending'`, r.ID, status); e != nil {
+	res, e := r.service.db.ExecContext(ctx, `UPDATE dynamic_quota_requests SET status=$2,finished_at=NOW(),outcome=$3,evidence=$4::jsonb
+ WHERE id=$1 AND status IN ('pending','uncertain') AND billing_receipt IS NULL AND operator_absorbed_at IS NULL`, r.ID, status, outcome, string(raw))
+	if e != nil {
 		logger.LegacyPrintf("service.dynamic_quota", "dynamic_quota_settlement_unavailable account=%d", r.AccountID)
+		return
+	}
+	// A late result belongs to its closed/waived request, never the new customer
+	// window. Keep separate metadata evidence and stop renewing its live hold.
+	if n, _ := res.RowsAffected(); n == 0 {
+		if _, e := r.service.db.ExecContext(ctx, `UPDATE dynamic_quota_requests SET lease_until=NULL,late_evidence=COALESCE(late_evidence,$2::jsonb)
+ WHERE id=$1 AND operator_absorbed_at IS NOT NULL`, r.ID, string(raw)); e != nil {
+			logger.LegacyPrintf("service.dynamic_quota", "dynamic_quota_late_evidence_unavailable account=%d", r.AccountID)
+		}
+	} else if status == "uncertain" {
+		logger.LegacyPrintf("service.dynamic_quota", "dynamic_quota_accounting_review_required account=%d reservation=%s", r.AccountID, r.ID)
+	}
+}
+
+func dynamicQuotaKnownRejection(err error) bool {
+	var rejected *UpstreamFailoverError
+	if !errors.As(err, &rejected) {
+		return false
+	}
+	// 5xx and transport-generated 502 do not prove that upstream did no work.
+	switch rejected.StatusCode {
+	case 400, 401, 403, 404, 405, 413, 422, 429:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -977,9 +1066,11 @@ func (r *DynamicQuotaReservation) RejectBeforeForward() {
 	if r == nil {
 		return
 	}
+	defer r.service.active.Delete(r.ID)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if _, err := r.service.db.ExecContext(ctx, `UPDATE dynamic_quota_requests SET status='rejected',finished_at=NOW() WHERE id=$1 AND status='pending'`, r.ID); err != nil {
+	if _, err := r.service.db.ExecContext(ctx, `UPDATE dynamic_quota_requests SET status='rejected',outcome='not_forwarded',finished_at=NOW()
+ WHERE id=$1 AND status='pending' AND billing_receipt IS NULL AND operator_absorbed_at IS NULL`, r.ID); err != nil {
 		logger.LegacyPrintf("service.dynamic_quota", "dynamic_quota_release_unavailable account=%d", r.AccountID)
 	}
 }
@@ -1009,8 +1100,10 @@ func SettleDynamicQuota(ctx context.Context, tx *sql.Tx, cmd *UsageBillingComman
 	var accountID, cycle int64
 	var subID, keyID sql.NullInt64
 	var status string
-	err = tx.QueryRowContext(ctx, `SELECT account_id,cycle,subscription_id,api_key_id,status FROM dynamic_quota_requests WHERE id=$1 FOR UPDATE`, cmd.DynamicQuotaReservationID).
-		Scan(&accountID, &cycle, &subID, &keyID, &status)
+	var windows []byte
+	var absorbed bool
+	err = tx.QueryRowContext(ctx, `SELECT account_id,cycle,subscription_id,api_key_id,status,billing_windows,operator_absorbed_at IS NOT NULL FROM dynamic_quota_requests WHERE id=$1 FOR UPDATE`, cmd.DynamicQuotaReservationID).
+		Scan(&accountID, &cycle, &subID, &keyID, &status, &windows, &absorbed)
 	if err != nil {
 		return err
 	}
@@ -1019,8 +1112,19 @@ func SettleDynamicQuota(ctx context.Context, tx *sql.Tx, cmd *UsageBillingComman
 		(subID.Valid && (cmd.SubscriptionID == nil || subID.Int64 != *cmd.SubscriptionID)) {
 		return ErrDynamicQuotaBinding
 	}
-	if status != "pending" && status != "uncertain" {
+	if absorbed || (status != "pending" && status != "uncertain") {
 		return ErrUsageBillingRequestConflict
+	}
+	if cmd.SubscriptionID != nil && len(windows) > 0 {
+		var current []byte
+		if err = tx.QueryRowContext(ctx, `SELECT jsonb_build_array(to_jsonb(us)->'daily_window_start',
+ to_jsonb(us)->'weekly_window_start',to_jsonb(us)->'monthly_window_start')
+ FROM user_subscriptions us WHERE us.id=$1 FOR UPDATE`, *cmd.SubscriptionID).Scan(&current); err != nil {
+			return err
+		}
+		if string(current) != string(windows) {
+			return ErrDynamicQuotaBinding // Never replay an old bill into a new native billing window.
+		}
 	}
 	if subID.Valid {
 		res, e := tx.ExecContext(ctx, `UPDATE dynamic_subscription_policies SET used_standard_usd=used_standard_usd+$3,updated_at=NOW()
@@ -1032,7 +1136,10 @@ func SettleDynamicQuota(ctx context.Context, tx *sql.Tx, cmd *UsageBillingComman
 			return ErrDynamicQuotaBinding
 		}
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE dynamic_quota_requests SET status='settled',standard_cost_usd=$2,actual_cost_usd=$3,finished_at=NOW() WHERE id=$1`,
+	// Retain the recovery marker until post-commit cache reconciliation succeeds.
+	_, err = tx.ExecContext(ctx, `UPDATE dynamic_quota_requests SET status='settled',outcome='billed',
+ billing_retry_at=CASE WHEN billing_receipt IS NOT NULL THEN COALESCE(billing_retry_at,NOW()) END,
+ standard_cost_usd=$2,actual_cost_usd=$3,finished_at=NOW() WHERE id=$1`,
 		cmd.DynamicQuotaReservationID, cmd.DynamicStandardCost, cmd.SubscriptionCost+cmd.BalanceCost)
 	if err != nil {
 		return err
@@ -1045,12 +1152,14 @@ func RejectDuplicateDynamicQuota(ctx context.Context, tx *sql.Tx, cmd *UsageBill
 	if _, err := lockDynamicPool(ctx, tx, cmd.AccountID); err != nil {
 		return err
 	}
-	_, err := tx.ExecContext(ctx, `UPDATE dynamic_quota_requests SET status='rejected',finished_at=NOW()
- WHERE id=$1 AND account_id=$2 AND api_key_id=$3 AND status IN ('pending','uncertain')`, cmd.DynamicQuotaReservationID, cmd.AccountID, cmd.APIKeyID)
+	_, err := tx.ExecContext(ctx, `UPDATE dynamic_quota_requests SET status='rejected',outcome='already_billed',
+ billing_retry_at=CASE WHEN billing_receipt IS NOT NULL THEN COALESCE(billing_retry_at,NOW()) END,finished_at=NOW()
+ WHERE id=$1 AND account_id=$2 AND api_key_id=$3 AND status IN ('pending','uncertain') AND operator_absorbed_at IS NULL`, cmd.DynamicQuotaReservationID, cmd.AccountID, cmd.APIKeyID)
 	return err
 }
 
 func (s *DynamicSubscriptionService) Start() {
+	go s.runAccountingRecovery()
 	go func() {
 		defer close(s.done)
 		ticker := time.NewTicker(time.Minute)
@@ -1061,7 +1170,8 @@ func (s *DynamicSubscriptionService) Start() {
 				return
 			case <-ticker.C:
 				ctx, cancel := context.WithTimeout(context.Background(), 50*time.Second)
-				rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT p.account_id FROM dynamic_subscription_policies p WHERE `+dynamicActiveMemberSQL+` ORDER BY p.account_id`)
+				rows, err := s.db.QueryContext(ctx, `SELECT p.account_id FROM dynamic_subscription_policies p WHERE `+dynamicActiveMemberSQL+`
+ UNION SELECT account_id FROM dynamic_quota_requests WHERE source_closed_at IS NULL AND status IN ('pending','uncertain') ORDER BY account_id`)
 				var ids []int64
 				if err == nil {
 					for rows.Next() {
@@ -1088,10 +1198,22 @@ func (s *DynamicSubscriptionService) Start() {
 
 func (s *DynamicSubscriptionService) Stop() {
 	if s != nil {
+		s.BeginShutdown()
 		s.stopOnce.Do(func() { close(s.stop) })
 		select {
 		case <-s.done:
 		case <-time.After(5 * time.Second):
 		}
+		select {
+		case <-s.recoveryDone:
+		case <-time.After(time.Second):
+		}
+	}
+}
+
+// Called before http.Server.Shutdown: hijacked WS sessions can still send turns.
+func (s *DynamicSubscriptionService) BeginShutdown() {
+	if s != nil {
+		s.stopping.Store(true)
 	}
 }

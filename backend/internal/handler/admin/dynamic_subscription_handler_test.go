@@ -34,3 +34,15 @@ func TestDynamicQuotaApprovalRejectsInvalidInputBeforeAccessingStore(t *testing.
 		require.Equal(t, "no-store", r.Header().Get("Cache-Control"))
 	}
 }
+
+func TestDynamicQuotaAbsorptionRejectsInvalidQueries(t *testing.T) {
+	h := NewSubscriptionHandler(nil)
+	router := gin.New()
+	router.GET("/", h.GetAbsorbedUsage)
+	for _, q := range []string{"user_id=-1", "group_id=abc", "page=0", "page_size=101", "scope=all", "summary_only=invalid", "page=99999999999999999999999"} {
+		r := httptest.NewRecorder()
+		router.ServeHTTP(r, httptest.NewRequest(http.MethodGet, "/?"+q, nil))
+		require.Equal(t, 400, r.Code, q)
+		require.Equal(t, "no-store", r.Header().Get("Cache-Control"))
+	}
+}

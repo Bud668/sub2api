@@ -57,13 +57,48 @@ describe('dynamic quota settings', () => {
     await wrapper.get('#dynamic-source').setValue('4')
     await wrapper.get('#dynamic-source').setValue('5')
     await wrapper.get('#dynamic-cap').setValue(450)
-    save.mockRejectedValue({ response: { data: { reason: 'DYNAMIC_QUOTA_CHANGED' } } })
+    save.mockRejectedValue({ status: 409, code: 409, reason: 'DYNAMIC_QUOTA_CHANGED' })
     await wrapper.get('form').trigger('submit'); await flushPromises()
     expect(wrapper.get('[role=alert]').text()).toContain('配置已被其他操作修改')
     expect((wrapper.get('#dynamic-cap').element as HTMLInputElement).value).toBe('450')
     expect(save.mock.calls[0][1].account_id).toBe(5)
     expect(wrapper.emitted('close')).toBeUndefined()
     expect(wrapper.emitted('saved')).toBeUndefined()
+  })
+
+  it.each([
+    ['DYNAMIC_QUOTA_REQUESTS_PENDING', zh.dynamicQuota.pending],
+    ['DYNAMIC_QUOTA_BINDING_CONFLICT', zh.dynamicQuota.bindingError],
+    ['DYNAMIC_QUOTA_UNAVAILABLE', zh.dynamicQuota.unavailable],
+    ['UNRECOGNIZED_ERROR', zh.dynamicQuota.failed]
+  ])('shows the normalized API error %s and preserves the unsaved form', async (reason, message) => {
+    const wrapper = mountDialog(); await flushPromises()
+    await wrapper.get('#dynamic-source').setValue('5')
+    await wrapper.get('#dynamic-cap').setValue(600)
+    await wrapper.get('[data-testid=dynamic-enable]').setValue(true)
+    save.mockRejectedValue({ status: 409, code: 409, reason })
+    await wrapper.get('form').trigger('submit'); await flushPromises()
+    expect(wrapper.get('[role=alert]').text()).toBe(message)
+    expect((wrapper.get('#dynamic-cap').element as HTMLInputElement).value).toBe('600')
+    expect((wrapper.get('[data-testid=dynamic-enable]').element as HTMLInputElement).checked).toBe(true)
+    expect(wrapper.emitted('saved')).toBeUndefined()
+    expect(wrapper.emitted('close')).toBeUndefined()
+  })
+
+  it('shows subscription holds before first activation and refreshes without discarding edits', async () => {
+    get.mockResolvedValue({ ...initial(), subscription_pending_requests: 3, subscription_uncertain_requests: 10, subscription_reserved_standard_usd: 29.60372 })
+    const wrapper = mountDialog(); await flushPromises()
+    expect(wrapper.get('[data-testid=subscription-requests]').text()).toContain('3 / 10')
+    expect(wrapper.get('[data-testid=subscription-requests]').text()).toContain('$29.60')
+    expect(wrapper.find('[data-testid=pool-requests]').exists()).toBe(false)
+    await wrapper.get('#dynamic-source').setValue('5')
+    await wrapper.get('#dynamic-cap').setValue(600)
+    get.mockResolvedValue({ ...initial(), subscription_pending_requests: 0, subscription_uncertain_requests: 10, subscription_reserved_standard_usd: 21.681536 })
+    await wrapper.get('[data-testid=subscription-requests] button').trigger('click'); await flushPromises()
+    expect(wrapper.get('[data-testid=subscription-requests]').text()).toContain('0 / 10')
+    expect((wrapper.get('#dynamic-cap').element as HTMLInputElement).value).toBe('600')
+    expect((wrapper.get('#dynamic-source').element as HTMLSelectElement).value).toBe('5')
+    expect(save).not.toHaveBeenCalled()
   })
 
   const review = (): DynamicQuotaAdminStatus => {
@@ -121,7 +156,7 @@ describe('dynamic quota settings', () => {
 
   it('requires renewed acknowledgment after a stale approval is rejected', async () => {
     get.mockResolvedValue(review())
-    approve.mockRejectedValue({ response: { data: { reason: 'DYNAMIC_QUOTA_CHANGED' } } })
+    approve.mockRejectedValue({ status: 409, code: 409, reason: 'DYNAMIC_QUOTA_CHANGED' })
     const wrapper = mountDialog(); await flushPromises()
     await wrapper.get('[data-testid=capacity-acknowledge]').setValue(true)
     await wrapper.get('[data-testid=capacity-approve]').trigger('click'); await flushPromises()

@@ -159,6 +159,9 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	if result == nil {
 		return errors.New("openai usage result is nil")
 	}
+	if result.DynamicQuotaUncertain {
+		return ErrDynamicQuotaUnavailable
+	}
 	if s.rateLimitService != nil && input.Account != nil && input.Account.Platform == PlatformOpenAI {
 		s.rateLimitService.ResetOpenAI403Counter(ctx, input.Account.ID)
 	}
@@ -250,6 +253,9 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		pricingAt,
 	)
 	if err != nil {
+		if result.DynamicQuotaReservationID != "" {
+			return err // Missing pricing is not evidence of free upstream usage.
+		}
 		if !isUsagePricingUnavailableError(err) {
 			return err
 		}
@@ -335,6 +341,8 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	if result.OpenAIWSMode {
 		if upstreamRequestID := strings.TrimSpace(result.RequestID); upstreamRequestID != "" {
 			requestID = upstreamRequestID
+		} else if result.DynamicQuotaReservationID != "" {
+			requestID = "reservation:" + result.DynamicQuotaReservationID
 		}
 	}
 	// Async Grok video: always use the stable task id for dedup (status + content polls
@@ -508,11 +516,16 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	}()
 
 	if billingErr != nil {
+		if result.DynamicQuotaReservationID != "" {
+			return billingErr // Durable receipt retries; never insert a misleading $0 log.
+		}
 		usageLog.ActualCost = 0
 		writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.openai_gateway")
 		return billingErr
 	}
-	writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.openai_gateway")
+	if result.DynamicQuotaReservationID == "" {
+		writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.openai_gateway")
+	} // Reserved bills insert the usage log inside the billing transaction.
 
 	return nil
 }

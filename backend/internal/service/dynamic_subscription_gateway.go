@@ -7,16 +7,18 @@ import (
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
 )
 
 type dynamicQuotaSourceContextKey struct{}
 type dynamicQuotaForwardContextKey struct{}
 type dynamicQuotaRequestContextKey struct{}
 
-func markDynamicQuotaDispatched(ctx context.Context) {
+func markDynamicQuotaDispatched(ctx context.Context) error {
 	if r, ok := ctx.Value(dynamicQuotaRequestContextKey{}).(*DynamicQuotaReservation); ok {
-		r.MarkDispatched()
+		return r.MarkDispatched()
 	}
+	return nil
 }
 
 const OpsDynamicQuotaErrorKey = "ops_dynamic_quota_error"
@@ -81,17 +83,23 @@ func (s *OpenAIGatewayService) withDynamicQuotaForward(ctx context.Context, c *g
 	ctx = context.WithValue(ctx, dynamicQuotaRequestContextKey{}, r)
 	result, err := forward(ctx)
 	wrote := c != nil && c.Writer.Size() > size && c.Writer.Status() < 400
-	r.Finish(result, err, wrote)
+	evidenceErr := err
+	if mark := GetOpsCyberPolicy(c); mark != nil && result == nil && mark.UpstreamInTok == 0 && mark.UpstreamOutTok == 0 && mark.UpstreamStatus >= 400 && mark.UpstreamStatus < 500 {
+		evidenceErr = &UpstreamFailoverError{StatusCode: mark.UpstreamStatus}
+	}
+	r.Finish(result, evidenceErr, wrote)
 	return result, err
 }
 
 func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, account *Account, body []byte) (*OpenAIForwardResult, error) {
+	ctx = WithDynamicQuotaRequestMetadata(ctx, gjson.GetBytes(body, "model").String(), "/v1/responses", 0)
 	return s.withDynamicQuotaForward(ctx, c, account, func(inner context.Context) (*OpenAIForwardResult, error) {
 		return s.forwardDynamicQuotaChecked(inner, c, account, body)
 	})
 }
 
 func (s *OpenAIGatewayService) ForwardAsAnthropic(ctx context.Context, c *gin.Context, account *Account, body []byte, promptCacheKey, defaultMappedModel string) (*OpenAIForwardResult, error) {
+	ctx = WithDynamicQuotaRequestMetadata(ctx, gjson.GetBytes(body, "model").String(), "/v1/messages", 0)
 	return s.withDynamicQuotaForward(ctx, c, account, func(inner context.Context) (*OpenAIForwardResult, error) {
 		return s.forwardAsAnthropicDynamicQuotaChecked(inner, c, account, body, promptCacheKey, defaultMappedModel)
 	})

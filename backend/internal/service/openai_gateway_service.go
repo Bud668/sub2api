@@ -232,6 +232,7 @@ type OpenAIUsage struct {
 // OpenAIForwardResult represents the result of forwarding
 type OpenAIForwardResult struct {
 	DynamicQuotaReservationID string // Internal accounting token; never forwarded to clients.
+	DynamicQuotaUncertain     bool   // Missing upstream usage must not be settled as a zero-cost bill.
 	RequestID                 string
 	ResponseID                string
 	// UpstreamHeaders 是直接上游的响应头，用于按账户配置解析上游请求标识。
@@ -300,9 +301,15 @@ type OpenAIForwardResult struct {
 	wsAccountFailoverReplayInput []json.RawMessage
 }
 
-// SucceededForScheduling reports whether this result is an upstream success
-// that may clear model-scoped transient state. The zero value remains a success
-// for existing non-WS callers.
+// HasBillableUsage excludes unmetered output and conservative reservation estimates.
+func (r *OpenAIForwardResult) HasBillableUsage() bool {
+	return r != nil && (r.Usage.InputTokens > 0 || r.Usage.OutputTokens > 0 ||
+		r.Usage.CacheReadInputTokens > 0 || r.Usage.CacheCreationInputTokens > 0 ||
+		r.Usage.ImageInputTokens > 0 || r.Usage.ImageOutputTokens > 0 || r.ImageCount > 0 ||
+		r.VideoCount > 0 || r.SearchCount > 0 || r.WebSearchCalls > 0 || r.AudioUsage != nil)
+}
+
+// SucceededForScheduling reports whether this result may clear transient state.
 func (r *OpenAIForwardResult) SucceededForScheduling() bool {
 	if r == nil || !r.OpenAIWSMode || r.UpstreamTerminalEvent == "" {
 		return true

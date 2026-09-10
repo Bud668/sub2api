@@ -17,6 +17,9 @@ var ErrUsageBillingRequestConflict = errors.New("usage billing request fingerpri
 
 // UsageBillingCommand describes one billable request that must be applied at most once.
 type UsageBillingCommand struct {
+	// Only dynamic-quota bills persist this metadata-only receipt. No credentials,
+	// request bodies or related entity graphs may be included (see builder).
+	UsageLog                  *UsageLog `json:",omitempty"`
 	DynamicQuotaReservationID string
 	DynamicStandardCost       float64
 	RequestID                 string

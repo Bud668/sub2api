@@ -1,9 +1,23 @@
 export default {
   dynamicQuota: {
+    absorption: {
+      unknownTotal: '总金额未知', baseline: '接入前记录',
+      title: '站点承担', count: '{n} 条', total: '总金额', knownTotal: '已确认合计', unknownCount: '金额未知 {n} 条',
+      failed: '读取失败，请刷新重试', hint: '统计当前筛选下的全部记录，不限本页。金额为有凭证的标准费用折算；未知金额不按零计算，预占仅供参考。当前周期按各上游独立计算，确认重置后旧账归档、不追扣新周期。此处仅查看，不会扣款或核销。',
+      scope: '查看范围', current: '当前周期', history: '历史记录', archived: '已归档',
+      user: '用户 / 分组', source: '上游 / 周期', model: '模型', amount: '承担金额', reason: '处理原因', time: '时间 / 日志编号',
+      cycle: '周期 #{n}', unknown: '金额未知', reference: '原预占参考', requested: '请求', processed: '承担', previous: '上一页',
+      missingEvidence: '恢复后仍缺少完整计费凭证', cycleClosed: '上游确认重置，旧周期结案', operatorDecision: '管理员确认由站点承担', alreadyBilled: '已核实原账已计费，不再追加'
+    },
     title: '跟随上游动态额度', enable: '参与动态分配并跟随上游重置',
     optInHint: '默认关闭。开启者均计入份额，管理员也不例外；关闭者保留原规则，其真实消耗仍影响上游余量。开关切换不清空已用额度。',
     source: '绑定上游额度来源', chooseSource: '请选择上游账号', sourceUnavailable: '当前不在可选来源中',
     poolRequests: '此上游待结算 / 未知结果请求',
+    subscriptionRequests: '本订阅待结算 / 未知结果请求',
+    standardReserve: '未决预占（标准费用）',
+    reserveHint: '预占不是已扣款，也不是确定欠费。仅按已确认用量结算；新请求结束或失联后经过恢复期仍无完整凭证，由站点承担，原预占保留到该上游确认重置。',
+    refreshAccounting: '刷新账务状态',
+    poolRequestsHint: '此数包含同上游其他用户的未决及站点承担记录，不代表本订阅欠费。确认重置后旧账归档、不带入新周期；跨界仍在执行的请求仅保留临时执行保护。',
     capacityReviewTitle: '上游容量待管理员确认', trustedCapacity: '上次可信容量（0 表示尚未确认）', proposedCapacity: '待确认估算容量',
     capacityReviewHint: '首次容量估算或超过可信容量 20% 的增长不会自动生效。确认前至少需要 3 次独立查询；异常时冻结上调，可信剩余额度内仍可使用。此金额是标准计费容量估算，不是官方承诺。',
     capacityWaiting: '数据尚未稳定、查询未恢复或确认已过期，请稍后刷新状态。',
@@ -25,7 +39,7 @@ export default {
     cycleHint: '周期编号不是上游账号编号。同步、调额不清用量，只有绑定上游重置确认后才换周期。上游返回的时间仅供参考，可能变化；剩余可用还受计费份额和在途预占约束。',
     saved: '保存成功，已显示服务器确认的配置，可继续核对。', failed: '读取或保存失败，请刷新后重试；当前输入已保留。',
     conflict: '配置已被其他操作修改，请关闭并重新打开后核对；未覆盖他人的修改。',
-    pending: '仍有在途或待核对费用，暂不能切换配置。请等待结算；未知结果需运维核对，不会自动退回占用。',
+    pending: '仍有在途或待恢复账务，暂不能切换配置。请稍后刷新；已由站点承担的记录不再阻塞个人开关，不会退款或按预占扣款。',
     bindingError: '绑定与分组不一致，或试图变更已保存的来源。请核对账号归属。',
     unavailable: '尚未取得新鲜且身份一致的完整周额度，未启用修改。请核对来源并稍后重试。',
     statuses: { active: '同步正常', learning: '额度学习中', confirming: '确认上游重置中', settling: '等待旧请求结算', reset_unconfirmed: '重置信号待核对', identity_changed: '上游身份变更待核对', quota_unavailable: '额度数据待同步', growth_frozen: '上调已冻结，余量可用', invalid_billing_rate: '计费倍率待核对', upstream_reserve: '已到安全保留线', disabled: '未开启' }

@@ -331,6 +331,13 @@ func buildUsageBillingCommand(requestID string, usageLog *UsageLog, p *postUsage
 	}
 
 	cmd.Normalize()
+	if cmd.DynamicQuotaReservationID != "" && usageLog != nil {
+		entry := *usageLog
+		entry.User, entry.APIKey, entry.Account, entry.Group, entry.Subscription = nil, nil, nil, nil, nil
+		entry.ActualCost = cmd.SubscriptionCost + cmd.BalanceCost
+		entry.TotalCost = cmd.DynamicStandardCost
+		cmd.UsageLog = &entry
+	}
 	return cmd
 }
 

@@ -48,8 +48,15 @@
           <button type="button" class="btn btn-primary" :disabled="saving || !status.policy.enabled || !status.policy.capacity_approval_ready || !capacityAcknowledged || hasUnsavedChanges" data-testid="capacity-approve" @click="approveCapacity">{{ t('dynamicQuota.approveCapacity') }}</button>
         </div>
       </section>
-      <p v-if="status.pending_requests || status.uncertain_requests" class="rounded-lg bg-amber-50 p-3 text-xs leading-relaxed text-amber-800 dark:bg-amber-900/20 dark:text-amber-200">
-        {{ t('dynamicQuota.poolRequests') }} · {{ status.pending_requests || 0 }} / {{ status.uncertain_requests || 0 }}<br />{{ t('dynamicQuota.pending') }}
+      <section v-if="status.subscription_pending_requests || status.subscription_uncertain_requests" class="space-y-2 rounded-lg bg-amber-50 p-3 text-xs leading-relaxed text-amber-800 dark:bg-amber-900/20 dark:text-amber-200" data-testid="subscription-requests">
+        <p>{{ t('dynamicQuota.subscriptionRequests') }} · {{ status.subscription_pending_requests || 0 }} / {{ status.subscription_uncertain_requests || 0 }}</p>
+        <p>{{ t('dynamicQuota.standardReserve') }}：${{ (status.subscription_reserved_standard_usd || 0).toFixed(2) }}</p>
+        <p>{{ t('dynamicQuota.reserveHint') }}</p>
+        <p>{{ t('dynamicQuota.pending') }}</p>
+        <button type="button" class="btn btn-secondary" :disabled="saving" @click="refreshStatus">{{ t('dynamicQuota.refreshAccounting') }}</button>
+      </section>
+      <p v-if="status.pending_requests || status.uncertain_requests" class="rounded-lg bg-gray-50 p-3 text-xs leading-relaxed text-gray-600 dark:bg-dark-800 dark:text-gray-300" data-testid="pool-requests">
+        {{ t('dynamicQuota.poolRequests') }} · {{ status.pending_requests || 0 }} / {{ status.uncertain_requests || 0 }}<br />{{ t('dynamicQuota.poolRequestsHint') }}
       </p>
     </form>
     <div class="mt-4 min-h-10 text-sm" aria-live="polite" aria-atomic="true">
@@ -72,6 +79,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { adminAPI } from '@/api/admin'
 import type { DynamicQuotaAdminStatus, DynamicQuotaInput, UserSubscription } from '@/types'
+import { extractApiErrorCode } from '@/utils/apiError'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import DynamicQuotaCard from '@/components/common/DynamicQuotaCard.vue'
 import Icon from '@/components/icons/Icon.vue'
@@ -97,7 +105,7 @@ const hasUnsavedChanges = computed(() => {
   return !p || (Object.keys(form) as (keyof DynamicQuotaInput)[]).some(key => form[key] !== (p[key] ?? (key === 'account_id' ? 0 : undefined)))
 })
 const errorMessage = (err: unknown) => {
-  const code = (err as { response?: { data?: { reason?: string } } })?.response?.data?.reason
+  const code = extractApiErrorCode(err)
   if (code === 'DYNAMIC_QUOTA_CHANGED') return t('dynamicQuota.conflict')
   if (code === 'DYNAMIC_QUOTA_REQUESTS_PENDING') return t('dynamicQuota.pending')
   if (code === 'DYNAMIC_QUOTA_BINDING_CONFLICT') return t('dynamicQuota.bindingError')

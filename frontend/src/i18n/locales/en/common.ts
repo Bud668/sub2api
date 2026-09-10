@@ -1,9 +1,23 @@
 export default {
   dynamicQuota: {
+    absorption: {
+      unknownTotal: 'Total amount unknown', baseline: 'Before initial baseline',
+      title: 'Site-covered usage', count: '{n} requests', total: 'Total', knownTotal: 'Verified subtotal', unknownCount: '{n} unpriced',
+      failed: 'Unable to load; refresh to retry', hint: 'Totals cover all matching records, not just this page. Amounts use verified standard-cost receipts. Unknown amounts are not zero; original holds are reference estimates only. Each source has its own cycle. Confirmed resets archive old liabilities without charging the new cycle. Viewing never charges or writes off usage.',
+      scope: 'Scope', current: 'Current cycles', history: 'History', archived: 'Archived',
+      user: 'User / group', source: 'Source / cycle', model: 'Model', amount: 'Covered amount', reason: 'Reason', time: 'Time / log ID',
+      cycle: 'Cycle #{n}', unknown: 'Unknown amount', reference: 'Original hold estimate', requested: 'Requested', processed: 'Covered', previous: 'Previous',
+      missingEvidence: 'Recovery could not obtain a complete billing receipt', cycleClosed: 'Verified upstream reset closed the old cycle', operatorDecision: 'Explicit operator decision', alreadyBilled: 'Original charge verified; no additional charge'
+    },
     title: 'Upstream-linked dynamic quota', enable: 'Join allocation and follow upstream resets',
     optInHint: 'Off by default. Every opted-in subscription counts, including administrators. Others retain their rules; their actual consumption still reduces upstream capacity. Toggling never clears usage.',
     source: 'Bound quota source', chooseSource: 'Choose an upstream account', sourceUnavailable: 'Not currently an eligible source',
     poolRequests: 'Source requests: pending / unknown outcome',
+    subscriptionRequests: 'This subscription: pending / unknown outcome',
+    standardReserve: 'Unresolved reserve (standard cost)',
+    reserveHint: 'A reserve is neither a charge nor a confirmed debt. Verified usage is billed. After a new request ends or its worker is lost, missing receipts go through recovery before site absorption. Source holds remain until a verified upstream reset.',
+    refreshAccounting: 'Refresh accounting status',
+    poolRequestsHint: 'Includes other users and site-covered records, not this subscription’s debt. A verified reset archives old liabilities without carrying them forward; genuinely running cross-boundary turns retain only temporary execution protection.',
     capacityReviewTitle: 'Upstream capacity needs administrator approval', trustedCapacity: 'Last trusted capacity (0 = unconfirmed)', proposedCapacity: 'Proposed capacity estimate',
     capacityReviewHint: 'The first capacity estimate and growth above 20% require approval after at least 3 independent queries. Anomalies freeze increases; requests within the trusted remaining budget can continue. This is an estimate in standard billing units, not an upstream guarantee.',
     capacityWaiting: 'Observations are not stable, queries have not recovered, or confirmation expired. Refresh later.',
@@ -25,7 +39,7 @@ export default {
     cycleHint: 'The cycle number is not an upstream account ID. Syncs and adjustments preserve usage; only a confirmed bound-source reset changes the cycle. Upstream-reported dates are indicative and may change. Available funds also honor billing shares and in-flight reserves.',
     saved: 'Saved successfully. Server-confirmed settings remain open for review.', failed: 'Unable to load or save. Retry after refreshing; your input has been kept.',
     conflict: 'Settings changed elsewhere. Close and reopen to review; no concurrent changes were overwritten.',
-    pending: 'In-flight or unresolved charges prevent this change. Wait for settlement; unknown outcomes need operator reconciliation and are never automatically refunded.',
+    pending: 'In-flight or recovering charges prevent this change. Refresh shortly; site-covered records no longer block the personal toggle. No refunds or estimated-hold charges are issued.',
     bindingError: 'Source and group do not match, or an existing binding was changed. Check account membership.',
     unavailable: 'Fresh, identity-matched weekly quota data is unavailable. The change was not enabled. Check the source and retry.',
     statuses: { active: 'Synchronized', learning: 'Learning capacity', confirming: 'Confirming reset', settling: 'Waiting for settlement', reset_unconfirmed: 'Reset needs review', identity_changed: 'Identity needs review', quota_unavailable: 'Waiting for quota data', growth_frozen: 'Increases frozen; remaining budget usable', invalid_billing_rate: 'Review billing rate', upstream_reserve: 'Safety reserve reached', disabled: 'Disabled' }

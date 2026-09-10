@@ -775,7 +775,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		if service.GetOpsCyberPolicy(c) != nil {
 			cyberBlockBodyHTTP = sessionHashBody
 		}
-		h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, reqModel, service.ContentModerationProtocolOpenAIResponses, err != nil, cyberBlockBodyHTTP, clientRequestedUsageFields(c, channelMapping, reqModel, ""), service.HashUsageRequestPayload(body))
+		h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, reqModel, service.ContentModerationProtocolOpenAIResponses, err != nil && !result.HasBillableUsage(), cyberBlockBodyHTTP, clientRequestedUsageFields(c, channelMapping, reqModel, ""), service.HashUsageRequestPayload(body))
 		forwardDurationMs := time.Since(forwardStart).Milliseconds()
 		upstreamLatencyMs, _ := getContextInt64(c, service.OpsUpstreamLatencyMsKey)
 		responseLatencyMs := forwardDurationMs
@@ -857,7 +857,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 				)
 			} else {
 				var failoverErr *service.UpstreamFailoverError
-				if errors.As(err, &failoverErr) {
+				if errors.As(err, &failoverErr) && !result.HasBillableUsage() {
 					if failoverClientGone(c) {
 						reqLog.Info("openai.failover_aborted_client_disconnected",
 							zap.Int64("account_id", account.ID),
@@ -1357,7 +1357,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		if service.GetOpsCyberPolicy(c) != nil {
 			cyberBlockBodyMsg = body
 		}
-		h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, reqModel, service.ContentModerationProtocolAnthropicMessages, err != nil, cyberBlockBodyMsg, clientRequestedUsageFields(c, channelMappingMsg, reqModel, ""), service.HashUsageRequestPayload(body))
+		h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, reqModel, service.ContentModerationProtocolAnthropicMessages, err != nil && !result.HasBillableUsage(), cyberBlockBodyMsg, clientRequestedUsageFields(c, channelMappingMsg, reqModel, ""), service.HashUsageRequestPayload(body))
 		forwardDurationMs := time.Since(forwardStart).Milliseconds()
 		upstreamLatencyMs, _ := getContextInt64(c, service.OpsUpstreamLatencyMsKey)
 		responseLatencyMs := forwardDurationMs
@@ -1423,7 +1423,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 				)
 			} else {
 				var failoverErr *service.UpstreamFailoverError
-				if errors.As(err, &failoverErr) {
+				if errors.As(err, &failoverErr) && !result.HasBillableUsage() {
 					if failoverClientGone(c) {
 						reqLog.Info("openai_messages.failover_aborted_client_disconnected",
 							zap.Int64("account_id", account.ID),
@@ -2784,14 +2784,12 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		// turn 级定价：首轮回退到 TurnStarted 的所属 turn 时刻；后续 turn 由
 		// BeforeTurn 重新冻结 pricingAt 并按最新门复核当前账号。
 		var turnPricing openAIWSTurnPricing
-		beginDynamicTurn := func(turn int) error {
-			r, err := h.gatewayService.DynamicQuotas.Begin(ctx, apiKey.ID, account.ID)
+		beginDynamicTurn := func(turn int, model string) error {
+			turnCtx := service.WithDynamicQuotaRequestMetadata(ctx, model, GetInboundEndpoint(c), turn)
+			r, err := h.gatewayService.DynamicQuotas.Begin(turnCtx, apiKey.ID, account.ID)
 			if err != nil {
 				return writeUserModelPolicyWSError(c, ctx, wsConn, err)
 			}
-			// WS adapters can return before a terminal event. Unknown outcomes
-			// retain their hold; known local failures explicitly release it below.
-			r.MarkDispatched()
 			dynamicTurnsMu.Lock()
 			dynamicTurns[turn] = r
 			dynamicTurnsMu.Unlock()
@@ -2805,6 +2803,12 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			MaxReasoningEffortOverLimit: maxReasoningEffortOverLimit,
 			ReasoningEffortMappings:     reasoningEffortMappings,
 			TurnStarted:                 recordTurnStart,
+			BeforeForward: func(turn int) error {
+				dynamicTurnsMu.Lock()
+				r := dynamicTurns[turn]
+				dynamicTurnsMu.Unlock()
+				return r.MarkDispatched()
+			},
 			BeforeRequest: func(turn int, payload []byte, originalModel string) error {
 				if err := h.checkOpenAIWSCyberUserAccess(ctx, apiKey); err != nil {
 					return err
@@ -2847,7 +2851,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 					if err := modelQuotaTurns.Begin(ctx, turn, model); err != nil {
 						return writeUserModelPolicyWSError(c, ctx, wsConn, err)
 					}
-					return beginDynamicTurn(turn)
+					return beginDynamicTurn(turn, model)
 				}
 				if key := findBlockedCyberSessionKey(ctx, h.gatewayService, apiKey.ID, c, payload); key != "" {
 					closeStatus := writeCyberSessionBlockedWSError(ctx, wsConn, key)
@@ -2861,7 +2865,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				if err := modelQuotaTurns.Begin(ctx, turn, model); err != nil {
 					return writeUserModelPolicyWSError(c, ctx, wsConn, err)
 				}
-				return beginDynamicTurn(turn)
+				return beginDynamicTurn(turn, model)
 			},
 			MapRequestModel: func(turn int, originalModel string) (mapped string, mapErr error) {
 				defer func() {
@@ -2972,7 +2976,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				}
 				turnUsageFields := turnMapping.ToUsageFields(turnRequestedModel, turnUpstreamModel)
 				cyberMarked := service.GetOpsCyberPolicy(c) != nil
-				h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, turnRequestedModel, service.ContentModerationProtocolOpenAIResponses, turnErr != nil, cyberBlockBody, turnUsageFields, requestPayloadHash)
+				h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, turnRequestedModel, service.ContentModerationProtocolOpenAIResponses, turnErr != nil && !result.HasBillableUsage(), cyberBlockBody, turnUsageFields, requestPayloadHash)
 				cyberBlockedThisConn, cyberBlockPendingAfterFailover = advanceOpenAIWSCyberBlockState(
 					cyberBlockedThisConn,
 					cyberBlockPendingAfterFailover,
@@ -2980,15 +2984,11 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 					turnErr,
 				)
 				if turnErr != nil {
-					if result == nil || result.ImageCount <= 0 {
+					if !result.HasBillableUsage() {
 						return
 					}
-					// cyber 命中时该 turn 的用量已由 recordCyberPolicyIfMarked(forwardErrored=true)
-					// 按真实 token 记录，这里不再走下方 RecordUsage，避免对同一 turn 双写/双扣费。
-					if service.GetOpsCyberPolicy(c) != nil {
-						return
-					}
-					reqLog.Warn("openai.websocket_partial_error_with_image_result",
+					// Known usage (including cyber) uses this one canonical billing path.
+					reqLog.Warn("openai.websocket_partial_error_with_usage",
 						zap.Int64("account_id", account.ID),
 						zap.Int("image_count", result.ImageCount),
 						zap.Error(turnErr),
@@ -3336,7 +3336,12 @@ func (h *OpenAIGatewayHandler) submitUsageRecordTask(parent context.Context, tas
 }
 
 func (h *OpenAIGatewayHandler) submitOpenAIUsageRecordTask(parent context.Context, result *service.OpenAIForwardResult, task service.UsageRecordTask) {
-	// Money-critical bills never drop on pool overflow: media, search surcharge, voice.
+	// Persist the priced receipt before returning: an accepted memory-queue task
+	// can still be lost on restart. The response has already been streamed out.
+	if result != nil && result.DynamicQuotaReservationID != "" {
+		runOpenAIUsageRecordTaskInline(wrapUsageRecordTaskContext(parent, task))
+		return
+	}
 	if result != nil && (result.ImageCount > 0 || result.VideoCount > 0 ||
 		result.SearchCount > 0 || result.WebSearchCalls > 0 || result.AudioUsage != nil) {
 		h.submitMandatoryUsageRecordTask(parent, task)
@@ -3357,6 +3362,13 @@ func (h *OpenAIGatewayHandler) submitMandatoryUsageRecordTask(parent context.Con
 		logger.L().With(
 			zap.String("component", "handler.openai_gateway.usage"),
 		).Warn("openai.usage_record_task_mandatory_sync_fallback")
+	}
+	runOpenAIUsageRecordTaskInline(task)
+}
+
+func runOpenAIUsageRecordTaskInline(task service.UsageRecordTask) {
+	if task == nil {
+		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

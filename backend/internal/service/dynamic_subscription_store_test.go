@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -70,6 +71,10 @@ func dynamicTestStore(t *testing.T) (*DynamicSubscriptionService, *sql.DB) {
 	require.NoError(t, err)
 	dynamicExec(t, db, string(migration))
 	dynamicExec(t, db, string(migration))
+	recoveryMigration, err := os.ReadFile("../../migrations/239_dynamic_quota_billing_recovery.sql")
+	require.NoError(t, err)
+	dynamicExec(t, db, string(recoveryMigration))
+	dynamicExec(t, db, string(recoveryMigration))
 	s := NewDynamicSubscriptionService(db, dynamicTestAccounts{}, nil, nil)
 	s.fetch = func(_ context.Context, id int64) (DynamicQuotaObservation, error) {
 		return dynamicTestObservation(id, 50, time.Now().UTC().Add(6*24*time.Hour), time.Now().UTC()), nil
@@ -187,7 +192,7 @@ func TestDynamicQuotaPostgresIsolationAndReset(t *testing.T) {
 	// unrelated subscription. Rebinding requires a separate reviewed migration.
 	dynamicExec(t, db, `UPDATE user_subscriptions SET group_id=8 WHERE id=12`)
 	// A genuine early reset: new 7d boundary + recovered percentage + two
-	// independent observations. Pending billing delays only source 4's switch.
+	// independent observations. Verified bills settle before the cycle closes.
 	now := time.Now().UTC()
 	newReset := now.Add(7*24*time.Hour - time.Minute)
 	fetched := now.Add(-50 * time.Second)
@@ -197,17 +202,15 @@ func TestDynamicQuotaPostgresIsolationAndReset(t *testing.T) {
 	// The baseline is older than the candidate, without sleeping in tests.
 	dynamicExec(t, db, `UPDATE dynamic_quota_pools SET state=jsonb_set(state,'{snapshot,fetched_at}',to_jsonb($2::text)) WHERE account_id=$1`, 4, now.Add(-2*time.Minute).Format(time.RFC3339Nano))
 	require.NoError(t, s.Refresh(ctx, 4))
-	fetched = now
-	require.NoError(t, s.Refresh(ctx, 4))
 	q, err = s.Load(ctx, 11)
 	require.NoError(t, err)
-	require.Equal(t, "settling", q.Status)
+	require.Equal(t, "confirming", q.Status)
 	require.Equal(t, int64(1), q.Cycle)
 	require.Equal(t, 20.0, q.UsedUSD)
 	_, err = s.Begin(ctx, 104, 4)
 	require.ErrorIs(t, err, ErrDynamicQuotaUnavailable)
 	dynamicTestSettle(t, db, r, 101, 11, 2, 3)
-	fetched = now.Add(time.Second)
+	fetched = now
 	require.NoError(t, s.Refresh(ctx, 4))
 	q, err = s.Load(ctx, 11)
 	require.NoError(t, err)
@@ -262,6 +265,40 @@ func TestDynamicQuotaPostgresActivationAndToggle(t *testing.T) {
 	dynamicExec(t, db, `UPDATE account_groups SET account_id=5 WHERE account_id=4`)
 	_, err = s.Begin(ctx, 101, 5)
 	require.ErrorIs(t, err, ErrDynamicQuotaBinding)
+}
+
+func TestDynamicQuotaPostgresAdminShowsUnboundSubscriptionHolds(t *testing.T) {
+	s, db := dynamicTestStore(t)
+	ctx := context.Background()
+	for _, key := range []int64{101, 104, 102, 201} {
+		account := int64(4)
+		if key == 201 {
+			account = 5
+		}
+		r, err := s.Begin(ctx, key, account)
+		require.NoError(t, err)
+		if key == 104 {
+			r.MarkDispatched()
+			r.Finish(nil, context.Canceled, false)
+		}
+	}
+	status, err := s.AdminStatus(ctx, 11)
+	require.NoError(t, err)
+	require.False(t, status.Policy.Enabled)
+	require.Zero(t, status.Policy.AccountID)
+	raw, err := json.Marshal(status)
+	require.NoError(t, err)
+	var fields map[string]any
+	require.NoError(t, json.Unmarshal(raw, &fields))
+	require.Equal(t, float64(1), fields["subscription_pending_requests"])
+	require.Equal(t, float64(1), fields["subscription_uncertain_requests"])
+	require.Equal(t, 0.02, fields["subscription_reserved_standard_usd"])
+	// Read-only diagnostics must not enable a policy or release old accounting.
+	var policies, unresolved int
+	require.NoError(t, db.QueryRow(`SELECT count(*) FROM dynamic_subscription_policies`).Scan(&policies))
+	require.NoError(t, db.QueryRow(`SELECT count(*) FROM dynamic_quota_requests WHERE status IN ('pending','uncertain')`).Scan(&unresolved))
+	require.Zero(t, policies)
+	require.Equal(t, 4, unresolved)
 }
 
 func TestDynamicQuotaPostgresAppliedAllowance(t *testing.T) {

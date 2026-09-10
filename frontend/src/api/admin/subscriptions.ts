@@ -15,6 +15,51 @@ import type {
   PaginatedResponse
 } from '@/types'
 
+export interface AbsorbedUsageFilters {
+  user_id?: number
+  group_id?: number
+  status?: string
+  platform?: string
+}
+export interface AbsorbedUsageSummary {
+  requests: number
+  known_requests: number
+  known_standard_usd: number
+  unknown_requests: number
+}
+export interface AbsorbedUsageRecord {
+  id: string
+  user_id: number
+  email: string
+  subscription_id: number
+  group_id: number
+  group_name: string
+  account_id: number
+  account_name: string
+  cycle: number
+  model: string
+  reason: string
+  known_standard_usd: number | null
+  reference_hold_usd: number
+  started_at: string
+  absorbed_at: string
+  closed_at: string | null
+}
+export interface AbsorbedUsageReport {
+  summary: AbsorbedUsageSummary
+  items: AbsorbedUsageRecord[]
+  page: number
+  page_size: number
+  pages: number
+}
+export async function getAbsorbedUsage(
+  params: AbsorbedUsageFilters & { scope: 'current' | 'history'; summary_only?: boolean; page?: number; page_size?: number },
+  signal?: AbortSignal
+): Promise<AbsorbedUsageReport> {
+  const { data } = await apiClient.get<AbsorbedUsageReport>('/admin/subscriptions/absorbed-usage', { params, signal })
+  return data
+}
+
 /**
  * List all subscriptions with pagination
  * @param page - Page number (default: 1)

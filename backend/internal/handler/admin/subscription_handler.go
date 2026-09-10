@@ -41,6 +41,54 @@ func NewSubscriptionHandler(subscriptionService *service.SubscriptionService) *S
 	}
 }
 
+// GET only: viewing the toolbar/details never settles, waives or resets money.
+func (h *SubscriptionHandler) GetAbsorbedUsage(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	f := service.DynamicAbsorptionFilter{Scope: c.DefaultQuery("scope", "current"), Status: c.Query("status"), Platform: c.Query("platform"), Page: 1, PageSize: 20}
+	for name, target := range map[string]*int64{"user_id": &f.UserID, "group_id": &f.GroupID} {
+		if raw, exists := c.GetQuery(name); exists {
+			id, err := strconv.ParseInt(raw, 10, 64)
+			if err != nil || id <= 0 {
+				response.BadRequest(c, "Invalid filter ID")
+				return
+			}
+			*target = id
+		}
+	}
+	for name, target := range map[string]*int{"page": &f.Page, "page_size": &f.PageSize} {
+		if raw, exists := c.GetQuery(name); exists {
+			n, err := strconv.Atoi(raw)
+			if err != nil || n < 1 || n > 1000000 || name == "page_size" && n > 100 {
+				response.BadRequest(c, "Invalid pagination")
+				return
+			}
+			*target = n
+		}
+	}
+	if raw, exists := c.GetQuery("summary_only"); exists {
+		v, err := strconv.ParseBool(raw)
+		if err != nil {
+			response.BadRequest(c, "Invalid summary flag")
+			return
+		}
+		f.SummaryOnly = v
+	}
+	if f.Scope != "current" && f.Scope != "history" || len(f.Platform) > 32 || len(f.Status) > 32 {
+		response.BadRequest(c, "Invalid accounting filters")
+		return
+	}
+	if h.subscriptionService == nil || h.subscriptionService.DynamicQuotas == nil {
+		response.ErrorFrom(c, service.ErrDynamicQuotaUnavailable)
+		return
+	}
+	out, err := h.subscriptionService.DynamicQuotas.AbsorptionReport(c.Request.Context(), f)
+	if err != nil {
+		response.ErrorFrom(c, service.ErrDynamicQuotaUnavailable.WithCause(err))
+		return
+	}
+	response.Success(c, out)
+}
+
 // Admin middleware owns authentication; no user endpoint can change a binding.
 func (h *SubscriptionHandler) GetDynamicQuota(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")

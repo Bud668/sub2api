@@ -2088,6 +2088,9 @@ export interface DynamicQuotaAdminStatus {
   sources: { id: number; name: string }[]
   pending_requests?: number
   uncertain_requests?: number
+  subscription_pending_requests?: number
+  subscription_uncertain_requests?: number
+  subscription_reserved_standard_usd?: number
 }
 
 export interface UserSubscription {
