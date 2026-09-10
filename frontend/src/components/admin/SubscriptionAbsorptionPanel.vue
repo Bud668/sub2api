@@ -1,11 +1,29 @@
 <template>
-  <button type="button" class="btn btn-secondary min-h-12 w-72 max-w-full flex-col items-start gap-0.5 border-amber-300 text-left tabular-nums dark:border-amber-800" data-testid="absorption-summary" :aria-busy="summaryLoading" aria-haspopup="dialog" :title="t('dynamicQuota.absorption.hint')" @click="open = true">
-    <span class="font-semibold">{{ t('dynamicQuota.absorption.title') }}<span v-if="summary"> · {{ t('dynamicQuota.absorption.count', { n: summary.requests }) }}</span></span>
-    <span class="min-h-4 text-xs" aria-live="polite">
-      <template v-if="summaryLoading">{{ t('common.loading') }}</template>
-      <template v-else-if="summaryError">{{ t('dynamicQuota.absorption.failed') }}</template>
-      <template v-else-if="summary">{{ amountText(summary) }}<span v-if="summary.unknown_requests" class="ml-2 text-amber-700 dark:text-amber-300">{{ t('dynamicQuota.absorption.unknownCount', { n: summary.unknown_requests }) }}</span></template>
+  <button
+    type="button"
+    class="btn btn-secondary w-full max-w-full border-amber-200 bg-amber-50/70 px-3 text-left shadow-none hover:bg-amber-100/70 dark:border-amber-900/60 dark:bg-amber-900/20 dark:hover:bg-amber-900/30 sm:w-auto"
+    data-testid="absorption-summary"
+    :aria-busy="summaryLoading"
+    :aria-expanded="open"
+    aria-haspopup="dialog"
+    :title="t('dynamicQuota.absorption.hint')"
+    @click="open = true"
+  >
+    <span class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1" aria-live="polite">
+      <span class="whitespace-nowrap">{{ t('dynamicQuota.absorption.title') }}</span>
+      <span v-if="summary" class="whitespace-nowrap tabular-nums text-gray-500 dark:text-gray-400">
+        <span aria-hidden="true">· </span>{{ t('dynamicQuota.absorption.count', { n: summary.requests }) }}
+      </span>
+      <span v-if="summaryLoading" class="text-gray-500 dark:text-gray-400">{{ t('common.loading') }}</span>
+      <span v-else-if="summaryError" class="text-red-600 dark:text-red-400">{{ t('dynamicQuota.absorption.failed') }}</span>
+      <template v-else-if="summary">
+        <span class="font-semibold tabular-nums text-gray-900 dark:text-gray-100">{{ amountText(summary) }}</span>
+        <span v-if="summary.unknown_requests" class="rounded-md bg-amber-100/80 px-1.5 text-xs leading-5 tabular-nums text-amber-800 dark:bg-amber-900/50 dark:text-amber-200">
+          {{ t('dynamicQuota.absorption.unknownCount', { n: summary.unknown_requests }) }}
+        </span>
+      </template>
     </span>
+    <Icon name="chevronRight" size="sm" class="ml-auto shrink-0 text-amber-600 dark:text-amber-400" aria-hidden="true" />
   </button>
   <BaseDialog :show="open" :title="t('dynamicQuota.absorption.title')" width="extra-wide" @close="open = false">
     <div class="mb-4 flex flex-wrap items-center gap-3">
@@ -49,6 +67,7 @@ import { useI18n } from 'vue-i18n'
 import { getAbsorbedUsage, type AbsorbedUsageFilters, type AbsorbedUsageReport, type AbsorbedUsageSummary } from '@/api/admin/subscriptions'
 import { formatCurrency, formatDateTimeToMinute } from '@/utils/format'
 import BaseDialog from '@/components/common/BaseDialog.vue'
+import Icon from '@/components/icons/Icon.vue'
 
 const props = defineProps<{ filters: AbsorbedUsageFilters; refreshKey: number }>()
 const { t } = useI18n()
