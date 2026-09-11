@@ -51,8 +51,11 @@ func TestDynamicQuotaBillingPostgres(t *testing.T) {
 	recoveryMigration, err := os.ReadFile("../../migrations/239_dynamic_quota_billing_recovery.sql")
 	require.NoError(t, err)
 	exec(string(recoveryMigration))
+	v2Migration, err := os.ReadFile("../../migrations/240_dynamic_quota_v2.sql")
+	require.NoError(t, err)
+	exec(string(v2Migration))
 	exec(`INSERT INTO dynamic_quota_pools(account_id,state) VALUES(4,'{"cycle":1}'),(5,'{"cycle":1}');
- INSERT INTO dynamic_subscription_policies(subscription_id,account_id,enabled,max_limit_usd,used_standard_usd,allocated_standard_usd) VALUES(11,4,true,100,20,100);`)
+ INSERT INTO dynamic_subscription_policies(subscription_id,account_id,enabled,max_limit_usd,floor_limit_usd,used_standard_usd,cycle_used_usd,allocated_standard_usd) VALUES(11,4,true,100,10,20,20,100);`)
 	reserve := func() string {
 		t.Helper()
 		id := uuid.NewString()

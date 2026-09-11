@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"strings"
 	"time"
 )
 
@@ -29,14 +30,15 @@ func dynamicAbsorptionReceipt(raw []byte, id string, accountID, keyID, userID in
 // reset archives the old cycle. Healthy cross-boundary turns retain only their
 // live execution hold until Finish/lease expiry; no old customer bill is replayed.
 func absorbDynamicRequests(ctx context.Context, tx *sql.Tx, accountID, cycle int64, closing bool) error {
+	if !closing {
+		return classifyDynamicV2Accounting(ctx, tx, accountID, cycle)
+	}
 	rows, err := tx.QueryContext(ctx, `SELECT d.id,d.billing_receipt,COALESCE(d.api_key_id,0),COALESCE(d.owner_user_id,k.user_id,0)
  FROM dynamic_quota_requests d LEFT JOIN api_keys k ON k.id=d.api_key_id
  WHERE d.account_id=$1 AND d.cycle<=$2 AND d.source_closed_at IS NULL AND d.status IN ('pending','uncertain')
- AND ($3 OR (d.operator_absorbed_at IS NULL AND d.worker_id IS NOT NULL AND d.billing_receipt IS NULL
-   AND COALESCE(d.finished_at,d.lease_until)<NOW()-INTERVAL '5 minutes'))
  AND (d.owner_subscription_id IS NOT NULL OR d.subscription_id IS NOT NULL OR EXISTS(
    SELECT 1 FROM user_subscriptions s WHERE s.user_id=k.user_id AND s.group_id=k.group_id))
- ORDER BY d.id FOR UPDATE OF d`, accountID, cycle, closing)
+ ORDER BY d.id FOR UPDATE OF d`, accountID, cycle)
 	if err != nil {
 		return err
 	}
@@ -64,10 +66,7 @@ func absorbDynamicRequests(ctx context.Context, tx *sql.Tx, accountID, cycle int
 	}
 	ids := make([]string, 0, len(requests))
 	for _, r := range requests {
-		reason := "missing_evidence"
-		if closing {
-			reason = "cycle_closed"
-		}
+		reason := "cycle_closed"
 		var known *float64
 		if c := dynamicAbsorptionReceipt(r.raw, r.id, accountID, r.key, r.user); c != nil {
 			var billed bool
@@ -100,7 +99,8 @@ func absorbDynamicRequests(ctx context.Context, tx *sql.Tx, accountID, cycle int
 
 func (s *DynamicSubscriptionService) absorbExpiredEvidence(ctx context.Context) error {
 	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT account_id FROM dynamic_quota_requests
- WHERE source_closed_at IS NULL AND operator_absorbed_at IS NULL AND worker_id IS NOT NULL AND billing_receipt IS NULL
+ WHERE source_closed_at IS NULL AND operator_absorbed_at IS NULL AND worker_id IS NOT NULL
+ AND review_required_at IS NULL
  AND owner_subscription_id IS NOT NULL
  AND status IN ('pending','uncertain') AND COALESCE(finished_at,lease_until)<NOW()-INTERVAL '5 minutes' ORDER BY account_id LIMIT 20`)
 	if err != nil {
@@ -145,6 +145,7 @@ type DynamicAbsorptionFilter struct {
 	Status, Platform, Scope string
 	Page, PageSize          int
 	SummaryOnly             bool
+	Category                string
 }
 
 type DynamicAbsorptionSummary struct {
@@ -171,6 +172,9 @@ type DynamicAbsorptionRecord struct {
 	StartedAt        time.Time  `json:"started_at"`
 	AbsorbedAt       time.Time  `json:"absorbed_at"`
 	ClosedAt         *time.Time `json:"closed_at"`
+	NeedsReview      bool       `json:"needs_review"`
+	CanCharge        bool       `json:"can_charge"`
+	ChargeUSD        *float64   `json:"charge_usd"`
 }
 
 type DynamicAbsorptionReport struct {
@@ -203,7 +207,7 @@ const dynamicAbsorptionFromSQL = ` FROM dynamic_quota_requests d
 // Read-only and metadata-only. Totals and the selected page share one snapshot;
 // a concurrent upstream reset cannot mix current totals with historical rows.
 func (s *DynamicSubscriptionService) AbsorptionReport(ctx context.Context, f DynamicAbsorptionFilter) (*DynamicAbsorptionReport, error) {
-	if f.Scope != "current" && f.Scope != "history" || f.Page < 1 || f.PageSize < 1 || f.PageSize > 100 || f.UserID < 0 || f.GroupID < 0 {
+	if f.Scope != "current" && f.Scope != "history" || f.Page < 1 || f.PageSize < 1 || f.PageSize > 100 || f.UserID < 0 || f.GroupID < 0 || (f.Category != "" && f.Category != "covered" && f.Category != "review") {
 		return nil, ErrDynamicQuotaBinding
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -214,9 +218,14 @@ func (s *DynamicSubscriptionService) AbsorptionReport(ctx context.Context, f Dyn
 	}
 	defer tx.Rollback()
 	args := []any{f.UserID, f.GroupID, f.Status, f.Platform, f.Scope}
+	from := dynamicAbsorptionFromSQL
+	amount, reason, processed := "d.operator_absorbed_standard_usd", "COALESCE(d.operator_absorption_reason,'operator_decision')", "d.operator_absorbed_at"
+	if f.Category == "review" {
+		from = strings.Replace(from, "WHERE d.operator_absorbed_at IS NOT NULL", "WHERE d.operator_absorbed_at IS NULL AND d.review_required_at IS NOT NULL AND d.status IN ('pending','uncertain')", 1)
+		amount, reason, processed = "d.review_standard_usd", "COALESCE(d.review_reason,'missing_evidence')", "d.review_required_at"
+	}
 	out := &DynamicAbsorptionReport{Items: []DynamicAbsorptionRecord{}, Page: f.Page, PageSize: f.PageSize}
-	err = tx.QueryRowContext(ctx, `SELECT count(*),count(d.operator_absorbed_standard_usd),
- COALESCE(sum(d.operator_absorbed_standard_usd),0),count(*) FILTER(WHERE d.operator_absorbed_standard_usd IS NULL)`+dynamicAbsorptionFromSQL, args...).
+	err = tx.QueryRowContext(ctx, `SELECT count(*),count(`+amount+`),COALESCE(sum(`+amount+`),0),count(*) FILTER(WHERE `+amount+` IS NULL)`+from, args...).
 		Scan(&out.Summary.Requests, &out.Summary.KnownRequests, &out.Summary.KnownStandardUSD, &out.Summary.UnknownRequests)
 	if err != nil {
 		return nil, err
@@ -226,16 +235,25 @@ func (s *DynamicSubscriptionService) AbsorptionReport(ctx context.Context, f Dyn
 		args = append(args, f.PageSize, (int64(f.Page)-1)*int64(f.PageSize))
 		rows, err := tx.QueryContext(ctx, `SELECT d.id,COALESCE(d.owner_user_id,us.user_id),COALESCE(u.email,''),us.id,us.group_id,g.name,
  d.account_id,a.name,d.cycle,COALESCE(d.request_context->>'model',d.billing_receipt->>'Model',d.evidence->>'model',d.late_billing_receipt->>'Model',d.late_evidence->>'model',''),
- COALESCE(d.operator_absorption_reason,'operator_decision'),d.operator_absorbed_standard_usd,d.hold_standard_usd,
- d.started_at,d.operator_absorbed_at,d.source_closed_at`+dynamicAbsorptionFromSQL+` ORDER BY d.operator_absorbed_at DESC,d.id LIMIT $6 OFFSET $7`, args...)
+ `+reason+`,`+amount+`,d.hold_standard_usd,d.started_at,`+processed+`,d.source_closed_at,d.billing_receipt,COALESCE(d.api_key_id,0)`+from+` ORDER BY `+processed+` DESC,d.id LIMIT $6 OFFSET $7`, args...)
 		if err != nil {
 			return nil, err
 		}
 		for rows.Next() {
 			var r DynamicAbsorptionRecord
-			if err = rows.Scan(&r.ID, &r.UserID, &r.Email, &r.SubscriptionID, &r.GroupID, &r.GroupName, &r.AccountID, &r.AccountName, &r.Cycle, &r.Model, &r.Reason, &r.KnownStandardUSD, &r.ReferenceHoldUSD, &r.StartedAt, &r.AbsorbedAt, &r.ClosedAt); err != nil {
+			var receipt []byte
+			var key int64
+			if err = rows.Scan(&r.ID, &r.UserID, &r.Email, &r.SubscriptionID, &r.GroupID, &r.GroupName, &r.AccountID, &r.AccountName, &r.Cycle, &r.Model, &r.Reason, &r.KnownStandardUSD, &r.ReferenceHoldUSD, &r.StartedAt, &r.AbsorbedAt, &r.ClosedAt, &receipt, &key); err != nil {
 				rows.Close()
 				return nil, err
+			}
+			r.NeedsReview = f.Category == "review"
+			if c := dynamicAbsorptionReceipt(receipt, r.ID, r.AccountID, key, r.UserID); r.NeedsReview && c != nil {
+				r.CanCharge = c.SubscriptionID != nil && *c.SubscriptionID == r.SubscriptionID && c.BalanceCost == 0 && r.ClosedAt == nil
+				if r.CanCharge {
+					amount := QuantizeUsageBillingAmount(c.SubscriptionCost)
+					r.ChargeUSD = &amount
+				}
 			}
 			out.Items = append(out.Items, r)
 		}

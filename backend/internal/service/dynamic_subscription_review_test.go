@@ -32,11 +32,9 @@ func TestDynamicQuotaDisableAfterSourceRemoved(t *testing.T) {
 	dynamicExec(t, db, `DELETE FROM account_groups WHERE account_id=4 AND group_id=7`)
 	dynamicExec(t, db, `UPDATE accounts SET deleted_at=NOW(),credentials='{}' WHERE id=4`)
 	s.accounts = nil // Disabling must not need another source lookup.
-	in := DynamicSubscriptionInput{Enabled: false, Revision: 1, AccountID: 4, Weight: 1, MaxLimitUSD: 700}
-	require.Error(t, s.Save(context.Background(), 11, in), "pending billing still blocks off/on")
+	in := DynamicSubscriptionInput{Enabled: false, Revision: 1, AccountID: 4, Weight: 1, MaxLimitUSD: 700, FloorLimitUSD: dynamicTestFloor()}
+	require.NoError(t, s.Save(context.Background(), 11, in), "live billing no longer blocks off/on")
 	dynamicTestSettle(t, db, r, 101, 11, 2, 2)
-	err = s.Save(context.Background(), 11, in)
-	require.NoError(t, err)
 	q, err := s.Load(context.Background(), 11)
 	require.NoError(t, err)
 	require.False(t, q.Enabled)

@@ -44,7 +44,7 @@ func NewSubscriptionHandler(subscriptionService *service.SubscriptionService) *S
 // GET only: viewing the toolbar/details never settles, waives or resets money.
 func (h *SubscriptionHandler) GetAbsorbedUsage(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
-	f := service.DynamicAbsorptionFilter{Scope: c.DefaultQuery("scope", "current"), Status: c.Query("status"), Platform: c.Query("platform"), Page: 1, PageSize: 20}
+	f := service.DynamicAbsorptionFilter{Scope: c.DefaultQuery("scope", "current"), Category: c.DefaultQuery("category", "covered"), Status: c.Query("status"), Platform: c.Query("platform"), Page: 1, PageSize: 20}
 	for name, target := range map[string]*int64{"user_id": &f.UserID, "group_id": &f.GroupID} {
 		if raw, exists := c.GetQuery(name); exists {
 			id, err := strconv.ParseInt(raw, 10, 64)
@@ -73,7 +73,7 @@ func (h *SubscriptionHandler) GetAbsorbedUsage(c *gin.Context) {
 		}
 		f.SummaryOnly = v
 	}
-	if f.Scope != "current" && f.Scope != "history" || len(f.Platform) > 32 || len(f.Status) > 32 {
+	if f.Scope != "current" && f.Scope != "history" || len(f.Platform) > 32 || len(f.Status) > 32 || (f.Category != "covered" && f.Category != "review") {
 		response.BadRequest(c, "Invalid accounting filters")
 		return
 	}
@@ -139,37 +139,33 @@ func (h *SubscriptionHandler) SaveDynamicQuota(c *gin.Context) {
 	h.GetDynamicQuota(c)
 }
 
-// ApproveDynamicCapacity confirms the displayed source/cycle proposal separately from policy edits.
-func (h *SubscriptionHandler) ApproveDynamicCapacity(c *gin.Context) {
+// ResolveDynamicAccounting never accepts a price or a user identity from the client.
+func (h *SubscriptionHandler) ResolveDynamicAccounting(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
-	middleware2.SetAuditAction(c, "admin.subscription.dynamic_quota.approve_capacity")
-	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
-	if err != nil || id <= 0 {
-		response.BadRequest(c, "Invalid subscription ID")
+	middleware2.SetAuditAction(c, "admin.subscription.dynamic_quota.resolve_accounting")
+	actor := getAdminIDFromContext(c)
+	if actor <= 0 {
+		response.Unauthorized(c, "Authentication required")
 		return
 	}
-	if h.subscriptionService.DynamicQuotas == nil {
+	if h.subscriptionService == nil || h.subscriptionService.DynamicQuotas == nil {
 		response.ErrorFrom(c, service.ErrDynamicQuotaUnavailable)
 		return
 	}
 	var in struct {
-		ReviewID string `json:"review_id"`
+		Action string `json:"action"`
 	}
 	decoder := json.NewDecoder(http.MaxBytesReader(c.Writer, c.Request.Body, 1024))
 	decoder.DisallowUnknownFields()
-	if err = decoder.Decode(&in); err != nil {
-		response.BadRequest(c, "Invalid capacity confirmation")
+	if decoder.Decode(&in) != nil || decoder.Decode(new(any)) != io.EOF {
+		response.BadRequest(c, "Expected one accounting action")
 		return
 	}
-	if err = decoder.Decode(new(any)); err != io.EOF {
-		response.BadRequest(c, "Expected one JSON object")
-		return
-	}
-	if err = h.subscriptionService.DynamicQuotas.ApproveCapacity(c.Request.Context(), id, in.ReviewID); err != nil {
+	if err := h.subscriptionService.DynamicQuotas.ResolveAccounting(c.Request.Context(), c.Param("request_id"), actor, in.Action); err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
-	h.GetDynamicQuota(c)
+	response.Success(c, gin.H{"resolved": true})
 }
 
 // AssignSubscriptionRequest represents assign subscription request

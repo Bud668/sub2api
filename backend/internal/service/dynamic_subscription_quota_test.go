@@ -89,44 +89,6 @@ func TestDynamicQuotaConfirmation(t *testing.T) {
 	}
 }
 
-func TestDynamicQuotaAllocation(t *testing.T) {
-	// Two equally weighted active subscriptions, including an administrator.
-	members := []DynamicQuotaMember{{ID: 1, Weight: 1, Cap: 1000}, {ID: 2, Weight: 1, Cap: 1000}}
-	a := allocateDynamicQuota(members, 100)
-	if a[1] != 40 || a[2] != 40 {
-		t.Fatalf("role-neutral base allocation: %v", a)
-	}
-	members[0].Used = 35
-	b := allocateDynamicQuota(members, 65)
-	if b[1] != 60 || b[2] != 40 {
-		t.Fatalf("bounded surplus: %v", b)
-	}
-	// A subsequent scan cannot create another grant: consumption reduces remainder.
-	members[0].Used = 45
-	c := allocateDynamicQuota(members, 55)
-	if c[1] != 60 || c[2] != 40 {
-		t.Fatalf("periodic scan refilled spent money: %v", c)
-	}
-	members[0].Cap = 50
-	d := allocateDynamicQuota(members, 55)
-	if d[1] > 50 || d[2] != 40 {
-		t.Fatalf("individual cap lost: %v", d)
-	}
-	for _, remaining := range []float64{0, 1, 10, 100, 1000} {
-		allocated := allocateDynamicQuota(members, remaining)
-		var extra float64
-		for _, m := range members {
-			if allocated[m.ID] < m.Used {
-				t.Fatal("spent money clawed back")
-			}
-			extra += allocated[m.ID] - m.Used
-		}
-		if extra > remaining+1e-8 {
-			t.Fatalf("overcommitted %v with %v", extra, remaining)
-		}
-	}
-}
-
 func TestDynamicQuotaStrictObservation(t *testing.T) {
 	now := time.Unix(1788912000, 0).UTC()
 	valid := map[string]any{"account_id": "a", "rate_limit": map[string]any{"primary_window": map[string]any{"used_percent": 0, "reset_at": now.Add(7 * 24 * time.Hour).Unix(), "limit_window_seconds": 604800}}}
@@ -158,12 +120,9 @@ func TestDynamicQuotaEstimateAndReserve(t *testing.T) {
 	o.UsedPercent = 50
 	o.LocalStandardTotal = 200
 	p.Observe(o, o.FetchedAt)
-	if p.CapacityUSD != 0 || p.CapacityReview == nil || !p.CapacityReview.ManualRequired || math.Abs(p.CapacityReview.ProposedUSD-900) > 1e-8 {
-		t.Fatalf("first estimate must await approval: %+v", p)
+	if math.Abs(p.CapacityUSD-900) > 1e-8 {
+		t.Fatalf("independent V2 interval should establish capacity: %+v", p)
 	}
-	// The store tests exercise the real approval transaction. Check the reserve
-	// arithmetic here with the explicitly accepted capacity.
-	p.CapacityUSD, p.CapacityReview, p.Status = 900, nil, "active"
 	if got := p.Available(o.FetchedAt, 220, 3); math.Abs(got-427) > 1e-8 {
 		t.Fatalf("unreported/in-flight costs not reserved: %v", got)
 	}
@@ -178,38 +137,6 @@ func TestDynamicQuotaEstimateAndReserve(t *testing.T) {
 	}
 	if p.Cycle != 1 || p.ConfirmedAt != nil {
 		t.Fatal("capacity estimate triggered reset")
-	}
-}
-
-func TestDynamicQuotaAsymmetricAdjustmentThresholds(t *testing.T) {
-	for _, threshold := range []float64{5, 10} {
-		applied := 100.03
-		for _, delta := range []float64{0.1, 1, threshold - 0.01, threshold} {
-			got := dynamicQuotaAppliedLimit(applied, 100.03+delta, threshold, true, false)
-			if delta < threshold && got != applied {
-				t.Fatalf("small increase moved the anchor: threshold=%v delta=%v got=%v", threshold, delta, got)
-			}
-			if delta == threshold && got != 100.03+delta {
-				t.Fatal("cumulative increase did not reach the original applied anchor")
-			}
-		}
-		for _, delta := range []float64{0.00000001, 0.1, 1, 4.99} {
-			if got := dynamicQuotaAppliedLimit(applied, applied-delta, threshold, false, false); got != applied {
-				t.Fatal("small decrease moved the applied anchor before accumulating to $5")
-			}
-		}
-		if got := dynamicQuotaAppliedLimit(applied, applied-5, threshold, false, false); got != applied-5 {
-			t.Fatal("cumulative $5 decrease waited for the increase timer")
-		}
-		if got := dynamicQuotaAppliedLimit(applied, applied-0.1, threshold, false, true); math.Abs(got-(applied-0.1)) > 1e-8 {
-			t.Fatal("manual allocation change or reset was held by the display threshold")
-		}
-		if dynamicQuotaAppliedLimit(applied, applied+20, threshold, false, false) != applied {
-			t.Fatal("routine increase bypassed the allocation timer")
-		}
-		if dynamicQuotaAppliedLimit(applied, applied+1, threshold, false, true) != applied+1 {
-			t.Fatal("manual change or confirmed reset waited for a threshold")
-		}
 	}
 }
 

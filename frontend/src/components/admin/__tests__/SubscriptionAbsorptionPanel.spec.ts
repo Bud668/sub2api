@@ -5,8 +5,8 @@ import Panel from '../SubscriptionAbsorptionPanel.vue'
 import messages from '@/i18n/locales/zh/common'
 import type { AbsorbedUsageReport } from '@/api/admin/subscriptions'
 
-const { query } = vi.hoisted(() => ({ query: vi.fn() }))
-vi.mock('@/api/admin/subscriptions', () => ({ getAbsorbedUsage: query }))
+const { query, resolve } = vi.hoisted(() => ({ query: vi.fn(), resolve: vi.fn() }))
+vi.mock('@/api/admin/subscriptions', () => ({ getAbsorbedUsage: query, resolveDynamicAccounting: resolve }))
 const report = (n = 14, amount = 12.5, unknown = 3): AbsorbedUsageReport => ({
   summary: { requests: n, known_requests: n - unknown, known_standard_usd: amount, unknown_requests: unknown },
   items: [], page: 1, page_size: 20, pages: 1
@@ -62,7 +62,7 @@ describe('subscription toolbar site-covered usage', () => {
     query.mockResolvedValueOnce(details)
     await w.get('[data-testid="absorption-summary"]').trigger('click'); await flushPromises()
     expect(w.get('[data-testid="absorption-details"]').text()).toContain('reader@example.invalid')
-    const rows = w.findAll('[data-testid="absorption-details"] tbody tr')
+    const rows = w.findAll('[data-testid="absorption-details"] article')
     expect(rows[0].text()).toContain('实际金额无法核实')
     expect(rows[0].get('[data-testid="absorption-status"]').text()).toBe('已处理 · 站点承担')
     expect(rows[1].get('[data-testid="absorption-status"]').text()).toBe('已处理 · 原账已计费')
@@ -72,5 +72,28 @@ describe('subscription toolbar site-covered usage', () => {
     expect(query).toHaveBeenLastCalledWith({ scope: 'history', page: 1, page_size: 20 }, expect.any(AbortSignal))
     expect(query.mock.calls.every(([params]) => !('execute' in params))).toBe(true)
     w.unmount()
+  })
+
+  it('shows actual customer prices and never charges unknown holds', async () => {
+    resolve.mockResolvedValue(undefined)
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const w = render()
+    await w.setProps({ category: 'review' }); await flushPromises()
+    const details = report(2, 5, 1)
+    const row = { id: 'review-receipt', user_id: 7, email: 'reader@example.invalid', subscription_id: 1, group_id: 4, group_name: 'Synthetic group', account_id: 5, account_name: 'Synthetic source', cycle: 1, model: 'synthetic', reason: 'review_threshold', known_standard_usd: 5, reference_hold_usd: 999, started_at: '2026-09-10T00:00:00Z', absorbed_at: '2026-09-10T00:06:00Z', closed_at: null, needs_review: true, can_charge: true, charge_usd: 10 }
+    details.items = [row, { ...row, id: 'unknown', known_standard_usd: null, can_charge: false, charge_usd: null }]
+    query.mockResolvedValue(details)
+    await w.get('[data-testid=absorption-summary]').trigger('click'); await flushPromises()
+    const buttons = w.findAll('[data-testid=accounting-charge]')
+    expect(buttons[0].text()).toContain('10.00')
+    expect(buttons[1].attributes('disabled')).toBeDefined()
+    expect(resolve).not.toHaveBeenCalled()
+    await buttons[0].trigger('click'); await flushPromises()
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('10.00'))
+    expect(resolve).toHaveBeenCalledTimes(1)
+    expect(resolve).toHaveBeenCalledWith('review-receipt', 'charge')
+    expect(w.text()).toContain('已处理，账务列表已更新')
+    expect(w.find('.min-w-\\[760px\\]').exists()).toBe(false)
+    confirm.mockRestore(); w.unmount()
   })
 })

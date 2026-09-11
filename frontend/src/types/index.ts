@@ -2048,7 +2048,13 @@ export interface DynamicSubscriptionQuota {
   account_id?: number
   weight: number
   max_limit_usd: number
-  increase_threshold_usd: number
+  floor_limit_usd?: number | null
+  requested_enabled?: boolean
+  activation_pending?: boolean
+  next_adjustment_percent?: number
+  allocation_budget_conflict?: boolean
+  last_allocation_at?: string
+  last_change?: { previous_usd: number; current_usd: number; node: number; reason: string; at: string }
   cycle: number
   status: string
   limit_usd: number
@@ -2063,15 +2069,6 @@ export interface DynamicSubscriptionQuota {
   capacity_estimate_usd?: number
   sample_count?: number
   growth_frozen?: boolean
-  capacity_approval_ready?: boolean
-  capacity_review?: {
-    id: string
-    proposed_usd: number
-    observations: number
-    last_observed_at: string
-    manual_required: boolean
-    anomaly_checks: number
-  }
 }
 
 export interface DynamicQuotaInput {
@@ -2080,17 +2077,12 @@ export interface DynamicQuotaInput {
   account_id: number
   weight: number
   max_limit_usd: number
-  increase_threshold_usd: number
+  floor_limit_usd?: number | null
 }
 
 export interface DynamicQuotaAdminStatus {
   policy: DynamicSubscriptionQuota
   sources: { id: number; name: string }[]
-  pending_requests?: number
-  uncertain_requests?: number
-  subscription_pending_requests?: number
-  subscription_uncertain_requests?: number
-  subscription_reserved_standard_usd?: number
 }
 
 export interface UserSubscription {

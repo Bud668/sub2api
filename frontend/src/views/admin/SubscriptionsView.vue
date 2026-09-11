@@ -93,6 +93,7 @@
 
           <!-- Right: Summary, then actions; summary gets its own row on narrow screens. -->
           <div class="ml-auto flex w-full min-w-0 max-w-full flex-wrap items-center justify-end gap-3 sm:w-auto">
+            <SubscriptionAbsorptionPanel category="review" :filters="absorptionFilters" :refresh-key="absorptionRefreshKey" @resolved="loadSubscriptions" />
             <SubscriptionAbsorptionPanel :filters="absorptionFilters" :refresh-key="absorptionRefreshKey" />
             <button
               @click="loadSubscriptions"
@@ -255,7 +256,7 @@
               </div>
 
               <!-- Weekly Usage -->
-              <DynamicQuotaCard v-if="row.dynamic_quota?.enabled" :quota="row.dynamic_quota" />
+              <DynamicQuotaCard v-if="row.dynamic_quota?.enabled" :quota="row.dynamic_quota" compact />
               <div v-else-if="row.group?.weekly_limit_usd" class="usage-row">
                 <div class="flex items-center gap-2">
                   <span class="usage-label">{{ t('admin.subscriptions.weekly') }}</span>

@@ -67,10 +67,10 @@ func (s *DynamicSubscriptionService) recoverAccounting(ctx context.Context) erro
 	if n, _ := res.RowsAffected(); n > 0 {
 		logger.LegacyPrintf("service.dynamic_quota", "dynamic_quota_accounting_review_required count=%d", n)
 	}
-	if err := s.absorbExpiredEvidence(ctx); err != nil {
+	if err := s.recoverBillingReceipts(ctx, 0); err != nil {
 		return err
 	}
-	return s.recoverBillingReceipts(ctx, 0)
+	return s.absorbExpiredEvidence(ctx)
 }
 
 // Background retries obey backoff. A source sync gets one bounded final attempt
@@ -85,6 +85,7 @@ func (s *DynamicSubscriptionService) recoverBillingReceipts(ctx context.Context,
 	rows, err := s.db.QueryContext(ctx, `WITH due AS (
  SELECT id FROM dynamic_quota_requests WHERE status IN ('pending','uncertain','settled','rejected')
  AND billing_receipt IS NOT NULL AND operator_absorbed_at IS NULL
+ AND (review_required_at IS NULL OR status IN ('settled','rejected'))
  AND (($1::bigint=0 AND billing_retry_at<=NOW()) OR ($1>0 AND account_id=$1 AND billing_retry_at IS NOT NULL))
  ORDER BY billing_retry_at,id LIMIT 20 FOR UPDATE SKIP LOCKED)
  UPDATE dynamic_quota_requests d SET billing_retry_at=NOW()+INTERVAL '1 minute'

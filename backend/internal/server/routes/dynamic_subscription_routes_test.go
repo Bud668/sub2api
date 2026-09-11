@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestDynamicQuotaApprovalRequiresAdminRoute(t *testing.T) {
+func TestDynamicQuotaAccountingRequiresAdminRoute(t *testing.T) {
 	router := gin.New()
 	h := &handler.Handlers{Admin: &handler.AdminHandlers{Subscription: adminhandler.NewSubscriptionHandler(nil)}}
 	auth := servermiddleware.AdminAuthMiddleware(func(c *gin.Context) {
@@ -26,7 +26,7 @@ func TestDynamicQuotaApprovalRequiresAdminRoute(t *testing.T) {
 	stepUp := servermiddleware.StepUpAuthMiddleware(func(c *gin.Context) { c.Next() })
 	RegisterAdminRoutes(router.Group("/api/v1"), h, auth, audit, stepUp, nil, nil)
 	for _, token := range []string{"", "Bearer user-token"} {
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/subscriptions/11/dynamic-quota/approve-capacity", nil)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/subscriptions/absorbed-usage/00000000-0000-0000-0000-000000000001/resolve", nil)
 		req.Header.Set("Authorization", token)
 		r := httptest.NewRecorder()
 		router.ServeHTTP(r, req)
@@ -46,6 +46,6 @@ func TestDynamicQuotaApprovalRequiresAdminRoute(t *testing.T) {
 		}
 	}
 	r := httptest.NewRecorder()
-	router.ServeHTTP(r, httptest.NewRequest(http.MethodPost, "/api/v1/subscriptions/11/dynamic-quota/approve-capacity", nil))
+	router.ServeHTTP(r, httptest.NewRequest(http.MethodPost, "/api/v1/subscriptions/absorbed-usage/00000000-0000-0000-0000-000000000001/resolve", nil))
 	require.Equal(t, http.StatusNotFound, r.Code)
 }

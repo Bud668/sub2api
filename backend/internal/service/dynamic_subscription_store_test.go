@@ -14,7 +14,6 @@ import (
 	"testing"
 	"time"
 
-	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -75,6 +74,10 @@ func dynamicTestStore(t *testing.T) (*DynamicSubscriptionService, *sql.DB) {
 	require.NoError(t, err)
 	dynamicExec(t, db, string(recoveryMigration))
 	dynamicExec(t, db, string(recoveryMigration))
+	v2Migration, err := os.ReadFile("../../migrations/240_dynamic_quota_v2.sql")
+	require.NoError(t, err)
+	dynamicExec(t, db, string(v2Migration))
+	dynamicExec(t, db, string(v2Migration))
 	s := NewDynamicSubscriptionService(db, dynamicTestAccounts{}, nil, nil)
 	s.fetch = func(_ context.Context, id int64) (DynamicQuotaObservation, error) {
 		return dynamicTestObservation(id, 50, time.Now().UTC().Add(6*24*time.Hour), time.Now().UTC()), nil
@@ -90,6 +93,8 @@ func dynamicExec(t *testing.T, db *sql.DB, q string, args ...any) {
 func dynamicTestObservation(id int64, percent float64, reset, fetched time.Time) DynamicQuotaObservation {
 	return DynamicQuotaObservation{Identity: shortOpenAIAutoResetHash(fmt.Sprint(id)), UsedPercent: percent, ResetAt: reset, WindowSeconds: 604800, FetchedAt: fetched}
 }
+func dynamicTestFloor() *float64 { v := 1.0; return &v }
+
 func dynamicTestSave(t *testing.T, s *DynamicSubscriptionService, id, account int64, enabled bool) {
 	t.Helper()
 	q, err := s.Load(context.Background(), id)
@@ -98,7 +103,10 @@ func dynamicTestSave(t *testing.T, s *DynamicSubscriptionService, id, account in
 	if q != nil {
 		revision = q.Revision
 	}
-	require.NoError(t, s.Save(context.Background(), id, DynamicSubscriptionInput{Enabled: enabled, AccountID: account, Revision: revision, Weight: 1, MaxLimitUSD: 700}))
+	require.NoError(t, s.Save(context.Background(), id, DynamicSubscriptionInput{Enabled: enabled, AccountID: account, Revision: revision, Weight: 1, MaxLimitUSD: 700, FloorLimitUSD: dynamicTestFloor()}))
+	if enabled {
+		require.NoError(t, s.Refresh(context.Background(), account))
+	}
 }
 
 func dynamicTestSettle(t *testing.T, db *sql.DB, r *DynamicQuotaReservation, key, sub int64, standard, actual float64) {
@@ -243,8 +251,8 @@ func TestDynamicQuotaPostgresActivationAndToggle(t *testing.T) {
 	r, err := s.Begin(ctx, 101, 4)
 	require.NoError(t, err)
 	require.NotNil(t, r, "pre-opt-in traffic must be tracked")
-	err = s.Save(ctx, 11, DynamicSubscriptionInput{Enabled: true, AccountID: 4, Weight: 1, MaxLimitUSD: 700})
-	require.Equal(t, "DYNAMIC_QUOTA_REQUESTS_PENDING", infraerrors.Reason(err))
+	err = s.Save(ctx, 11, DynamicSubscriptionInput{Enabled: true, AccountID: 4, Weight: 1, MaxLimitUSD: 700, FloorLimitUSD: dynamicTestFloor()})
+	require.NoError(t, err)
 	dynamicTestSettle(t, db, r, 101, 11, 10, 10) // baseline changed from cycle 0 to 1; this is NOT a reset.
 	dynamicTestSave(t, s, 11, 4, true)
 	q, err := s.Load(ctx, 11)
@@ -260,14 +268,14 @@ func TestDynamicQuotaPostgresActivationAndToggle(t *testing.T) {
 	require.Equal(t, 45.0, q.UsedUSD)
 	require.GreaterOrEqual(t, q.usedStandard, 45.0)
 	require.Equal(t, int64(1), q.Cycle)
-	err = s.Save(ctx, 11, DynamicSubscriptionInput{Enabled: true, AccountID: 4, Revision: 1, Weight: 1, MaxLimitUSD: 1000})
+	err = s.Save(ctx, 11, DynamicSubscriptionInput{Enabled: true, AccountID: 4, Revision: 1, Weight: 1, MaxLimitUSD: 1000, FloorLimitUSD: dynamicTestFloor()})
 	require.ErrorIs(t, err, ErrDynamicQuotaChanged)
 	dynamicExec(t, db, `UPDATE account_groups SET account_id=5 WHERE account_id=4`)
 	_, err = s.Begin(ctx, 101, 5)
 	require.ErrorIs(t, err, ErrDynamicQuotaBinding)
 }
 
-func TestDynamicQuotaPostgresAdminShowsUnboundSubscriptionHolds(t *testing.T) {
+func TestDynamicQuotaPostgresAdminReadDoesNotMutateAccounting(t *testing.T) {
 	s, db := dynamicTestStore(t)
 	ctx := context.Background()
 	for _, key := range []int64{101, 104, 102, 201} {
@@ -290,87 +298,14 @@ func TestDynamicQuotaPostgresAdminShowsUnboundSubscriptionHolds(t *testing.T) {
 	require.NoError(t, err)
 	var fields map[string]any
 	require.NoError(t, json.Unmarshal(raw, &fields))
-	require.Equal(t, float64(1), fields["subscription_pending_requests"])
-	require.Equal(t, float64(1), fields["subscription_uncertain_requests"])
-	require.Equal(t, 0.02, fields["subscription_reserved_standard_usd"])
+	require.NotContains(t, fields, "subscription_pending_requests", "accounting belongs in its separate report")
+	require.Nil(t, status.Policy.FloorLimitUSD, "do not invent a protection amount")
 	// Read-only diagnostics must not enable a policy or release old accounting.
 	var policies, unresolved int
 	require.NoError(t, db.QueryRow(`SELECT count(*) FROM dynamic_subscription_policies`).Scan(&policies))
 	require.NoError(t, db.QueryRow(`SELECT count(*) FROM dynamic_quota_requests WHERE status IN ('pending','uncertain')`).Scan(&unresolved))
 	require.Zero(t, policies)
 	require.Equal(t, 4, unresolved)
-}
-
-func TestDynamicQuotaPostgresAppliedAllowance(t *testing.T) {
-	s, db := dynamicTestStore(t)
-	ctx := context.Background()
-	dynamicTestSave(t, s, 11, 4, true)
-	applyCandidate := func(candidate float64, windowDue bool) *DynamicSubscriptionQuota {
-		t.Helper()
-		tx, err := db.BeginTx(ctx, nil)
-		require.NoError(t, err)
-		defer tx.Rollback()
-		p, err := lockDynamicPool(ctx, tx, 4)
-		require.NoError(t, err)
-		now := time.Now().UTC()
-		p.Status = "active"
-		// Native 7d threshold is unset: 80% * (20 used + 50% remaining capacity).
-		p.CapacityUSD = (candidate/0.8 - 20) / 0.5
-		p.LastAllocationAt = now
-		if windowDue {
-			p.LastAllocationAt = now.Add(-31 * time.Minute)
-		}
-		require.NoError(t, s.reallocate(ctx, tx, 4, p, now))
-		require.NoError(t, writeDynamicPool(ctx, tx, 4, p))
-		require.NoError(t, tx.Commit())
-		q, err := s.Load(ctx, 11)
-		require.NoError(t, err)
-		return q
-	}
-	q := applyCandidate(100.03, false)
-	require.Equal(t, 100.03, q.LimitUSD)
-	require.Equal(t, 10.0, q.IncreaseThresholdUSD)
-	for _, candidate := range []float64{100.13, 101.03, 110.02} {
-		q = applyCandidate(candidate, true)
-		require.Equal(t, 100.03, q.LimitUSD, "small increases must not move the persisted anchor")
-		require.InDelta(t, 100.03, q.allocatedStandard, 1e-8, "no hidden standard-cost increase")
-	}
-	q = applyCandidate(110.03, true)
-	require.Equal(t, 110.03, q.LimitUSD)
-	q = applyCandidate(110.02999999, false)
-	require.Equal(t, 110.03, q.LimitUSD, "tiny decreases do not move the published allowance")
-	require.InDelta(t, 110.02999999, q.allocatedStandard, 1e-8, "physical cost share still tightens immediately")
-	q = applyCandidate(109.93, false)
-	require.Equal(t, 110.03, q.LimitUSD)
-	require.InDelta(t, 109.93, q.allocatedStandard, 1e-8)
-	q = applyCandidate(105.04, false)
-	require.Equal(t, 110.03, q.LimitUSD, "cumulative decrease is still below $5")
-	q = applyCandidate(105.03, false)
-	require.Equal(t, 105.03, q.LimitUSD, "cumulative $5 decrease applies without the 30-minute timer")
-	require.NoError(t, s.Save(ctx, 11, DynamicSubscriptionInput{Enabled: true, AccountID: 4, Revision: q.Revision, Weight: 1, MaxLimitUSD: 700, IncreaseThresholdUSD: 5}))
-	q = applyCandidate(110.02, true)
-	require.Equal(t, 105.03, q.LimitUSD)
-	q = applyCandidate(110.03, true)
-	require.Equal(t, 110.03, q.LimitUSD)
-	require.Equal(t, 5.0, q.IncreaseThresholdUSD)
-	// Discounted/free/peak billing must not silently recalculate the displayed limit.
-	r, err := s.Begin(ctx, 101, 4)
-	require.NoError(t, err)
-	dynamicTestSettle(t, db, r, 101, 11, 1, 0.25)
-	after, err := s.Load(ctx, 11)
-	require.NoError(t, err)
-	require.Equal(t, q.LimitUSD, after.LimitUSD)
-	require.Equal(t, 20.25, after.UsedUSD)
-	require.Less(t, after.RemainingUSD, after.LimitUSD-after.UsedUSD, "standard-cost headroom is still enforced")
-	require.Equal(t, q.Cycle, after.Cycle)
-	require.Equal(t, q.StartedAt, after.StartedAt)
-	// A manual ceiling change bypasses the increase timer, never erases spent money.
-	require.NoError(t, s.Save(ctx, 11, DynamicSubscriptionInput{Enabled: true, AccountID: 4, Revision: after.Revision, Weight: 1, MaxLimitUSD: 10, IncreaseThresholdUSD: 5}))
-	after, err = s.Load(ctx, 11)
-	require.NoError(t, err)
-	require.Equal(t, 20.25, after.UsedUSD)
-	require.Equal(t, 20.25, after.LimitUSD)
-	require.Zero(t, after.RemainingUSD)
 }
 
 func TestDynamicQuotaPostgresNativeProtectionSettings(t *testing.T) {
@@ -468,7 +403,7 @@ func TestDynamicQuotaPostgresValidationAndConcurrency(t *testing.T) {
 		return oldFetch(ctx, id)
 	}
 	for _, p := range []struct{ id, account int64 }{{999, 4}, {11, 5}} {
-		err := s.Save(ctx, p.id, DynamicSubscriptionInput{Enabled: true, AccountID: p.account, Weight: 1, MaxLimitUSD: 700})
+		err := s.Save(ctx, p.id, DynamicSubscriptionInput{Enabled: true, AccountID: p.account, Weight: 1, MaxLimitUSD: 700, FloorLimitUSD: dynamicTestFloor()})
 		require.Error(t, err)
 	}
 	require.Zero(t, queries)
@@ -519,8 +454,10 @@ func TestDynamicQuotaPostgresValidationAndConcurrency(t *testing.T) {
 	require.NoError(t, db.QueryRow(`SELECT status FROM dynamic_quota_requests WHERE id=$1`, r.ID).Scan(&status))
 	require.Equal(t, "uncertain", status)
 	// Unknown disconnect is retained, never refunded by a timer or save toggle.
-	err = s.Save(ctx, 11, DynamicSubscriptionInput{AccountID: 4, Revision: 1, Weight: 1, MaxLimitUSD: 700})
-	require.Equal(t, "DYNAMIC_QUOTA_REQUESTS_PENDING", infraerrors.Reason(err))
+	err = s.Save(ctx, 11, DynamicSubscriptionInput{AccountID: 4, Revision: 1, Weight: 1, MaxLimitUSD: 700, FloorLimitUSD: dynamicTestFloor()})
+	require.NoError(t, err)
+	require.NoError(t, db.QueryRow(`SELECT status FROM dynamic_quota_requests WHERE id=$1`, r.ID).Scan(&status))
+	require.Equal(t, "uncertain", status, "saving must not waive or discard this request")
 }
 
 func TestDynamicQuotaPostgresTransactionRollback(t *testing.T) {
