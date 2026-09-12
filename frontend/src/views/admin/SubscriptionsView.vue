@@ -211,6 +211,7 @@
           </template>
 
           <template #cell-group="{ row }">
+            <div class="flex flex-wrap items-center gap-2">
             <GroupBadge
               v-if="row.group"
               :name="row.group.name"
@@ -220,6 +221,8 @@
               :show-rate="false"
             />
             <span v-else class="text-sm text-gray-400 dark:text-dark-500">-</span>
+            <FixedSeatBadge :quota="row.dynamic_quota" />
+            </div>
           </template>
 
           <template #cell-usage="{ row }">
@@ -373,7 +376,7 @@
                 v-for="remainingExpiry in [formatRemainingExpiry(value)]"
                 :key="remainingExpiry ?? 'expired'"
               >
-                <div v-if="remainingExpiry" class="text-xs text-gray-600 dark:text-gray-300">
+                <div v-if="remainingExpiry" class="mt-1 w-fit rounded-md px-2 py-1 text-xs font-medium" :class="subscriptionExpiryClass(value, expiryNow)" data-testid="subscription-expiry-badge">
                   {{ remainingExpiry }}
                 </div>
               </template>
@@ -455,6 +458,15 @@
         >
           <Icon name="refresh" size="sm" />
           {{ t('dynamicQuota.manualReset') }}
+        </button>
+        <button
+          v-if="actionSubscription.admin_debug"
+          type="button"
+          class="flex w-full items-center gap-2 px-4 py-2.5 text-left text-violet-700 hover:bg-violet-50 focus-visible:bg-violet-50 dark:text-violet-300 dark:hover:bg-dark-700 dark:focus-visible:bg-dark-700"
+          @click="debugQuotaSubscription = actionSubscription; closeActionMenu()"
+        >
+          <Icon name="edit" size="sm" />
+          {{ t('dynamicQuota.setDebugWeeklyLimit') }}
         </button>
         <button
           v-if="canEnableDebug(actionSubscription)"
@@ -745,6 +757,7 @@
       @confirm="confirmEnableDebug"
       @cancel="!enablingDebug && (debugSubscription = null)"
     />
+    <AdminDebugQuotaDialog :subscription="debugQuotaSubscription" @close="debugQuotaSubscription = null" @saved="loadSubscriptions" />
     <!-- Subscription Guide Modal -->
     <teleport to="body">
       <transition name="modal">
@@ -851,11 +864,15 @@ import GroupOptionItem from '@/components/common/GroupOptionItem.vue'
 import Icon from '@/components/icons/Icon.vue'
 import DynamicQuotaCard from '@/components/common/DynamicQuotaCard.vue'
 import SubscriptionStatusBadge from '@/components/common/SubscriptionStatusBadge.vue'
+import FixedSeatBadge from '@/components/common/FixedSeatBadge.vue'
 import AdminDebugUsage from '@/components/common/AdminDebugUsage.vue'
+import AdminDebugQuotaDialog from '@/components/admin/AdminDebugQuotaDialog.vue'
+import { useNow } from '@vueuse/core'
 import SubscriptionAbsorptionPanel from '@/components/admin/SubscriptionAbsorptionPanel.vue'
 import {
   getRemainingDurationParts,
   subscriptionBorderStyle,
+  subscriptionExpiryClass,
   getRemainingExpiryDuration,
   isOneTimeDailyQuota,
   type RemainingDurationParts
@@ -864,6 +881,8 @@ import { GROUP_PLATFORM_OPTIONS } from '@/constants/platforms'
 
 const { t } = useI18n()
 const appStore = useAppStore()
+const expiryNow = useNow({ interval: 60_000 })
+const debugQuotaSubscription = ref<UserSubscription | null>(null)
 
 interface GroupOption {
   value: number

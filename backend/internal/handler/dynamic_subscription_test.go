@@ -33,7 +33,7 @@ func expectDynamicWSAdmission(t *testing.T, mock sqlmock.Sqlmock, allow bool) {
 	raw, err := json.Marshal(p)
 	require.NoError(t, err)
 	mock.ExpectBegin()
-	mock.ExpectExec("INSERT INTO dynamic_quota_pools").WithArgs(int64(9951)).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO dynamic_quota_pools").WithArgs(int64(9951), int64(1851)).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery("SELECT state FROM dynamic_quota_pools").WithArgs(int64(9951)).WillReturnRows(sqlmock.NewRows([]string{"state"}).AddRow(raw))
 	mock.ExpectQuery("SELECT us.id,us.status").WithArgs(int64(1851)).WillReturnRows(sqlmock.NewRows([]string{"id", "active", "group_id", "debug"}).AddRow(11, true, 4301, false))
 	mock.ExpectQuery("SELECT account_id,enabled,weight.*FROM dynamic_group_policies").WithArgs(int64(4301)).WillReturnRows(sqlmock.NewRows([]string{"account_id", "enabled", "weight", "cap", "floor", "revision"}))
@@ -46,7 +46,7 @@ func expectDynamicWSAdmission(t *testing.T, mock sqlmock.Sqlmock, allow bool) {
 	}
 	mock.ExpectQuery("SELECT COALESCE\\(credentials").WithArgs(int64(9951), int64(1851)).WillReturnRows(sqlmock.NewRows([]string{"identity", "bound"}).AddRow("9951", true))
 	mock.ExpectQuery("SELECT p.standard_total_usd").WithArgs(int64(9951)).WillReturnRows(sqlmock.NewRows([]string{"total", "held", "max", "pending"}).AddRow(0, 0, 0, 0))
-	mock.ExpectQuery("SELECT p.enabled,p.revision").WithArgs(int64(11)).WillReturnRows(sqlmock.NewRows([]string{"enabled", "revision", "account_id", "weight", "max_limit", "used_std", "allocated_std", "used", "user_id", "group_id", "rate", "peak_enabled", "peak_start", "peak_end", "peak_rate", "state", "updated", "start", "held", "applied", "floor", "activation_pending", "last_change"}).AddRow(true, 1, 9951, 1, 100, 0, 100, 0, 1751, 4301, 1, false, "", "", 1, raw, now, now, 0, 100, 10, false, nil))
+	mock.ExpectQuery("SELECT p.enabled,p.revision").WithArgs(int64(11)).WillReturnRows(sqlmock.NewRows([]string{"enabled", "revision", "account_id", "weight", "max_limit", "used_std", "allocated_std", "used", "user_id", "group_id", "rate", "peak_enabled", "peak_start", "peak_end", "peak_rate", "state", "updated", "start", "held", "applied", "floor", "activation_pending", "last_change", "fixed_slots", "source_fixed_slots"}).AddRow(true, 1, 9951, 1, 100, 0, 100, 0, 1751, 4301, 1, false, "", "", 1, raw, now, now, 0, 100, 10, false, nil, 0, 0))
 	mock.ExpectQuery("SELECT COALESCE\\(a.extra").WithArgs(int64(9951)).WillReturnRows(sqlmock.NewRows([]string{"extra", "settings"}).AddRow(`{"auto_pause_7d_threshold":0.98}`, `{}`))
 	mock.ExpectExec("INSERT INTO dynamic_quota_requests").WithArgs(sqlmock.AnyArg(), int64(9951), int64(1), int64(11), int64(1851), 0.01, int64(11), sqlmock.AnyArg(), sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()

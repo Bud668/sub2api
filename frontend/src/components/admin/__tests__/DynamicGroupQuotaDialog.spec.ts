@@ -8,7 +8,7 @@ import DynamicGroupQuotaDialog from '../DynamicGroupQuotaDialog.vue'
 const { get, save } = vi.hoisted(() => ({ get: vi.fn(), save: vi.fn() }))
 vi.mock('@/api/admin', () => ({ adminAPI: { groups: { getDynamicQuota: get, saveDynamicQuota: save } } }))
 const initial = (): DynamicGroupQuotaStatus => ({
-  policy: { group_id: 11, account_id: 0, enabled: false, revision: 0, weight: 1, max_limit_usd: 700, floor_limit_usd: null },
+  policy: { group_id: 11, account_id: 0, enabled: false, revision: 0, weight: 1, max_limit_usd: 700, fixed_slots: 0, floor_limit_usd: null },
   members: 2, debug_members: 1, legacy_members: 0,
   sources: [{ id: 4, name: 'Test source' }, { id: 5, name: 'Other source' }]
 })
@@ -27,19 +27,20 @@ describe('dynamic quota settings', () => {
     expect(wrapper.get('[data-testid=dynamic-save]').attributes('disabled')).toBeDefined()
     await wrapper.get('#dynamic-source').setValue('4')
     expect(wrapper.find('#dynamic-increase-threshold').exists()).toBe(false)
-    expect((wrapper.get('#dynamic-floor').element as HTMLInputElement).value).toBe('')
+    expect((wrapper.get('#dynamic-slots').element as HTMLInputElement).value).toBe('0')
+    expect(wrapper.find('#dynamic-floor').exists()).toBe(false)
     expect(wrapper.find('[data-testid=capacity-review]').exists()).toBe(false)
-    expect(wrapper.get('[data-testid=dynamic-floor-help]').attributes('aria-label')).toBe('下调保护说明')
+    expect(wrapper.get('[data-testid=dynamic-slots-help]').attributes('aria-label')).toBe('固定名额')
     expect(wrapper.find('#dynamic-usage-ceiling').exists()).toBe(false)
     expect(wrapper.text()).toContain('账号管理 → 编辑 → 5h / 7d 自动暂停')
-    await wrapper.get('#dynamic-floor').setValue(200)
+    await wrapper.get('#dynamic-slots').setValue(4)
     await wrapper.get('input[type=checkbox]').setValue(true)
     const response = initial()
-    response.policy = { ...response.policy, enabled: true, account_id: 4, revision: 1, floor_limit_usd: 200 }
+    response.policy = { ...response.policy, enabled: true, account_id: 4, revision: 1, fixed_slots: 4 }
     let resolve!: (value: DynamicGroupQuotaStatus) => void
     save.mockReturnValue(new Promise<DynamicGroupQuotaStatus>(done => { resolve = done }))
     await wrapper.get('form').trigger('submit')
-    expect(save).toHaveBeenCalledWith(11, { enabled: true, account_id: 4, revision: 0, weight: 1, max_limit_usd: 700, floor_limit_usd: 200 })
+    expect(save).toHaveBeenCalledWith(11, { enabled: true, account_id: 4, revision: 0, weight: 1, max_limit_usd: 700, fixed_slots: 4, floor_limit_usd: null })
     expect(wrapper.get('[data-testid=dynamic-save]').attributes('disabled')).toBeDefined()
     expect(wrapper.text()).toContain(zh.common.saving)
     resolve(response); await flushPromises()
@@ -61,7 +62,7 @@ describe('dynamic quota settings', () => {
     await wrapper.get('#dynamic-source').setValue('4')
     await wrapper.get('#dynamic-source').setValue('5')
     await wrapper.get('#dynamic-cap').setValue(450)
-    await wrapper.get('#dynamic-floor').setValue(200)
+    await wrapper.get('#dynamic-slots').setValue(4)
     save.mockRejectedValue({ status: 409, code: 409, reason: 'DYNAMIC_QUOTA_CHANGED' })
     await wrapper.get('form').trigger('submit'); await flushPromises()
     expect(wrapper.get('[role=alert]').text()).toContain('配置已被其他操作修改')
@@ -72,7 +73,10 @@ describe('dynamic quota settings', () => {
   })
 
   it.each([
-    ['INVALID_DYNAMIC_QUOTA_PROTECTION', zh.dynamicQuota.floorInvalid],
+    ['INVALID_DYNAMIC_QUOTA_SLOTS', zh.dynamicQuota.slotsInvalid],
+    ['DYNAMIC_QUOTA_SLOTS_FULL', zh.dynamicQuota.slotsFull],
+    ['DYNAMIC_QUOTA_SEATS_SPENT', zh.dynamicQuota.seatsSpent],
+    ['DYNAMIC_QUOTA_SEATS_LEARNING', zh.dynamicQuota.seatsLearning],
     ['DYNAMIC_QUOTA_BINDING_CONFLICT', zh.dynamicQuota.bindingError],
     ['DYNAMIC_QUOTA_UNAVAILABLE', zh.dynamicQuota.unavailable],
     ['UNRECOGNIZED_ERROR', zh.dynamicQuota.failed]
@@ -80,7 +84,7 @@ describe('dynamic quota settings', () => {
     const wrapper = mountDialog(); await flushPromises()
     await wrapper.get('#dynamic-source').setValue('5')
     await wrapper.get('#dynamic-cap').setValue(600)
-    await wrapper.get('#dynamic-floor').setValue(200)
+    await wrapper.get('#dynamic-slots').setValue(4)
     await wrapper.get('[data-testid=dynamic-enable]').setValue(true)
     save.mockRejectedValue({ status: 409, code: 409, reason })
     await wrapper.get('form').trigger('submit'); await flushPromises()
@@ -107,20 +111,20 @@ describe('dynamic quota settings', () => {
   })
 
 
-  it('rejects missing, zero and above-cap protection without submitting', async () => {
+  it('rejects missing, zero, fractional and excessive seats without submitting', async () => {
     const wrapper = mountDialog(); await flushPromises()
     await wrapper.get('#dynamic-source').setValue('4')
-    for (const value of ['', 0, 701]) {
-      await wrapper.get('#dynamic-floor').setValue(value)
+    for (const value of ['', 0, 2.5, 1001]) {
+      await wrapper.get('#dynamic-slots').setValue(value)
       await wrapper.get('form').trigger('submit'); await flushPromises()
-      expect(wrapper.get('#dynamic-floor-error').text()).toContain('不超过分配上限')
+      expect(wrapper.get('#dynamic-slots-error').text()).toContain('整数名额数')
       expect(save).not.toHaveBeenCalled()
     }
   })
 
   it('keeps the group switch and settings after saving', async () => {
     const result = initial()
-    result.policy = { ...result.policy, account_id: 4, revision: 1, enabled: true, floor_limit_usd: 200 }
+    result.policy = { ...result.policy, account_id: 4, revision: 1, enabled: true, fixed_slots: 4 }
     get.mockResolvedValue(result)
     const wrapper = mountDialog(); await flushPromises()
     expect((wrapper.get('[data-testid=dynamic-enable]').element as HTMLInputElement).checked).toBe(true)
@@ -134,14 +138,31 @@ describe('dynamic quota settings', () => {
   it.each([{ code: 'ECONNABORTED' }, { status: 500, code: 'INTERNAL_SERVER_ERROR' }])('checks an ambiguous save %j by reading once, never blindly resubmits', async (error) => {
     const wrapper = mountDialog(); await flushPromises()
     await wrapper.get('#dynamic-source').setValue('4')
-    await wrapper.get('#dynamic-floor').setValue(200)
+    await wrapper.get('#dynamic-slots').setValue(4)
     save.mockRejectedValue(error)
     const result = initial()
-    result.policy = { ...result.policy, account_id: 4, revision: 1, floor_limit_usd: 200 }
+    result.policy = { ...result.policy, account_id: 4, revision: 1, fixed_slots: 4 }
     get.mockResolvedValue(result)
     await wrapper.get('form').trigger('submit'); await flushPromises()
     expect(save).toHaveBeenCalledTimes(1)
     expect(wrapper.text()).toContain('保存成功')
     expect(wrapper.emitted('close')).toBeUndefined()
+  })
+
+  it('shows effective seats separately from edits and warns of immediate reallocation', async () => {
+    const result = initial()
+    result.policy = { ...result.policy, enabled: true, account_id: 4, revision: 1, fixed_slots: 4 }
+    result.effective_slots = 4; result.occupied_slots = 2
+    get.mockResolvedValue(result)
+    const wrapper = mountDialog(); await flushPromises()
+    expect(wrapper.find('[data-testid=dynamic-seat-change]').exists()).toBe(false)
+    await wrapper.get('#dynamic-slots').setValue(6)
+    expect(wrapper.get('[data-testid=dynamic-seat-change]').text()).toContain('立即重算')
+    expect(wrapper.get('[data-testid=dynamic-current-seats]').exists()).toBe(true)
+    save.mockRejectedValue({ status: 409, reason: 'DYNAMIC_QUOTA_SEATS_SPENT' })
+    await wrapper.get('form').trigger('submit'); await flushPromises()
+    expect(wrapper.get('[role=alert]').text()).toContain('原配置和账务未改动')
+    expect((wrapper.get('#dynamic-slots').element as HTMLInputElement).value).toBe('6')
+    expect(wrapper.emitted('saved')).toBeUndefined()
   })
 })

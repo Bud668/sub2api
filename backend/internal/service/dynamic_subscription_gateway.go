@@ -24,7 +24,8 @@ func markDynamicQuotaDispatched(ctx context.Context) error {
 const OpsDynamicQuotaErrorKey = "ops_dynamic_quota_error"
 
 func isDynamicQuotaError(err error) bool {
-	return strings.HasPrefix(infraerrors.Reason(err), "DYNAMIC_QUOTA_")
+	reason := infraerrors.Reason(err)
+	return strings.HasPrefix(reason, "DYNAMIC_QUOTA_") || reason == "ADMIN_DEBUG_RESET_PENDING" || reason == "WEEKLY_LIMIT_EXCEEDED"
 }
 
 // No provider attribution or request content is needed for a local quota denial.

@@ -43,6 +43,7 @@
                   <h3 class="break-words font-semibold text-gray-900 dark:text-white">
                     {{ subscription.group?.name || `Group #${subscription.group_id}` }}
                   </h3>
+                  <FixedSeatBadge :quota="subscription.dynamic_quota" />
                   <span :class="['rounded-md border px-2 py-0.5 text-[11px] font-medium', platformBadgeClass(subscription.group?.platform || '')]">
                     {{ platformLabel(subscription.group?.platform || '') }}
                   </span>
@@ -77,7 +78,7 @@
               <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
                 <template v-if="subscription.expires_at">
                   <time :datetime="subscription.expires_at" class="text-base font-semibold leading-6 tabular-nums text-gray-900 dark:text-gray-100">{{ formatDateTimeToMinute(subscription.expires_at) || '—' }}</time>
-                  <span class="rounded-md px-2 py-1 text-xs font-medium" :class="getExpirationClass(subscription.expires_at)">{{ formatExpirationRemaining(subscription.expires_at) }}</span>
+                  <span class="rounded-md px-2 py-1 text-xs font-medium" :class="subscriptionExpiryClass(subscription.expires_at, expiryNow)" data-testid="subscription-expiry-badge">{{ formatExpirationRemaining(subscription.expires_at) }}</span>
                 </template>
                 <span v-else class="text-base font-semibold text-gray-900 dark:text-gray-100">{{ t('userSubscriptions.noExpiration') }}</span>
               </div>
@@ -242,8 +243,10 @@
 <script setup lang="ts">
 import DynamicQuotaCard from '@/components/common/DynamicQuotaCard.vue'
 import SubscriptionStatusBadge from '@/components/common/SubscriptionStatusBadge.vue'
+import FixedSeatBadge from '@/components/common/FixedSeatBadge.vue'
 import AdminDebugUsage from '@/components/common/AdminDebugUsage.vue'
 import { ref, onMounted } from 'vue'
+import { useNow } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
@@ -259,6 +262,7 @@ import {
   getRemainingDurationParts,
   isOneTimeDailyQuota,
   subscriptionBorderStyle,
+  subscriptionExpiryClass,
   type RemainingDurationParts
 } from '@/utils/subscriptionQuota'
 
@@ -278,6 +282,7 @@ const appStore = useAppStore()
 
 const subscriptions = ref<UserSubscription[]>([])
 const loading = ref(true)
+const expiryNow = useNow({ interval: 60_000 })
 
 function subscriptionHasPeakRate(subscription: UserSubscription): boolean {
   return hasPeakRate(subscription.group)
@@ -334,17 +339,6 @@ function formatExpirationRemaining(expiresAt: string): string {
   }
 
   return t('userSubscriptions.daysRemaining', { days })
-}
-
-function getExpirationClass(expiresAt: string): string {
-  const now = new Date()
-  const expires = new Date(expiresAt)
-  const diff = expires.getTime() - now.getTime()
-  const days = Math.ceil(diff / (1000 * 60 * 60 * 24))
-
-  if (days <= 3) return 'bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-300'
-  if (days <= 7) return 'bg-orange-50 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300'
-  return 'bg-gray-200/60 text-gray-700 dark:bg-dark-600 dark:text-gray-200'
 }
 
 function formatDurationParts(parts: RemainingDurationParts): string {

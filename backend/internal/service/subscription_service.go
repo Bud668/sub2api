@@ -298,6 +298,17 @@ func (s *SubscriptionService) updateExistingSubscriptionTerm(
 	assignmentSemantics bool,
 ) error {
 	return s.withSubscriptionUpdateTx(ctx, func(txCtx context.Context) error {
+		if s.DynamicQuotas != nil {
+			before, err := s.userSubRepo.GetByID(txCtx, subscriptionID)
+			if err != nil {
+				return err
+			}
+			if !(assignmentSemantics && before.Status == SubscriptionStatusSuspended) {
+				if _, _, err = s.DynamicQuotas.prepareFixedAssignment(txCtx, before.GroupID, before.ID, before.UserID, before.AdminDebug); err != nil {
+					return err
+				}
+			}
+		}
 		existingSub, err := s.userSubRepo.GetByIDForUpdate(txCtx, subscriptionID)
 		if err != nil {
 			return fmt.Errorf("lock subscription for renewal: %w", err)
@@ -446,7 +457,27 @@ func (s *SubscriptionService) createSubscription(ctx context.Context, input *Ass
 		sub.AssignedBy = &input.AssignedBy
 	}
 
-	if err := s.userSubRepo.Create(ctx, sub); err != nil {
+	if err := s.withSubscriptionUpdateTx(ctx, func(txCtx context.Context) error {
+		group, pool, err := s.DynamicQuotas.prepareFixedAssignment(txCtx, input.GroupID, 0, input.UserID, input.AdminDebug)
+		if err != nil {
+			return err
+		}
+		if err = s.userSubRepo.Create(txCtx, sub); err != nil {
+			return err
+		}
+		if sub.AdminDebug && s.DynamicQuotas != nil {
+			if dbent.TxFromContext(txCtx) == nil {
+				return ErrDynamicQuotaUnavailable
+			}
+			if err = initializeAdminDebugQuota(txCtx, dbent.TxFromContext(txCtx), sub.ID); err != nil {
+				return err
+			}
+		}
+		if group != nil {
+			return claimFixedSeat(txCtx, dbent.TxFromContext(txCtx), pool, group, sub.ID, sub.UserID)
+		}
+		return nil
+	}); err != nil {
 		return nil, err
 	}
 
@@ -1023,6 +1054,9 @@ func (s *SubscriptionService) EnsureWindowMaintenance(ctx context.Context, sub *
 // CheckUsageLimits 检查使用限额（返回错误如果超限）
 // 用于中间件的快速预检查，additionalCost 通常为 0
 func (s *SubscriptionService) CheckUsageLimits(ctx context.Context, sub *UserSubscription, group *Group, additionalCost float64) error {
+	if sub.AdminDebugQuota != nil && sub.AdminDebugQuota.ResetPending {
+		return sub.AdminDebugQuota.check(0)
+	}
 	if err := sub.DynamicQuota.checkReady(); err != nil {
 		return err
 	}
@@ -1046,6 +1080,9 @@ func (s *SubscriptionService) CheckUsageLimits(ctx context.Context, sub *UserSub
 // 返回 needsMaintenance 表示是否需要执行窗口维护并回读数据库快照。
 func (s *SubscriptionService) ValidateAndCheckLimits(sub *UserSubscription, group *Group) (needsMaintenance bool, err error) {
 	now := s.now()
+	if sub.AdminDebugQuota != nil && sub.AdminDebugQuota.ResetPending {
+		return false, sub.AdminDebugQuota.check(0)
+	}
 	if err := sub.DynamicQuota.checkReady(); err != nil {
 		return false, err
 	}

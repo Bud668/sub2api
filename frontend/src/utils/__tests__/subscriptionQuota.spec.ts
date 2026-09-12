@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { getExpirationDateRelation, getRemainingExpiryDuration, subscriptionBorderStyle } from '../subscriptionQuota'
+import { getExpirationDateRelation, getRemainingExpiryDuration, subscriptionBorderStyle, subscriptionExpiryClass } from '../subscriptionQuota'
 
 it('shares neutral themed cards with soft shadows and reserves purple borders for debug', () => {
   const normal = subscriptionBorderStyle({ group_id: 7 })
@@ -17,6 +17,15 @@ it('shares neutral themed cards with soft shadows and reserves purple borders fo
 })
 
 describe('subscription expiry timing', () => {
+  it('uses red through 3 days, yellow through 7, green beyond, with both themes', () => {
+    const now = new Date('2026-09-12T12:00:00Z')
+    for (const [days, color] of [[-1, 'red'], [0, 'red'], [3, 'red'], [3.001, 'yellow'], [7, 'yellow'], [7.001, 'green'], [23, 'green']] as const) {
+      const classes = subscriptionExpiryClass(new Date(now.getTime() + days * 86400_000).toISOString(), now)
+      expect(classes).toBe(`bg-${color}-100 text-${color}-800 dark:bg-${color}-900/40 dark:text-${color}-200`)
+    }
+    expect(subscriptionExpiryClass('invalid', now)).toContain('bg-gray-100')
+  })
+
   it('uses local calendar dates for today and tomorrow', () => {
     const now = new Date(2026, 2, 7, 23, 30)
 

@@ -16,7 +16,7 @@
               :aria-label="quota.next_adjustment_percent ? t('dynamicQuota.stageAt', { percent: quota.next_adjustment_percent }) : t('dynamicQuota.noNextStage')"
             >{{ quota.next_adjustment_percent ? t('dynamicQuota.stageShort', { percent: quota.next_adjustment_percent }) : t('dynamicQuota.noNextStageShort') }}</span>
           </dt>
-          <dd class="quota-amount mt-1 break-words text-lg font-semibold tracking-tight">{{ usd(quota.limit_usd) }}</dd>
+          <dd class="quota-amount mt-1 break-words text-lg font-bold tracking-tight text-gray-900 dark:text-gray-100">{{ usd(quota.limit_usd) }}</dd>
           <dd class="mt-2 flex flex-wrap items-start gap-1 text-xs leading-4 text-gray-600 dark:text-gray-300" :title="`${allocationLabel}: ${allocationTime ? date(quota.last_allocation_at) : t('dynamicQuota.notAllocated')}`">
             <Icon name="refresh" size="xs" class="mt-0.5 shrink-0" aria-hidden="true" />
             <span class="shrink-0">{{ allocationLabel }}</span>
@@ -25,13 +25,13 @@
           </dd>
         </div>
         <div class="min-w-0">
-          <dt class="text-xs font-medium text-gray-600 dark:text-gray-300">{{ t('dynamicQuota.used') }}</dt>
-          <dd class="quota-amount mt-1 break-words text-lg font-semibold tracking-tight">{{ usd(quota.used_usd) }}</dd>
+          <dt class="text-xs font-semibold text-gray-700 dark:text-gray-200">{{ t('dynamicQuota.used') }}</dt>
+          <dd class="quota-amount mt-1 break-words text-lg font-bold tracking-tight text-gray-900 dark:text-gray-100">{{ usd(quota.used_usd) }}</dd>
           <dd v-if="quota.reserved_usd > 0" class="quota-reserved mt-2 text-xs leading-4 text-gray-600 dark:text-gray-300">{{ t('dynamicQuota.reserved') }} · {{ usd(quota.reserved_usd) }}</dd>
         </div>
         <div class="min-w-0" data-testid="dynamic-remaining">
-          <dt class="text-xs font-medium text-gray-600 dark:text-gray-300">{{ t('dynamicQuota.remaining') }}</dt>
-          <dd class="quota-amount mt-1 break-words text-lg font-semibold tracking-tight text-primary-700 dark:text-primary-300">{{ usd(quota.remaining_usd) }}</dd>
+          <dt class="text-xs font-semibold text-gray-700 dark:text-gray-200">{{ t('dynamicQuota.remaining') }}</dt>
+          <dd class="quota-amount mt-1 break-words text-lg font-bold tracking-tight text-primary-700 dark:text-primary-300">{{ usd(quota.remaining_usd) }}</dd>
         </div>
       </dl>
       <div class="quota-progress my-3 h-2 overflow-hidden rounded-full bg-gray-200 dark:bg-dark-600" role="progressbar" :aria-label="t('dynamicQuota.used')" :aria-valuenow="percentage" aria-valuemin="0" aria-valuemax="100">
@@ -39,7 +39,7 @@
       </div>
       <div class="quota-footer flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
       <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-600 dark:text-gray-300" data-testid="dynamic-bounds">
-        <span v-if="quota.floor_limit_usd != null" class="inline-flex items-center">{{ t('dynamicQuota.floor') }} <strong class="ml-1 font-medium tabular-nums">{{ usd(quota.floor_limit_usd) }}</strong><HelpTooltip trigger="click" :content="t('dynamicQuota.floorHint')"><template #trigger><button type="button" class="rounded px-1 focus-visible:ring-2 focus-visible:ring-primary-500" :aria-label="t('dynamicQuota.floorHelp')">ⓘ</button></template></HelpTooltip></span>
+        <span v-if="!quota.fixed_slots && quota.floor_limit_usd != null" class="inline-flex items-center">{{ t('dynamicQuota.floor') }} <strong class="ml-1 font-medium tabular-nums">{{ usd(quota.floor_limit_usd) }}</strong><HelpTooltip trigger="click" :content="t('dynamicQuota.floorHint')"><template #trigger><button type="button" class="rounded px-1 focus-visible:ring-2 focus-visible:ring-primary-500" :aria-label="t('dynamicQuota.floorHelp')">ⓘ</button></template></HelpTooltip></span>
         <span>{{ t('dynamicQuota.cap') }} <strong class="ml-1 font-medium tabular-nums">{{ usd(quota.max_limit_usd) }}</strong></span>
       </div>
       <div class="text-xs" data-testid="dynamic-reset" :title="t('dynamicQuota.resetHint')">
@@ -59,7 +59,7 @@
       <p><span class="font-medium">{{ t('dynamicQuota.pendingStage', { percent: quota.pending_adjustment_percent }) }} · </span>{{ t(`dynamicQuota.allocationWait.${pendingReason}`) }}</p>
     </div>
     <template v-if="!compact">
-      <p v-if="quota.status === 'learning'" class="mt-2 text-xs text-gray-600 dark:text-gray-300">{{ t('dynamicQuota.v2LearningHint') }}</p>
+      <p v-if="quota.status === 'learning'" class="mt-2 text-xs text-gray-600 dark:text-gray-300">{{ t(quota.source_fixed_slots ? 'dynamicQuota.fixedLearningHint' : 'dynamicQuota.v2LearningHint') }}</p>
       <p v-if="quota.growth_frozen" class="mt-2 text-xs text-amber-800 dark:text-amber-200">{{ t('dynamicQuota.growthFrozen') }}</p>
       <details class="mt-2 text-xs text-gray-600 dark:text-gray-300">
         <summary class="cursor-pointer font-medium">{{ t('dynamicQuota.details') }}</summary>
@@ -92,7 +92,7 @@ const { t, locale } = useI18n()
 const resetTime = computed(() => formatDateTimeToMinute(props.quota.expected_reset_at, locale.value))
 const allocationTime = computed(() => formatDate(props.quota.last_allocation_at, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }, locale.value))
 const allocationLabel = computed(() => t(props.quota.last_change?.reason === 'initial' ? 'dynamicQuota.initialAllocatedAt' : 'dynamicQuota.allocatedAt'))
-const changeReason = computed(() => ['initial', 'bounds', 'upstream_node', 'reset'].includes(props.quota.last_change?.reason || '') ? props.quota.last_change!.reason : 'bounds')
+const changeReason = computed(() => ['initial', 'bounds', 'upstream_node', 'reset', 'seats', 'budget_safety'].includes(props.quota.last_change?.reason || '') ? props.quota.last_change!.reason : 'bounds')
 const pendingReason = computed(() => ['budget_conflict', 'protection', 'learning', 'guard', 'awaiting_allocation'].includes(props.quota.pending_adjustment_reason || '') ? props.quota.pending_adjustment_reason : 'guard')
 const percentage = computed(() => props.quota.limit_usd > 0 ? Math.min(100, Math.max(0, Math.round(props.quota.used_usd / props.quota.limit_usd * 100))) : 0)
 const usd = (value: number) => Number.isFinite(value) ? new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(value) : '—'

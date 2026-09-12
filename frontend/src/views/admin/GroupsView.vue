@@ -183,7 +183,8 @@
               </span>
               <!-- Subscription Limits - compact single line -->
               <div v-if="dynamicPolicies.get(row.id)?.enabled" class="flex flex-wrap gap-x-2 gap-y-1 text-xs text-primary-700 dark:text-primary-300" data-testid="group-dynamic-bounds">
-                <span>{{ t('dynamicQuota.floor') }} {{ formatUsd(dynamicPolicies.get(row.id)!.floor_limit_usd ?? 0) }}</span>
+                <span v-if="dynamicPolicies.get(row.id)?.fixed_slots">{{ t('dynamicQuota.fixedSlotsBadge', { n: dynamicPolicies.get(row.id)!.fixed_slots }) }}</span>
+                <span v-else-if="dynamicPolicies.get(row.id)?.floor_limit_usd">{{ t('dynamicQuota.floor') }} {{ formatUsd(dynamicPolicies.get(row.id)!.floor_limit_usd!) }}</span>
                 <span>{{ t('dynamicQuota.cap') }} {{ formatUsd(dynamicPolicies.get(row.id)!.max_limit_usd) }}</span>
               </div>
               <p v-else-if="row.platform === 'openai' && row.subscription_type === 'subscription'" class="text-xs text-gray-500 dark:text-gray-400">{{ t('dynamicQuota.groupSetup') }}</p>

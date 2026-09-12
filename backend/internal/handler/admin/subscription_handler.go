@@ -163,6 +163,39 @@ func (h *SubscriptionHandler) ConvertToAdminDebug(c *gin.Context) {
 	response.Success(c, gin.H{"admin_debug": true})
 }
 
+func (h *SubscriptionHandler) SaveAdminDebugQuota(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	middleware2.SetAuditAction(c, "admin.subscription.admin_debug.quota.update")
+	if getAdminIDFromContext(c) <= 0 {
+		response.Unauthorized(c, "Authentication required")
+		return
+	}
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.BadRequest(c, "Invalid subscription ID")
+		return
+	}
+	var in struct {
+		Revision       *int64   `json:"revision"`
+		WeeklyLimitUSD *float64 `json:"weekly_limit_usd"`
+	}
+	decoder := json.NewDecoder(http.MaxBytesReader(c.Writer, c.Request.Body, 1024))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&in) != nil || decoder.Decode(new(any)) != io.EOF || in.Revision == nil || in.WeeklyLimitUSD == nil {
+		response.BadRequest(c, "Expected a revision and an independent weekly limit")
+		return
+	}
+	if h.subscriptionService == nil || h.subscriptionService.DynamicQuotas == nil {
+		response.ErrorFrom(c, service.ErrDynamicQuotaUnavailable)
+		return
+	}
+	if err = h.subscriptionService.DynamicQuotas.SaveAdminDebugQuota(c.Request.Context(), id, *in.Revision, *in.WeeklyLimitUSD); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	h.GetByID(c)
+}
+
 func (h *SubscriptionHandler) DynamicReset(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
 	if getAdminIDFromContext(c) <= 0 {
@@ -294,6 +327,7 @@ func (h *SubscriptionHandler) List(c *gin.Context) {
 // GetByID handles getting a subscription by ID
 // GET /api/v1/admin/subscriptions/:id
 func (h *SubscriptionHandler) GetByID(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
 	subscriptionID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
 		response.BadRequest(c, "Invalid subscription ID")

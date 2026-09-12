@@ -72,6 +72,33 @@ func TestAdminDebugConversionRequiresTrustedActorAndValidID(t *testing.T) {
 	}
 }
 
+func TestAdminDebugQuotaRejectsUntrustedAndIncompleteEdits(t *testing.T) {
+	h := NewSubscriptionHandler(nil)
+	for _, tc := range []struct {
+		actor int64
+		body  string
+		code  int
+	}{
+		{0, `{"revision":1,"weekly_limit_usd":0,"actor_id":1}`, 401},
+		{1, `{}`, 400}, {1, `{"revision":1}`, 400}, {1, `{"revision":1,"weekly_limit_usd":null}`, 400},
+		{1, `{"revision":1,"weekly_limit_usd":1,"reset_usage":true}`, 400},
+		{1, `{"revision":1,"weekly_limit_usd":1} {}`, 400},
+		{1, `{"revision":1,"weekly_limit_usd":0}`, 503},
+	} {
+		router := gin.New()
+		router.PUT("/:id", func(c *gin.Context) {
+			if tc.actor > 0 {
+				c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: tc.actor})
+			}
+			h.SaveAdminDebugQuota(c)
+		})
+		r := httptest.NewRecorder()
+		router.ServeHTTP(r, httptest.NewRequest(http.MethodPut, "/11", strings.NewReader(tc.body)))
+		require.Equal(t, tc.code, r.Code, tc.body)
+		require.Equal(t, "no-store", r.Header().Get("Cache-Control"))
+	}
+}
+
 func TestDynamicQuotaManualResetRejectsUntrustedParameters(t *testing.T) {
 	h := NewSubscriptionHandler(&service.SubscriptionService{DynamicQuotas: service.NewDynamicSubscriptionService(nil, nil, nil, nil)})
 	router := gin.New()

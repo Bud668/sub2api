@@ -44,7 +44,12 @@ describe('combined subscription status', () => {
     await wrapper.setProps({ subscription: { ...subscription, admin_debug: true, dynamic_quota: { ...quota, remaining_usd: 0 } } })
     expect(button.text()).toBe('生效中')
     expect(button.attributes('title')).toContain('不参与动态分配')
-    expect(button.attributes('title')).toContain('原分组限额')
+    expect(button.attributes('title')).toContain('独立周额度')
+    const debug = { weekly_limit_usd: 50, revision: 1, follow_reset: true, reset_pending: false }
+    await wrapper.setProps({ subscription: { ...subscription, admin_debug: true, admin_debug_quota: debug, weekly_usage_usd: 50 } })
+    expect(button.text()).toBe('额度已用尽')
+    await wrapper.setProps({ subscription: { ...subscription, admin_debug: true, admin_debug_quota: { ...debug, reset_pending: true } } })
+    expect(button.text()).toBe('等待旧请求结算')
     await wrapper.setProps({ subscription: { status: 'active', dynamic_quota: null } })
     expect(button.text()).toBe('生效中')
     expect(button.attributes('title')).toContain('原分组限额')

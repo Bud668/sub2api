@@ -117,6 +117,9 @@ backend/.installed
 # 其他
 # ===================
 tests
+!frontend/tests/
+frontend/tests/*
+!frontend/tests/fixed-seats.browser.mjs
 !deploy/tests/
 !deploy/tests/**
 CLAUDE.md

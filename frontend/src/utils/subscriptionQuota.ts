@@ -15,6 +15,15 @@ export function subscriptionBorderStyle(subscription: Pick<UserSubscription, 'gr
 
 export type ExpirationDateRelation = 'expired' | 'today' | 'tomorrow' | 'later'
 
+// Match the rounded-up day label; expired remains red, invalid dates neutral.
+export function subscriptionExpiryClass(expiresAt: string, now: Date = new Date()): string {
+  const days = Math.ceil((new Date(expiresAt).getTime() - now.getTime()) / ONE_DAY_MS)
+  if (!Number.isFinite(days)) return 'bg-gray-100 text-gray-700 dark:bg-dark-600 dark:text-gray-300'
+  if (days <= 3) return 'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-200'
+  if (days <= 7) return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-200'
+  return 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-200'
+}
+
 export type RemainingExpiryDuration =
   | { unit: 'days'; days: number }
   | { unit: 'hoursMinutes'; hours: number; minutes: number }

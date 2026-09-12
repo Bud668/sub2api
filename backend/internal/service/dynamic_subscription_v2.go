@@ -18,6 +18,7 @@ type DynamicQuotaV2State struct {
 	CandidateSamples   int       `json:"candidate_samples,omitempty"`
 	BudgetConflict     bool      `json:"budget_conflict,omitempty"`
 	UnreservedCapacity bool      `json:"unreserved_capacity,omitempty"`
+	FixedSeats         bool      `json:"fixed_seats,omitempty"`
 }
 
 type DynamicQuotaChange struct {
@@ -33,9 +34,13 @@ func dynamicQuotaNode(percent float64) int {
 }
 
 func (p *DynamicQuotaPoolState) startV2() {
-	p.V2 = &DynamicQuotaV2State{UnreservedCapacity: true}
+	fixed := p.V2 != nil && p.V2.FixedSeats
+	p.V2 = &DynamicQuotaV2State{UnreservedCapacity: true, FixedSeats: fixed}
 	if p.Snapshot != nil {
 		p.V2.LastNode = dynamicQuotaNode(p.Snapshot.UsedPercent)
+		if fixed {
+			p.V2.LastNode = p.fixedSeatNode(p.Snapshot.UsedPercent)
+		}
 	}
 	p.SampleAnchor = p.Snapshot
 	p.Samples = nil
@@ -76,7 +81,11 @@ func (p *DynamicQuotaPoolState) observeV2Capacity(o DynamicQuotaObservation) {
 		return
 	}
 	delta := o.UsedPercent - anchor.UsedPercent
-	if delta < 10 || o.FetchedAt.Sub(anchor.FetchedAt) < time.Minute {
+	step := 10.0
+	if p.V2.FixedSeats {
+		step = float64(p.fixedSeatStep(anchor.UsedPercent))
+	}
+	if delta < step || o.FetchedAt.Sub(anchor.FetchedAt) < time.Minute {
 		return
 	}
 	p.SampleAnchor = &o
@@ -177,6 +186,9 @@ func allocateDynamicQuotaV2(members []dynamicQuotaV2Member, remaining float64) (
 }
 
 func (s *DynamicSubscriptionService) reallocateV2(ctx context.Context, tx *sql.Tx, accountID int64, p *DynamicQuotaPoolState, now time.Time) error {
+	if p.V2 != nil && p.V2.FixedSeats {
+		return s.reallocateFixedSeats(ctx, tx, accountID, p, now, false)
+	}
 	if !p.v2AllocationDue(now) {
 		return nil
 	}
@@ -271,7 +283,7 @@ func (s *DynamicSubscriptionService) reallocateV2(ctx context.Context, tx *sql.T
 // The source lock serializes this handoff with Begin, billing and reset. No
 // request is reassigned: old holds keep their fixed owner/source/cycle, and
 // settlement updates that owner's durable V2 consumption once via billing dedup.
-func activateDynamicV2(ctx context.Context, tx *sql.Tx, accountID int64, reset bool, now time.Time) error {
+func activateDynamicV2(ctx context.Context, tx *sql.Tx, accountID int64, pool *DynamicQuotaPoolState, reset bool, now time.Time) error {
 	rows, err := tx.QueryContext(ctx, `SELECT p.subscription_id FROM dynamic_subscription_policies p
  WHERE p.account_id=$1 AND p.enabled AND (p.activation_pending OR $2)
  AND `+dynamicEligibleMemberSQL+` ORDER BY p.subscription_id`, accountID, reset)
@@ -302,6 +314,19 @@ func activateDynamicV2(ctx context.Context, tx *sql.Tx, accountID int64, reset b
 		limit := q.LimitUSD
 		if reset {
 			limit = q.MaxLimitUSD
+			if pool.V2.FixedSeats {
+				limit = dynamicStartupLimit(q.MaxLimitUSD)
+			}
+		}
+		if pool.V2.FixedSeats {
+			var fixed, owns bool
+			if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM dynamic_group_policies WHERE group_id=$1 AND fixed_slots>0),
+ EXISTS(SELECT 1 FROM dynamic_quota_seats WHERE account_id=$2 AND cycle=$3 AND subscription_id=$4)`, q.groupID, accountID, fixedSeatCycle(pool), id).Scan(&fixed, &owns); err != nil {
+				return err
+			}
+			if fixed && !owns {
+				continue
+			}
 		}
 		_, err = tx.ExecContext(ctx, `UPDATE dynamic_subscription_policies SET activation_pending=false,
  last_change=CASE WHEN activation_pending AND NOT $5 THEN jsonb_build_object('previous_usd',0,

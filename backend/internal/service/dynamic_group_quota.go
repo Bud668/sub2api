@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"math"
+	"time"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 )
@@ -15,17 +16,20 @@ type DynamicGroupPolicy struct {
 }
 
 type DynamicGroupQuotaStatus struct {
-	Policy        DynamicGroupPolicy   `json:"policy"`
-	Sources       []DynamicQuotaSource `json:"sources"`
-	Members       int                  `json:"members"`
-	DebugMembers  int                  `json:"debug_members"`
-	LegacyMembers int                  `json:"legacy_members"`
+	Policy         DynamicGroupPolicy   `json:"policy"`
+	Sources        []DynamicQuotaSource `json:"sources"`
+	Members        int                  `json:"members"`
+	DebugMembers   int                  `json:"debug_members"`
+	LegacyMembers  int                  `json:"legacy_members"`
+	EffectiveSlots int                  `json:"effective_slots"`
+	OccupiedSlots  int                  `json:"occupied_slots"`
+	SourceSlots    int                  `json:"source_slots"`
 }
 
 func loadDynamicGroup(ctx context.Context, db dynamicQuotaQuerier, groupID int64) (*DynamicGroupPolicy, error) {
 	p := &DynamicGroupPolicy{GroupID: groupID}
-	err := db.QueryRowContext(ctx, `SELECT account_id,enabled,weight,max_limit_usd,floor_limit_usd,revision FROM dynamic_group_policies WHERE group_id=$1`, groupID).
-		Scan(&p.AccountID, &p.Enabled, &p.Weight, &p.MaxLimitUSD, &p.FloorLimitUSD, &p.Revision)
+	err := db.QueryRowContext(ctx, `SELECT account_id,enabled,weight,max_limit_usd,floor_limit_usd,revision,fixed_slots FROM dynamic_group_policies WHERE group_id=$1`, groupID).
+		Scan(&p.AccountID, &p.Enabled, &p.Weight, &p.MaxLimitUSD, &p.FloorLimitUSD, &p.Revision, &p.FixedSlots)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -75,12 +79,22 @@ func (s *DynamicSubscriptionService) GroupStatus(ctx context.Context, groupID in
 	if err != nil {
 		return nil, err
 	}
+	if p.FixedSlots > 0 {
+		err = s.db.QueryRowContext(ctx, `SELECT count(*) FILTER(WHERE d.group_id=$2),
+ count(*) FILTER(WHERE d.group_id=$2 AND d.subscription_id IS NOT NULL),count(*)
+ FROM dynamic_quota_seats d JOIN dynamic_quota_pools pool ON pool.account_id=d.account_id
+ WHERE d.account_id=$1 AND d.cycle=GREATEST(1,COALESCE((pool.state->>'cycle')::bigint,0))`, p.AccountID, groupID).
+			Scan(&out.EffectiveSlots, &out.OccupiedSlots, &out.SourceSlots)
+		if err != nil {
+			return nil, err
+		}
+	}
 	out.Sources, err = s.groupSources(ctx, groupID)
 	return out, err
 }
 
 func (s *DynamicSubscriptionService) GroupPolicies(ctx context.Context) ([]DynamicGroupPolicy, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT p.group_id,p.account_id,p.enabled,p.weight,p.max_limit_usd,p.floor_limit_usd,p.revision
+	rows, err := s.db.QueryContext(ctx, `SELECT p.group_id,p.account_id,p.enabled,p.weight,p.max_limit_usd,p.floor_limit_usd,p.revision,p.fixed_slots
  FROM dynamic_group_policies p JOIN groups g ON g.id=p.group_id WHERE g.deleted_at IS NULL ORDER BY p.group_id`)
 	if err != nil {
 		return nil, err
@@ -89,7 +103,7 @@ func (s *DynamicSubscriptionService) GroupPolicies(ctx context.Context) ([]Dynam
 	out := []DynamicGroupPolicy{}
 	for rows.Next() {
 		var p DynamicGroupPolicy
-		if err = rows.Scan(&p.GroupID, &p.AccountID, &p.Enabled, &p.Weight, &p.MaxLimitUSD, &p.FloorLimitUSD, &p.Revision); err != nil {
+		if err = rows.Scan(&p.GroupID, &p.AccountID, &p.Enabled, &p.Weight, &p.MaxLimitUSD, &p.FloorLimitUSD, &p.Revision, &p.FixedSlots); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
@@ -98,16 +112,26 @@ func (s *DynamicSubscriptionService) GroupPolicies(ctx context.Context) ([]Dynam
 }
 
 func validateDynamicInput(in *DynamicSubscriptionInput) error {
-	if in.FloorLimitUSD == nil || !validDynamicAmount(*in.FloorLimitUSD) || QuantizeUsageBillingAmount(*in.FloorLimitUSD) <= 0 || *in.FloorLimitUSD > in.MaxLimitUSD {
+	if in.FixedSlots < 0 || in.FixedSlots > 1000 {
+		return infraerrors.BadRequest("INVALID_DYNAMIC_QUOTA_SLOTS", "Fixed seats must be an integer from 1 to 1000")
+	}
+	if in.FixedSlots > 0 {
+		in.FloorLimitUSD = nil // No administrator-supplied floor in fixed-seat mode.
+	} else if in.FloorLimitUSD == nil || !validDynamicAmount(*in.FloorLimitUSD) || QuantizeUsageBillingAmount(*in.FloorLimitUSD) <= 0 || *in.FloorLimitUSD > in.MaxLimitUSD {
 		return infraerrors.BadRequest("INVALID_DYNAMIC_QUOTA_PROTECTION", "Set a positive downward protection amount no greater than the allocation cap")
 	}
 	if in.Revision < 0 || in.AccountID <= 0 || !validDynamicAmount(in.Weight) || in.Weight < 0.0001 || in.Weight > 1000 || !validDynamicAmount(in.MaxLimitUSD) || in.MaxLimitUSD <= 0 || in.MaxLimitUSD > 1e9 {
 		return infraerrors.BadRequest("INVALID_DYNAMIC_QUOTA", "Choose an upstream account, weight and positive allocation cap")
 	}
 	in.MaxLimitUSD = QuantizeUsageBillingAmount(in.MaxLimitUSD)
+	if in.MaxLimitUSD <= 0 {
+		return infraerrors.BadRequest("INVALID_DYNAMIC_QUOTA", "Allocation cap is below billing precision")
+	}
 	in.Weight = math.Round(in.Weight*1e4) / 1e4
-	floor := QuantizeUsageBillingAmount(*in.FloorLimitUSD)
-	in.FloorLimitUSD = &floor
+	if in.FloorLimitUSD != nil {
+		floor := QuantizeUsageBillingAmount(*in.FloorLimitUSD)
+		in.FloorLimitUSD = &floor
+	}
 	return nil
 }
 
@@ -159,14 +183,36 @@ func (s *DynamicSubscriptionService) SaveGroup(ctx context.Context, groupID int6
 	if (old != nil && old.AccountID != in.AccountID) || ((in.Enabled || old == nil) && !eligible) {
 		return ErrDynamicQuotaBinding
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO dynamic_group_policies(group_id,account_id,enabled,weight,max_limit_usd,floor_limit_usd)
- VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(group_id) DO UPDATE SET enabled=EXCLUDED.enabled,weight=EXCLUDED.weight,
- max_limit_usd=EXCLUDED.max_limit_usd,floor_limit_usd=EXCLUDED.floor_limit_usd,revision=dynamic_group_policies.revision+1,updated_at=NOW()`, groupID, in.AccountID, in.Enabled, in.Weight, in.MaxLimitUSD, *in.FloorLimitUSD)
+	if old != nil && old.FixedSlots > 0 && in.FixedSlots == 0 {
+		return infraerrors.BadRequest("INVALID_DYNAMIC_QUOTA_SLOTS", "An existing fixed-seat group must retain an explicit seat count")
+	}
+	if in.FixedSlots > 0 {
+		var members int
+		if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM user_subscriptions us JOIN users u ON u.id=us.user_id
+ WHERE us.group_id=$1 AND us.deleted_at IS NULL AND us.status='active' AND us.expires_at>NOW()
+ AND u.deleted_at IS NULL AND u.status='active' AND NOT(us.admin_debug AND u.role='admin')`, groupID).Scan(&members); err != nil {
+			return err
+		}
+		if in.Enabled && in.FixedSlots < members {
+			return ErrDynamicQuotaSlotsFull
+		}
+		pool.enableFixedSeats()
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO dynamic_group_policies(group_id,account_id,enabled,weight,max_limit_usd,floor_limit_usd,fixed_slots)
+ VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(group_id) DO UPDATE SET enabled=EXCLUDED.enabled,weight=EXCLUDED.weight,
+ max_limit_usd=EXCLUDED.max_limit_usd,floor_limit_usd=EXCLUDED.floor_limit_usd,fixed_slots=EXCLUDED.fixed_slots,
+ revision=dynamic_group_policies.revision+1,updated_at=NOW()`, groupID, in.AccountID, in.Enabled, in.Weight, in.MaxLimitUSD, in.FloorLimitUSD, in.FixedSlots)
 	if err != nil {
 		return err
 	}
 	p := &DynamicGroupPolicy{GroupID: groupID, DynamicSubscriptionInput: in}
 	p.Revision++
+	seatChange := false
+	if p.FixedSlots > 0 {
+		if seatChange, err = resizeFixedSeats(ctx, tx, pool, p); err != nil {
+			return err
+		}
+	}
 	rows, err := tx.QueryContext(ctx, `SELECT us.id FROM user_subscriptions us JOIN users u ON u.id=us.user_id
  WHERE us.group_id=$1 AND us.deleted_at IS NULL AND us.status='active' AND us.expires_at>NOW()
  AND u.deleted_at IS NULL AND u.status='active' ORDER BY us.id`, groupID)
@@ -192,6 +238,14 @@ func (s *DynamicSubscriptionService) SaveGroup(ctx context.Context, groupID int6
 			return err
 		}
 	}
+	if pool.V2 != nil && pool.V2.FixedSeats {
+		if err = s.reallocateFixedSeats(ctx, tx, in.AccountID, pool, time.Now().UTC(), seatChange); err != nil {
+			return err
+		}
+		if err = writeDynamicPool(ctx, tx, in.AccountID, pool); err != nil {
+			return err
+		}
+	}
 	if err = tx.Commit(); err != nil {
 		return err
 	}
@@ -207,17 +261,33 @@ func (s *DynamicSubscriptionService) SaveGroup(ctx context.Context, groupID int6
 // cannot interleave. Existing usage, holds and immutable bindings are preserved.
 func (s *DynamicSubscriptionService) applyGroupPolicyTx(ctx context.Context, tx *sql.Tx, pool *DynamicQuotaPoolState, p *DynamicGroupPolicy, id int64) error {
 	var debug bool
-	var revision, source int64
+	var revision, source, userID int64
 	var groupRevision sql.NullInt64
 	var enabled sql.NullBool
-	err := tx.QueryRowContext(ctx, `SELECT us.admin_debug AND u.role='admin',COALESCE(d.revision,0),COALESCE(d.account_id,0),d.group_revision,d.enabled
+	err := tx.QueryRowContext(ctx, `SELECT us.admin_debug AND u.role='admin',COALESCE(d.revision,0),COALESCE(d.account_id,0),d.group_revision,d.enabled,us.user_id
  FROM user_subscriptions us JOIN users u ON u.id=us.user_id LEFT JOIN dynamic_subscription_policies d ON d.subscription_id=us.id
- WHERE us.id=$1 AND us.group_id=$2 AND us.deleted_at IS NULL FOR UPDATE OF us`, id, p.GroupID).Scan(&debug, &revision, &source, &groupRevision, &enabled)
+ WHERE us.id=$1 AND us.group_id=$2 AND us.deleted_at IS NULL FOR UPDATE OF us`, id, p.GroupID).Scan(&debug, &revision, &source, &groupRevision, &enabled, &userID)
 	if err != nil {
 		return err
 	}
 	if !debug && source != 0 && source != p.AccountID {
 		return ErrDynamicQuotaBinding
+	}
+	if debug {
+		if err = initializeAdminDebugQuota(ctx, tx, id); err != nil {
+			return err
+		}
+		// Bind once, without resetting usage or changing the independent amount.
+		if _, err = tx.ExecContext(ctx, `UPDATE admin_debug_quotas SET reset_account_id=$2,reset_cycle=$3,updated_at=NOW()
+ WHERE subscription_id=$1 AND reset_account_id IS NULL`, id, p.AccountID, pool.Cycle); err != nil {
+			return err
+		}
+	}
+	if !debug && p.Enabled && p.FixedSlots > 0 {
+		pool.enableFixedSeats()
+		if err = claimFixedSeat(ctx, tx, pool, p, id, userID); err != nil {
+			return err
+		}
 	}
 	if groupRevision.Valid && groupRevision.Int64 == p.Revision && enabled.Bool == (p.Enabled && !debug) {
 		return nil
@@ -309,6 +379,9 @@ func (s *DynamicSubscriptionService) ConvertToAdminDebug(ctx context.Context, id
  WHERE subscription_id=$1 AND (enabled OR activation_pending)`, id); err != nil {
 		return err
 	}
+	if err = initializeAdminDebugQuota(ctx, tx, id); err != nil {
+		return err
+	}
 	if err = tx.Commit(); err != nil {
 		return err
 	}
@@ -324,7 +397,10 @@ func (s *DynamicSubscriptionService) ensureGroupSubscription(ctx context.Context
 	var groupID, source int64
 	var changed bool
 	err = s.db.QueryRowContext(ctx, `SELECT g.group_id,g.account_id,us.admin_debug AND u.role='admin',
- (p.group_revision IS DISTINCT FROM g.revision OR p.enabled IS DISTINCT FROM g.enabled)
+ (p.group_revision IS DISTINCT FROM g.revision OR p.enabled IS DISTINCT FROM g.enabled
+ OR (g.enabled AND g.fixed_slots>0 AND NOT EXISTS(SELECT 1 FROM dynamic_quota_seats d JOIN dynamic_quota_pools pool ON pool.account_id=d.account_id
+ WHERE d.account_id=g.account_id AND d.group_id=g.group_id AND d.subscription_id=us.id
+ AND d.cycle=GREATEST(1,COALESCE((pool.state->>'cycle')::bigint,0)))))
  AND NOT(us.admin_debug AND u.role='admin' AND NOT COALESCE(p.enabled,false))
  FROM user_subscriptions us JOIN users u ON u.id=us.user_id JOIN dynamic_group_policies g ON g.group_id=us.group_id
  LEFT JOIN dynamic_subscription_policies p ON p.subscription_id=us.id
@@ -354,6 +430,14 @@ func (s *DynamicSubscriptionService) ensureGroupSubscription(ctx context.Context
 	}
 	if err = s.applyGroupPolicyTx(ctx, tx, pool, p, id); err != nil {
 		return false, false, err
+	}
+	if pool.V2 != nil && pool.V2.FixedSeats {
+		if err = s.reallocateFixedSeats(ctx, tx, source, pool, time.Now().UTC(), false); err != nil {
+			return false, false, err
+		}
+		if err = writeDynamicPool(ctx, tx, source, pool); err != nil {
+			return false, false, err
+		}
 	}
 	if err = tx.Commit(); err != nil {
 		return false, false, err
@@ -386,6 +470,9 @@ func (s *DynamicSubscriptionService) syncGroupMembers(ctx context.Context, accou
 	}
 	for _, id := range ids {
 		if _, _, err = s.ensureGroupSubscription(ctx, id); err != nil {
+			if errors.Is(err, ErrDynamicQuotaSlotsFull) || errors.Is(err, ErrDynamicQuotaSeatRetained) {
+				continue
+			}
 			return err
 		}
 	}

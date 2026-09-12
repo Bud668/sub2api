@@ -90,7 +90,7 @@ fi
     fi
     if [[ "$dynamic_quota_release" == true ]]; then
         go test -race ./internal/service ./internal/handler/... ./internal/server/... ./internal/repository \
-            -run 'DynamicQuota' -count=2
+            -run 'DynamicQuota|DynamicGroup|AdminDebug' -count=2
     fi
 )
 (

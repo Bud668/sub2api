@@ -252,6 +252,10 @@ export async function listByUser(
 }
 
 export const subscriptionsAPI = {
+  saveAdminDebugQuota: async (id: number, input: { revision: number; weekly_limit_usd: number }): Promise<UserSubscription> => {
+    const { data } = await apiClient.put<UserSubscription>(`/admin/subscriptions/${id}/admin-debug/quota`, input)
+    return data
+  },
   previewDynamicReset: async (id: number): Promise<DynamicResetResult> => {
     const { data } = await apiClient.get<DynamicResetResult>(`/admin/subscriptions/${id}/dynamic-quota/reset`)
     return data

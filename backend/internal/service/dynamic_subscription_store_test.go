@@ -82,6 +82,14 @@ func dynamicTestStore(t *testing.T) (*DynamicSubscriptionService, *sql.DB) {
 	require.NoError(t, err)
 	dynamicExec(t, db, string(groupMigration))
 	dynamicExec(t, db, string(groupMigration))
+	seatMigration, err := os.ReadFile("../../migrations/242_dynamic_quota_fixed_seats.sql")
+	require.NoError(t, err)
+	dynamicExec(t, db, string(seatMigration))
+	dynamicExec(t, db, string(seatMigration))
+	debugMigration, err := os.ReadFile("../../migrations/243_admin_debug_weekly_quota.sql")
+	require.NoError(t, err)
+	dynamicExec(t, db, string(debugMigration))
+	dynamicExec(t, db, string(debugMigration))
 	s := NewDynamicSubscriptionService(db, dynamicTestAccounts{}, nil, nil)
 	s.fetch = func(_ context.Context, id int64) (DynamicQuotaObservation, error) {
 		return dynamicTestObservation(id, 50, time.Now().UTC().Add(6*24*time.Hour), time.Now().UTC()), nil

@@ -128,6 +128,9 @@ func (p *DynamicQuotaPoolState) Observe(o DynamicQuotaObservation, now time.Time
 		p.Cycle, p.StartedAt, p.Snapshot, p.SampleAnchor = 1, now, &o, &o
 		if p.V2 != nil {
 			p.V2.LastNode = dynamicQuotaNode(o.UsedPercent)
+			if p.V2.FixedSeats {
+				p.V2.LastNode = p.fixedSeatNode(o.UsedPercent)
+			}
 		}
 		p.Status = "learning"
 		p.recordHealthy(o.FetchedAt)

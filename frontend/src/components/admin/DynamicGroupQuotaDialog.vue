@@ -23,11 +23,11 @@
           <div><label for="dynamic-cap" class="input-label">{{ t('dynamicQuota.cap') }}</label><input id="dynamic-cap" v-model.number="form.max_limit_usd" type="number" min="0.01" max="1000000000" step="0.01" required class="input" @input="saved = false" /></div>
           <div>
             <div class="flex items-center gap-1">
-              <label for="dynamic-floor" class="input-label">{{ t('dynamicQuota.floor') }}</label>
-              <HelpTooltip trigger="click" :content="t('dynamicQuota.floorHint')"><template #trigger><button type="button" class="mb-1 rounded px-1 text-gray-500 focus-visible:ring-2 focus-visible:ring-primary-500" :aria-label="t('dynamicQuota.floorHelp')" data-testid="dynamic-floor-help">ⓘ</button></template></HelpTooltip>
+              <label for="dynamic-slots" class="input-label">{{ t('dynamicQuota.fixedSlots') }}</label>
+              <HelpTooltip trigger="click" :content="t('dynamicQuota.slotsHelp')"><template #trigger><button type="button" class="mb-1 rounded px-1 text-gray-600 focus-visible:ring-2 focus-visible:ring-primary-500 dark:text-gray-300" :aria-label="t('dynamicQuota.fixedSlots')" data-testid="dynamic-slots-help">ⓘ</button></template></HelpTooltip>
             </div>
-            <input id="dynamic-floor" v-model.number="form.floor_limit_usd" type="number" min="0.01" :max="form.max_limit_usd" step="0.01" required class="input" :aria-invalid="floorError || undefined" aria-describedby="dynamic-floor-error" @input="saved = false; floorError = false" />
-            <p id="dynamic-floor-error" class="min-h-5 text-xs text-red-600" aria-live="polite">{{ floorError ? t('dynamicQuota.floorInvalid') : '' }}</p>
+            <input id="dynamic-slots" v-model.number="form.fixed_slots" type="number" min="1" max="1000" step="1" required class="input" :aria-invalid="slotsError || undefined" aria-describedby="dynamic-slots-error" @input="saved = false; slotsError = false" />
+            <p id="dynamic-slots-error" class="min-h-5 text-xs text-red-600 dark:text-red-400" aria-live="polite">{{ slotsError ? t('dynamicQuota.slotsInvalid') : '' }}</p>
           </div>
           <div><label for="dynamic-weight" class="input-label">{{ t('dynamicQuota.weight') }}</label><input id="dynamic-weight" v-model.number="form.weight" type="number" min="0.0001" max="1000" step="0.0001" required class="input" @input="saved = false" /></div>
         </div>
@@ -35,6 +35,8 @@
         <details class="rounded-lg bg-gray-50 p-3 text-xs leading-relaxed dark:bg-dark-800"><summary class="cursor-pointer font-medium">{{ t('dynamicQuota.rules') }}</summary><p class="mt-2">{{ t('dynamicQuota.nativeProtectionHint') }}</p></details>
       </fieldset>
       <p class="rounded-lg bg-primary-50 p-3 text-sm dark:bg-primary-900/20">{{ t('dynamicQuota.groupMembers', { members: status.members, debug: status.debug_members }) }}</p>
+      <p v-if="status.effective_slots" class="text-sm font-medium text-gray-700 dark:text-gray-200" data-testid="dynamic-current-seats">{{ t('dynamicQuota.currentSeats', { slots: status.effective_slots, occupied: status.occupied_slots || 0 }) }}</p>
+      <p v-if="status.effective_slots && form.fixed_slots !== status.effective_slots" class="rounded-lg border border-amber-300 p-3 text-xs leading-relaxed text-amber-800 dark:border-amber-800 dark:text-amber-200" role="status" data-testid="dynamic-seat-change">{{ t('dynamicQuota.seatChangeHint') }}</p>
       <p v-if="status.legacy_members > 0" class="text-xs text-amber-700 dark:text-amber-300">{{ t('dynamicQuota.legacyMembers', { n: status.legacy_members }) }}</p>
       <p class="text-xs text-gray-500">{{ t('dynamicQuota.accountingIndependent') }}</p>
     </form>
@@ -72,11 +74,11 @@ const saving = ref(false)
 const saved = ref(false)
 const error = ref('')
 const status = ref<DynamicGroupQuotaStatus>()
-const floorError = ref(false)
-const form = reactive<DynamicQuotaInput>({ enabled: false, revision: 0, account_id: 0, weight: 1, max_limit_usd: 0, floor_limit_usd: null })
+const slotsError = ref(false)
+const form = reactive<DynamicQuotaInput>({ enabled: false, revision: 0, account_id: 0, weight: 1, max_limit_usd: 0, fixed_slots: 0, floor_limit_usd: null })
 const policyInput = (p: DynamicQuotaInput): DynamicQuotaInput => ({
   enabled: p.enabled, revision: p.revision, account_id: p.account_id || 0,
-  weight: p.weight, max_limit_usd: p.max_limit_usd, floor_limit_usd: p.floor_limit_usd ?? null
+  weight: p.weight, max_limit_usd: p.max_limit_usd, fixed_slots: p.fixed_slots || 0, floor_limit_usd: null
 })
 const apply = (result: DynamicGroupQuotaStatus) => {
   status.value = result
@@ -87,7 +89,11 @@ const errorMessage = (err: unknown) => {
   if (code === 'DYNAMIC_QUOTA_CHANGED') return t('dynamicQuota.conflict')
   if (code === 'DYNAMIC_QUOTA_BINDING_CONFLICT') return t('dynamicQuota.bindingError')
   if (code === 'DYNAMIC_QUOTA_UNAVAILABLE') return t('dynamicQuota.unavailable')
-  if (code === 'INVALID_DYNAMIC_QUOTA_PROTECTION') return t('dynamicQuota.floorInvalid')
+  if (code === 'INVALID_DYNAMIC_QUOTA_SLOTS') return t('dynamicQuota.slotsInvalid')
+  if (code === 'DYNAMIC_QUOTA_SLOTS_FULL') return t('dynamicQuota.slotsFull')
+  if (code === 'DYNAMIC_QUOTA_SEAT_RETAINED') return t('dynamicQuota.seatRetained')
+  if (code === 'DYNAMIC_QUOTA_SEATS_SPENT') return t('dynamicQuota.seatsSpent')
+  if (code === 'DYNAMIC_QUOTA_SEATS_LEARNING') return t('dynamicQuota.seatsLearning')
   return t('dynamicQuota.failed')
 }
 const close = () => { if (!saving.value) emit('close') }
@@ -98,8 +104,8 @@ onMounted(async () => {
 })
 const save = async () => {
   if (saving.value) return
-  floorError.value = (typeof form.floor_limit_usd !== 'number' || !Number.isFinite(form.floor_limit_usd) || form.floor_limit_usd <= 0 || form.floor_limit_usd > form.max_limit_usd)
-  if (floorError.value) return
+  slotsError.value = (typeof form.fixed_slots !== 'number' || !Number.isInteger(form.fixed_slots) || form.fixed_slots < 1 || form.fixed_slots > 1000)
+  if (slotsError.value) return
   saving.value = true; saved.value = false; error.value = ''
   try {
     apply(await adminAPI.groups.saveDynamicQuota(props.group.id, { ...form }))

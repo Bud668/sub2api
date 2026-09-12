@@ -9,11 +9,12 @@ import (
 const subscriptionDayDuration = 24 * time.Hour
 
 type UserSubscription struct {
-	DynamicQuota *DynamicSubscriptionQuota
-	ID           int64
-	UserID       int64
-	GroupID      int64
-	AdminDebug   bool
+	DynamicQuota    *DynamicSubscriptionQuota
+	AdminDebugQuota *AdminDebugQuota
+	ID              int64
+	UserID          int64
+	GroupID         int64
+	AdminDebug      bool
 
 	StartsAt  time.Time
 	ExpiresAt time.Time
@@ -90,7 +91,7 @@ func (s *UserSubscription) NeedsWeeklyReset() bool {
 }
 
 func (s *UserSubscription) NeedsWeeklyResetAt(now time.Time) bool {
-	if s.DynamicQuota != nil && s.DynamicQuota.Enabled {
+	if (s.DynamicQuota != nil && s.DynamicQuota.Enabled) || (s.AdminDebugQuota != nil && s.AdminDebugQuota.FollowReset) {
 		return false
 	}
 	if s.WeeklyWindowStart == nil {
@@ -134,7 +135,7 @@ func (s *UserSubscription) automaticDailyWindowStartAt(now time.Time) (time.Time
 }
 
 func (s *UserSubscription) canAutomaticallyResetWeeklyAt(now time.Time) bool {
-	if s.DynamicQuota != nil && s.DynamicQuota.Enabled {
+	if (s.DynamicQuota != nil && s.DynamicQuota.Enabled) || (s.AdminDebugQuota != nil && s.AdminDebugQuota.FollowReset) {
 		return false
 	}
 	_, ok := s.automaticWindowStartAt(s.WeeklyWindowStart, 7*24*time.Hour, now)
@@ -197,6 +198,9 @@ func (s *UserSubscription) DailyResetTime() *time.Time {
 }
 
 func (s *UserSubscription) WeeklyResetTime() *time.Time {
+	if s.AdminDebugQuota != nil && s.AdminDebugQuota.FollowReset {
+		return s.AdminDebugQuota.ExpectedResetAt
+	}
 	if s.DynamicQuota != nil && s.DynamicQuota.Enabled {
 		return s.DynamicQuota.ExpectedResetAt
 	}
@@ -224,25 +228,34 @@ func (s *UserSubscription) CheckDailyLimit(group *Group, additionalCost float64)
 }
 
 func (s *UserSubscription) CheckWeeklyLimit(group *Group, additionalCost float64) bool {
+	if s.AdminDebugQuota != nil {
+		q := *s.AdminDebugQuota
+		q.used = s.WeeklyUsageUSD
+		return q.check(0) == nil && validDynamicAmount(additionalCost) && (q.WeeklyLimitUSD <= 0 || q.used+q.held*q.rate+additionalCost <= q.WeeklyLimitUSD)
+	}
 	if s.DynamicQuota != nil && s.DynamicQuota.Enabled {
 		return validDynamicAmount(additionalCost) && s.DynamicQuota.RemainingUSD > 0 && additionalCost <= s.DynamicQuota.RemainingUSD
 	}
-	if !group.HasWeeklyLimit() {
+	limit := s.EffectiveWeeklyLimit(group)
+	if limit == nil || *limit <= 0 {
 		return true
 	}
-	return s.WeeklyUsageUSD+additionalCost <= *group.WeeklyLimitUSD
+	return s.WeeklyUsageUSD+additionalCost <= *limit
 }
 
 // Effective limits keep active dynamic subscriptions independent of group quotas.
 // Disabled or pending policies continue to use the group's limits.
 func (s *UserSubscription) EffectiveDailyLimit(group *Group) *float64 {
-	if group == nil || (s.DynamicQuota != nil && s.DynamicQuota.Enabled) {
+	if group == nil || s.AdminDebugQuota != nil || (s.DynamicQuota != nil && s.DynamicQuota.Enabled) {
 		return nil
 	}
 	return group.DailyLimitUSD
 }
 
 func (s *UserSubscription) EffectiveWeeklyLimit(group *Group) *float64 {
+	if s.AdminDebugQuota != nil {
+		return &s.AdminDebugQuota.WeeklyLimitUSD
+	}
 	if s.DynamicQuota != nil && s.DynamicQuota.Enabled {
 		return &s.DynamicQuota.LimitUSD
 	}
@@ -253,7 +266,7 @@ func (s *UserSubscription) EffectiveWeeklyLimit(group *Group) *float64 {
 }
 
 func (s *UserSubscription) EffectiveMonthlyLimit(group *Group) *float64 {
-	if group == nil || (s.DynamicQuota != nil && s.DynamicQuota.Enabled) {
+	if group == nil || s.AdminDebugQuota != nil || (s.DynamicQuota != nil && s.DynamicQuota.Enabled) {
 		return nil
 	}
 	return group.MonthlyLimitUSD

@@ -690,6 +690,7 @@ func registerSubscriptionRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		subscriptions.POST("/bulk-assign", h.Admin.Subscription.BulkAssign)
 		subscriptions.POST("/:id/extend", h.Admin.Subscription.Extend)
 		subscriptions.POST("/:id/admin-debug", h.Admin.Subscription.ConvertToAdminDebug)
+		subscriptions.PUT("/:id/admin-debug/quota", h.Admin.Subscription.SaveAdminDebugQuota)
 		subscriptions.POST("/:id/reset-quota", h.Admin.Subscription.ResetQuota)
 		subscriptions.POST("/:id/revoke", h.Admin.Subscription.Revoke)
 		subscriptions.POST("/:id/restore", h.Admin.Subscription.Restore)

@@ -47,15 +47,19 @@
             data-testid="subscription-card"
           >
             <div class="mb-2 flex flex-wrap items-center justify-between gap-1">
+              <div class="flex min-w-0 flex-wrap items-center gap-2">
               <span class="break-words text-sm font-medium text-gray-900 dark:text-white">
                 {{ subscription.group?.name || `Group #${subscription.group_id}` }}
               </span>
+              <FixedSeatBadge :quota="subscription.dynamic_quota" />
+              </div>
               <SubscriptionStatusBadge :subscription="subscription" />
             </div>
             <p
               v-if="subscription.expires_at"
-              class="mb-2 text-xs"
-              :class="getDaysRemainingClass(subscription.expires_at)"
+              class="mb-2 w-fit rounded-md px-2 py-1 text-xs font-medium"
+              :class="subscriptionExpiryClass(subscription.expires_at, expiryNow)"
+              data-testid="subscription-expiry-badge"
             >
               {{ formatDaysRemaining(subscription.expires_at) }}
             </p>
@@ -186,16 +190,19 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { useNow } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
 import DynamicQuotaCard from '@/components/common/DynamicQuotaCard.vue'
 import SubscriptionStatusBadge from '@/components/common/SubscriptionStatusBadge.vue'
+import FixedSeatBadge from '@/components/common/FixedSeatBadge.vue'
 import AdminDebugUsage from '@/components/common/AdminDebugUsage.vue'
 import { useSubscriptionStore } from '@/stores'
 import type { UserSubscription } from '@/types'
-import { subscriptionBorderStyle } from '@/utils/subscriptionQuota'
+import { subscriptionBorderStyle, subscriptionExpiryClass } from '@/utils/subscriptionQuota'
 
 const { t } = useI18n()
+const expiryNow = useNow({ interval: 60_000 })
 
 const subscriptionStore = useSubscriptionStore()
 
@@ -216,6 +223,9 @@ const displaySubscriptions = computed(() => {
 })
 
 function getMaxUsagePercentage(sub: UserSubscription): number {
+  if (sub.admin_debug_quota) {
+    return sub.admin_debug_quota.weekly_limit_usd > 0 ? (sub.weekly_usage_usd || 0) / sub.admin_debug_quota.weekly_limit_usd * 100 : 0
+  }
   if (sub.dynamic_quota?.enabled) {
     const q = sub.dynamic_quota
     return q.limit_usd > 0 ? q.used_usd / q.limit_usd * 100 : 100
@@ -234,6 +244,7 @@ function getMaxUsagePercentage(sub: UserSubscription): number {
 }
 
 function isUnlimited(sub: UserSubscription): boolean {
+  if (sub.admin_debug_quota) return sub.admin_debug_quota.weekly_limit_usd === 0
   return (
     !sub.group?.daily_limit_usd &&
     !sub.group?.weekly_limit_usd && !sub.dynamic_quota?.enabled &&
@@ -281,16 +292,6 @@ function formatDaysRemaining(expiresAt: string): string {
   if (days === 0) return t('subscriptionProgress.expiresToday')
   if (days === 1) return t('subscriptionProgress.expiresTomorrow')
   return t('subscriptionProgress.daysRemaining', { days })
-}
-
-function getDaysRemainingClass(expiresAt: string): string {
-  const now = new Date()
-  const expires = new Date(expiresAt)
-  const diff = expires.getTime() - now.getTime()
-  const days = Math.ceil(diff / (1000 * 60 * 60 * 24))
-  if (days <= 3) return 'text-red-600 dark:text-red-400'
-  if (days <= 7) return 'text-orange-600 dark:text-orange-400'
-  return 'text-gray-600 dark:text-gray-300'
 }
 
 function toggleTooltip() {

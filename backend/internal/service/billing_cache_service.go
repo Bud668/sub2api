@@ -930,6 +930,13 @@ func (s *BillingCacheService) checkSubscriptionEligibility(ctx context.Context, 
 	}
 
 	// Effective dynamic quotas replace all group amount limits, not eligibility.
+	if subscription != nil && subscription.AdminDebugQuota != nil {
+		q := *subscription.AdminDebugQuota
+		if subscription.canAutomaticallyResetWeeklyAt(time.Now()) {
+			q.used = 0
+		}
+		return q.check(0)
+	}
 	if subscription != nil && subscription.DynamicQuota != nil && subscription.DynamicQuota.Enabled {
 		q := subscription.DynamicQuota
 		if err := q.checkReady(); err != nil {

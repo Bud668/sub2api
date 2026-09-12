@@ -16,10 +16,16 @@ import { useI18n } from 'vue-i18n'
 import type { UserSubscription } from '@/types'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
 
-const props = defineProps<{ subscription: Pick<UserSubscription, 'status' | 'admin_debug' | 'dynamic_quota'> }>()
+const props = defineProps<{ subscription: Pick<UserSubscription, 'status' | 'admin_debug' | 'admin_debug_quota' | 'dynamic_quota'> & Partial<Pick<UserSubscription, 'weekly_usage_usd'>> }>()
 const { t } = useI18n()
 const lifecycle = computed(() => ['active', 'expired', 'revoked', 'suspended'].includes(props.subscription.status) ? props.subscription.status : 'unknown')
 const quotaState = computed(() => {
+  if (props.subscription.admin_debug && props.subscription.admin_debug_quota) {
+    const debug = props.subscription.admin_debug_quota
+    if (debug.reset_pending) return 'settling'
+    if (debug.weekly_limit_usd > 0 && (props.subscription.weekly_usage_usd || 0) >= debug.weekly_limit_usd) return 'exhausted'
+    return 'disabled'
+  }
   const q = props.subscription.admin_debug ? null : props.subscription.dynamic_quota
   if (!q) return 'disabled'
   if (q.activation_pending && q.requested_enabled) return 'activation_pending'
@@ -43,7 +49,8 @@ const details = computed(() => {
   if (props.subscription.admin_debug) lines.push(t('dynamicQuota.debugUsageHint'))
   else if (quotaState.value !== 'disabled') lines.push(t('subscriptionStatus.quota') + ': ' + t(`dynamicQuota.statuses.${quotaState.value}`))
   lines.push(lifecycle.value !== 'active' ? t('subscriptionStatus.inactiveHint')
-    : quotaState.value === 'activation_pending' ? t('dynamicQuota.pendingActivation')
+    : quotaState.value === 'activation_pending' ? t(props.subscription.dynamic_quota?.fixed_slots ? 'dynamicQuota.fixedPendingActivation' : 'dynamicQuota.pendingActivation')
+    : props.subscription.admin_debug ? t(props.subscription.admin_debug_quota?.reset_pending ? 'dynamicQuota.debugResetPending' : 'dynamicQuota.adminDebugHint')
     : quotaState.value === 'disabled' ? t('subscriptionStatus.nativeHint')
     : ['active', 'learning', 'growth_frozen'].includes(quotaState.value) ? t('subscriptionStatus.availableHint')
     : t('subscriptionStatus.blockedHint'))

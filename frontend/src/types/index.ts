@@ -2049,6 +2049,8 @@ export interface DynamicSubscriptionQuota {
   account_id?: number
   weight: number
   max_limit_usd: number
+  fixed_slots?: number
+  source_fixed_slots?: number
   floor_limit_usd?: number | null
   requested_enabled?: boolean
   activation_pending?: boolean
@@ -2080,6 +2082,7 @@ export interface DynamicQuotaInput {
   account_id: number
   weight: number
   max_limit_usd: number
+  fixed_slots?: number
   floor_limit_usd?: number | null
 }
 
@@ -2098,10 +2101,22 @@ export interface DynamicGroupQuotaStatus {
   members: number
   debug_members: number
   legacy_members: number
+  effective_slots?: number
+  occupied_slots?: number
+  source_slots?: number
+}
+
+export interface AdminDebugQuota {
+  weekly_limit_usd: number
+  revision: number
+  follow_reset: boolean
+  reset_pending: boolean
+  expected_reset_at?: string | null
 }
 
 export interface UserSubscription {
   admin_debug?: boolean
+  admin_debug_quota?: AdminDebugQuota | null
   dynamic_quota?: DynamicSubscriptionQuota | null
   id: number
   user_id: number
