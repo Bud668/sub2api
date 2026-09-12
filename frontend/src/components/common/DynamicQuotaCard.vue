@@ -9,7 +9,7 @@
       </div>
       <dl class="quota-amounts grid grid-cols-3 gap-4 rounded-xl bg-white p-3 tabular-nums dark:bg-dark-800/60" data-testid="dynamic-allocation-stage">
         <div class="min-w-0" data-testid="dynamic-allocated">
-          <dt class="flex flex-wrap items-center justify-between gap-2 text-xs text-gray-500 dark:text-gray-400">
+          <dt class="flex flex-wrap items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
             <span>{{ t('dynamicQuota.limit') }}</span>
             <span
               class="inline-flex rounded-md bg-primary-100/70 px-2 py-0.5 text-xs font-medium leading-4 text-primary-700 outline-offset-2 dark:bg-primary-900/40 dark:text-primary-200"

@@ -12,6 +12,7 @@ describe('upstream cycle display', () => {
     expect(wrapper.get('[data-testid=dynamic-pending-stage]').text()).toContain('40% 节点待分配')
     expect(wrapper.get('[data-testid=dynamic-pending-stage]').text()).toContain('下调保护合计超出')
     expect(wrapper.get('[data-testid=dynamic-allocated] [data-testid=dynamic-next-adjustment]').text()).toContain('下次调额 · 50%')
+    expect(wrapper.get('[data-testid=dynamic-allocated] dt').classes()).not.toContain('justify-between')
     expect(wrapper.get('[data-testid=dynamic-next-adjustment]').attributes('title')).toContain('绑定上游账号的 7 日总用量')
     expect(wrapper.get('[data-testid=dynamic-next-adjustment]').attributes('title')).toContain('已用量不会清零')
     expect(wrapper.get('[data-testid=dynamic-remaining]').text()).not.toContain('下次调额')
