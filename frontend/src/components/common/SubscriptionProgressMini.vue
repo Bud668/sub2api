@@ -33,7 +33,7 @@
           <h3 class="text-sm font-semibold text-gray-900 dark:text-white">
             {{ t('subscriptionProgress.title') }}
           </h3>
-          <p class="mt-0.5 text-xs text-gray-500 dark:text-dark-400">
+          <p class="mt-0.5 text-xs text-gray-600 dark:text-gray-300">
             {{ t('subscriptionProgress.activeCount', { count: activeSubscriptions.length }) }}
           </p>
         </div>
@@ -63,9 +63,10 @@
 
             <!-- Progress bars or Unlimited badge -->
             <div class="space-y-1.5">
+              <AdminDebugUsage v-if="subscription.admin_debug" :subscription="subscription" />
               <!-- Unlimited subscription badge -->
               <div
-                v-if="isUnlimited(subscription)"
+                v-else-if="isUnlimited(subscription)"
                 class="flex items-center gap-2 rounded-lg bg-gradient-to-r from-emerald-50 to-teal-50 px-2.5 py-1.5 dark:from-emerald-900/20 dark:to-teal-900/20"
               >
                 <span class="text-lg text-emerald-600 dark:text-emerald-400">∞</span>
@@ -187,6 +188,7 @@ import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
 import DynamicQuotaCard from '@/components/common/DynamicQuotaCard.vue'
+import AdminDebugUsage from '@/components/common/AdminDebugUsage.vue'
 import { useSubscriptionStore } from '@/stores'
 import type { UserSubscription } from '@/types'
 import { subscriptionBorderStyle } from '@/utils/subscriptionQuota'
@@ -286,7 +288,7 @@ function getDaysRemainingClass(expiresAt: string): string {
   const days = Math.ceil(diff / (1000 * 60 * 60 * 24))
   if (days <= 3) return 'text-red-600 dark:text-red-400'
   if (days <= 7) return 'text-orange-600 dark:text-orange-400'
-  return 'text-gray-500 dark:text-dark-400'
+  return 'text-gray-600 dark:text-gray-300'
 }
 
 function toggleTooltip() {

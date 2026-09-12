@@ -48,10 +48,10 @@
                   </span>
                   <span v-if="subscription.admin_debug" class="rounded-md bg-violet-50 px-2 py-0.5 text-[11px] font-medium text-violet-700 dark:bg-violet-900/20 dark:text-violet-300">{{ t('dynamicQuota.adminDebug') }}</span>
                 </div>
-                <p v-if="subscription.group?.description" class="mt-0.5 text-xs text-gray-500 dark:text-dark-400">
+                <p v-if="subscription.group?.description" class="mt-0.5 text-xs text-gray-600 dark:text-gray-300">
                   {{ subscription.group.description }}
                 </p>
-                <div class="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-gray-400 dark:text-gray-500">
+                <div class="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-gray-600 dark:text-gray-300">
                   <span>{{ t('payment.planCard.rate') }}: ×{{ subscription.group?.rate_multiplier ?? 1 }}</span>
                   <span v-if="subscriptionHasPeakRate(subscription)" class="text-amber-700 dark:text-amber-300">
                     {{ t('payment.planCard.peakRate') }}: {{ subscriptionPeakRateLabel(subscription) }}
@@ -81,7 +81,7 @@
               </button>
             </div>
             <div class="mt-1 w-full rounded-xl border border-gray-200/70 bg-gray-50 px-3 py-2.5 dark:border-dark-600 dark:bg-dark-900/50" data-testid="user-subscription-expiry">
-              <div class="mb-1.5 flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
+              <div class="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-gray-600 dark:text-gray-300">
                 <Icon name="calendar" size="sm" aria-hidden="true" />
                 <span>{{ t('userSubscriptions.expires') }}</span>
               </div>
@@ -97,6 +97,10 @@
 
           <!-- Usage Progress -->
           <div class="min-w-0 space-y-2 px-4 py-3">
+            <AdminDebugUsage v-if="subscription.admin_debug" :subscription="subscription">
+              <template v-if="subscription.weekly_window_start" #reset>{{ t('userSubscriptions.resetIn', { time: formatResetTime(subscription.weekly_window_start, 168) }) }}</template>
+            </AdminDebugUsage>
+            <template v-else>
             <!-- Daily Usage -->
             <div v-if="!subscription.dynamic_quota?.enabled && subscription.group?.daily_limit_usd" class="space-y-2">
               <div class="flex items-center justify-between">
@@ -238,6 +242,7 @@
                 </div>
               </div>
             </div>
+            </template>
           </div>
         </div>
       </div>
@@ -247,6 +252,7 @@
 
 <script setup lang="ts">
 import DynamicQuotaCard from '@/components/common/DynamicQuotaCard.vue'
+import AdminDebugUsage from '@/components/common/AdminDebugUsage.vue'
 import { ref, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'

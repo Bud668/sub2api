@@ -9,8 +9,8 @@
       </div>
       <dl class="quota-amounts grid grid-cols-3 gap-4 rounded-xl bg-white p-3 tabular-nums dark:bg-dark-800/60" data-testid="dynamic-allocation-stage">
         <div class="min-w-0" data-testid="dynamic-allocated">
-          <dt class="flex flex-wrap items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
-            <span>{{ t('dynamicQuota.limit') }}</span>
+          <dt class="flex flex-wrap items-center gap-2 text-xs font-medium text-gray-600 dark:text-gray-300">
+            <span class="font-semibold text-gray-700 dark:text-gray-200">{{ t('dynamicQuota.limit') }}</span>
             <span
               class="inline-flex rounded-md bg-primary-100/70 px-2 py-0.5 text-xs font-medium leading-4 text-primary-700 outline-offset-2 dark:bg-primary-900/40 dark:text-primary-200"
               data-testid="dynamic-next-adjustment"
@@ -20,7 +20,7 @@
             >{{ quota.next_adjustment_percent ? t('dynamicQuota.stageShort', { percent: quota.next_adjustment_percent }) : t('dynamicQuota.noNextStageShort') }}</span>
           </dt>
           <dd class="quota-amount mt-1 break-words text-lg font-semibold tracking-tight">{{ usd(quota.limit_usd) }}</dd>
-          <dd class="mt-2 flex flex-wrap items-start gap-1 text-xs leading-4 text-gray-500 dark:text-gray-400" :title="`${allocationLabel}: ${allocationTime ? date(quota.last_allocation_at) : t('dynamicQuota.notAllocated')}`">
+          <dd class="mt-2 flex flex-wrap items-start gap-1 text-xs leading-4 text-gray-600 dark:text-gray-300" :title="`${allocationLabel}: ${allocationTime ? date(quota.last_allocation_at) : t('dynamicQuota.notAllocated')}`">
             <Icon name="refresh" size="xs" class="mt-0.5 shrink-0" aria-hidden="true" />
             <span class="shrink-0">{{ allocationLabel }}</span>
             <time v-if="allocationTime" :datetime="quota.last_allocation_at" :aria-label="date(quota.last_allocation_at)">{{ allocationTime }}</time>
@@ -28,12 +28,12 @@
           </dd>
         </div>
         <div class="min-w-0">
-          <dt class="text-xs text-gray-500 dark:text-gray-400">{{ t('dynamicQuota.used') }}</dt>
+          <dt class="text-xs font-medium text-gray-600 dark:text-gray-300">{{ t('dynamicQuota.used') }}</dt>
           <dd class="quota-amount mt-1 break-words text-lg font-semibold tracking-tight">{{ usd(quota.used_usd) }}</dd>
-          <dd v-if="quota.reserved_usd > 0" class="quota-reserved mt-2 text-xs leading-4 text-gray-500 dark:text-gray-400">{{ t('dynamicQuota.reserved') }} · {{ usd(quota.reserved_usd) }}</dd>
+          <dd v-if="quota.reserved_usd > 0" class="quota-reserved mt-2 text-xs leading-4 text-gray-600 dark:text-gray-300">{{ t('dynamicQuota.reserved') }} · {{ usd(quota.reserved_usd) }}</dd>
         </div>
         <div class="min-w-0" data-testid="dynamic-remaining">
-          <dt class="text-xs text-gray-500 dark:text-gray-400">{{ t('dynamicQuota.remaining') }}</dt>
+          <dt class="text-xs font-medium text-gray-600 dark:text-gray-300">{{ t('dynamicQuota.remaining') }}</dt>
           <dd class="quota-amount mt-1 break-words text-lg font-semibold tracking-tight text-primary-700 dark:text-primary-300">{{ usd(quota.remaining_usd) }}</dd>
         </div>
       </dl>
@@ -48,7 +48,7 @@
       <div class="text-xs" data-testid="dynamic-reset" :title="t('dynamicQuota.resetHint')">
         <dl>
           <div class="flex flex-wrap gap-x-3 gap-y-1">
-            <dt class="text-gray-500 dark:text-gray-400">{{ t('dynamicQuota.resetShort') }}</dt>
+            <dt class="font-medium text-gray-600 dark:text-gray-300">{{ t('dynamicQuota.resetShort') }}</dt>
             <dd class="font-medium tabular-nums text-gray-900 dark:text-gray-100">
               <time v-if="resetTime" :datetime="quota.expected_reset_at">{{ resetTime }}</time>
               <span v-else>{{ t('dynamicQuota.resetUnavailable') }}</span>
@@ -64,7 +64,7 @@
     <template v-if="!compact">
       <p v-if="quota.status === 'learning'" class="mt-2 text-xs text-gray-600 dark:text-gray-300">{{ t('dynamicQuota.v2LearningHint') }}</p>
       <p v-if="quota.growth_frozen" class="mt-2 text-xs text-amber-800 dark:text-amber-200">{{ t('dynamicQuota.growthFrozen') }}</p>
-      <details class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+      <details class="mt-2 text-xs text-gray-600 dark:text-gray-300">
         <summary class="cursor-pointer font-medium">{{ t('dynamicQuota.details') }}</summary>
         <p class="my-2">{{ t('dynamicQuota.cycle') }} · #{{ quota.cycle }}</p>
         <p v-if="quota.last_change" class="mb-2 flex flex-wrap gap-x-2 tabular-nums">

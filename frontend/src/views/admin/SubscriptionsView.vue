@@ -223,7 +223,10 @@
           </template>
 
           <template #cell-usage="{ row }">
-            <div class="subscription-usage" :class="{ 'native-usage': !row.dynamic_quota?.enabled }" :data-testid="!row.dynamic_quota?.enabled ? 'subscription-card' : undefined">
+            <AdminDebugUsage v-if="row.admin_debug" :subscription="row">
+              <template v-if="row.weekly_window_start" #reset>{{ formatResetTime(row.weekly_window_start, 'weekly') }}</template>
+            </AdminDebugUsage>
+            <div v-else class="subscription-usage" :class="{ 'native-usage': !row.dynamic_quota?.enabled }" :data-testid="!row.dynamic_quota?.enabled ? 'subscription-card' : undefined">
               <!-- Daily Usage -->
               <div v-if="!row.dynamic_quota?.enabled && row.group?.daily_limit_usd" class="usage-row">
                 <div class="flex items-center gap-2">
@@ -357,7 +360,7 @@
             <div class="flex flex-wrap items-center gap-x-3 gap-y-2" data-testid="subscription-expiry">
             <div v-if="value">
               <span
-                class="text-sm"
+                class="text-sm font-medium"
                 :class="
                   isExpiringSoon(value)
                     ? 'text-orange-600 dark:text-orange-400'
@@ -370,12 +373,12 @@
                 v-for="remainingExpiry in [formatRemainingExpiry(value)]"
                 :key="remainingExpiry ?? 'expired'"
               >
-                <div v-if="remainingExpiry" class="text-xs text-gray-500">
+                <div v-if="remainingExpiry" class="text-xs text-gray-600 dark:text-gray-300">
                   {{ remainingExpiry }}
                 </div>
               </template>
             </div>
-            <span v-else class="text-sm text-gray-500">{{
+            <span v-else class="text-sm text-gray-600 dark:text-gray-300">{{
               t('admin.subscriptions.noExpiration')
             }}</span>
             <button
@@ -414,7 +417,7 @@
                 :aria-expanded="actionSubscription?.id === row.id"
                 aria-controls="subscription-action-menu"
                 @click="openActionMenu(row, $event)"
-                class="inline-flex items-center gap-1 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 focus-visible:ring-2 focus-visible:ring-primary-500 dark:hover:bg-dark-700 dark:hover:text-white"
+                class="inline-flex items-center gap-1 rounded-lg p-1.5 text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900 focus-visible:ring-2 focus-visible:ring-primary-500 dark:text-gray-300 dark:hover:bg-dark-700 dark:hover:text-white"
               >
                 <Icon name="more" size="sm" />
                 <span class="text-xs">{{ t('common.more') }}</span>
@@ -858,6 +861,7 @@ import GroupBadge from '@/components/common/GroupBadge.vue'
 import GroupOptionItem from '@/components/common/GroupOptionItem.vue'
 import Icon from '@/components/icons/Icon.vue'
 import DynamicQuotaCard from '@/components/common/DynamicQuotaCard.vue'
+import AdminDebugUsage from '@/components/common/AdminDebugUsage.vue'
 import SubscriptionAbsorptionPanel from '@/components/admin/SubscriptionAbsorptionPanel.vue'
 import {
   getRemainingDurationParts,
@@ -1672,9 +1676,9 @@ onUnmounted(() => {
 .usage-row > div:first-child { display: grid; grid-template-areas: 'label' 'amount' 'progress'; gap: 0.5rem; }
 .usage-row > div:first-child > div { grid-area: progress; height: 0.5rem; overflow: hidden; }
 .usage-row > div:first-child > div > div { height: 100%; }
-.usage-label { grid-area: label; @apply text-xs text-gray-500 dark:text-gray-400; }
+.usage-label { grid-area: label; @apply text-xs font-medium text-gray-600 dark:text-gray-300; }
 .usage-amount { grid-area: amount; @apply break-words text-lg font-semibold tracking-tight tabular-nums text-gray-900 dark:text-gray-100; }
-.reset-info { @apply mt-2 flex items-start gap-1 text-xs leading-4 text-gray-500 dark:text-gray-400; }
+.reset-info { @apply mt-2 flex items-start gap-1 text-xs leading-4 text-gray-600 dark:text-gray-300; }
 .reset-info svg { @apply mt-0.5 shrink-0; }
 @container (min-width: 36rem) {
   .usage-amount { font-size: 1.5rem; line-height: 2rem; }
