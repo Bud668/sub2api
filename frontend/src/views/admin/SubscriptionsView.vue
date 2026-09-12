@@ -195,6 +195,7 @@
                   }}
                 </span>
               </div>
+              <div class="min-w-0">
               <RouterLink
                 :to="{ path: '/admin/usage', query: { user_id: row.user_id } }"
                 class="min-w-0 break-all rounded font-medium text-gray-900 hover:text-primary-600 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:text-white dark:hover:text-primary-400 dark:focus-visible:ring-offset-dark-800"
@@ -204,6 +205,8 @@
                   : (row.user?.username || t('admin.redeem.userPrefix', { id: row.user_id }))
                 }}
               </RouterLink>
+              <span v-if="row.admin_debug" class="mt-1 block w-fit rounded-md bg-violet-50 px-2 py-0.5 text-xs font-medium text-violet-700 dark:bg-violet-900/20 dark:text-violet-300">{{ t('dynamicQuota.adminDebug') }}</span>
+              </div>
             </div>
           </template>
 
@@ -220,7 +223,7 @@
           </template>
 
           <template #cell-usage="{ row }">
-            <div class="subscription-usage space-y-2" :style="subscriptionBorderStyle(row)" :data-testid="!row.dynamic_quota?.enabled ? 'subscription-card' : undefined">
+            <div class="subscription-usage" :class="{ 'native-usage': !row.dynamic_quota?.enabled }" :style="subscriptionBorderStyle(row)" :data-testid="!row.dynamic_quota?.enabled ? 'subscription-card' : undefined">
               <!-- Daily Usage -->
               <div v-if="!row.dynamic_quota?.enabled && row.group?.daily_limit_usd" class="usage-row">
                 <div class="flex items-center gap-2">
@@ -350,7 +353,8 @@
             </div>
           </template>
 
-          <template #cell-expires_at="{ value }">
+          <template #cell-expires_at="{ value, row }">
+            <div class="flex flex-wrap items-center gap-x-3 gap-y-2" data-testid="subscription-expiry">
             <div v-if="value">
               <span
                 class="text-sm"
@@ -374,6 +378,16 @@
             <span v-else class="text-sm text-gray-500">{{
               t('admin.subscriptions.noExpiration')
             }}</span>
+            <button
+              v-if="row.status === 'active' || row.status === 'expired'"
+              type="button"
+              @click="handleExtend(row)"
+              class="inline-flex shrink-0 items-center gap-1 rounded-lg border border-gray-200 px-2 py-1 text-xs text-gray-600 transition-colors hover:border-primary-300 hover:bg-primary-50 hover:text-primary-700 focus-visible:ring-2 focus-visible:ring-primary-500 dark:border-dark-600 dark:text-gray-300 dark:hover:bg-primary-900/20 dark:hover:text-primary-300"
+            >
+              <Icon name="calendar" size="sm" />
+              {{ t('admin.subscriptions.adjust') }}
+            </button>
+            </div>
           </template>
 
           <template #cell-status="{ value }">
@@ -393,15 +407,6 @@
 
           <template #cell-actions="{ row }">
             <div class="flex flex-wrap items-center gap-1">
-              <span v-if="row.admin_debug" class="rounded-md bg-violet-50 px-2 py-1 text-xs font-medium text-violet-700 dark:bg-violet-900/20 dark:text-violet-300">{{ t('dynamicQuota.adminDebug') }}</span>
-              <button
-                v-if="row.status === 'active' || row.status === 'expired'"
-                @click="handleExtend(row)"
-                class="inline-flex items-center gap-1 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-blue-900/20 dark:hover:text-blue-400"
-              >
-                <Icon name="calendar" size="sm" />
-                <span class="text-xs">{{ t('admin.subscriptions.adjust') }}</span>
-              </button>
               <button
                 v-if="row.status === 'active' || row.status === 'revoked' || canEnableDebug(row)"
                 type="button"
@@ -1649,7 +1654,7 @@ onUnmounted(() => {
 @container (min-width: 52rem) {
   :deep(.subscription-list [data-table-card] > div) {
     grid-template-columns: minmax(16rem, 1fr) minmax(12rem, 1fr) auto;
-    grid-template-areas: 'user group status' 'usage usage usage' 'expires actions actions';
+    grid-template-areas: 'user group status' 'usage usage usage' 'expires expires actions';
     column-gap: 1.5rem;
   }
   :deep(.subscription-list [data-field="user"]) { grid-area: user; }
@@ -1661,19 +1666,19 @@ onUnmounted(() => {
   :deep(.subscription-list [data-field="actions"] > div) { justify-content: flex-end; }
 }
 
-.usage-row {
-  @apply space-y-1;
+.native-usage {
+  @apply grid gap-4 rounded-xl bg-gray-50 p-3 dark:bg-dark-800/60;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
 }
-
-.usage-label {
-  @apply w-10 flex-shrink-0 text-xs font-medium text-gray-500 dark:text-gray-400;
-}
-
-.usage-amount {
-  @apply whitespace-nowrap text-xs tabular-nums text-gray-600 dark:text-gray-300;
-}
-
-.reset-info {
-  @apply flex items-center gap-1 pl-12 text-[10px] text-blue-600 dark:text-blue-400;
+.usage-row { min-width: 0; }
+.usage-row > div:first-child { display: grid; grid-template-areas: 'label' 'amount' 'progress'; gap: 0.5rem; }
+.usage-row > div:first-child > div { grid-area: progress; height: 0.5rem; overflow: hidden; }
+.usage-row > div:first-child > div > div { height: 100%; }
+.usage-label { grid-area: label; @apply text-xs text-gray-500 dark:text-gray-400; }
+.usage-amount { grid-area: amount; @apply break-words text-lg font-semibold tracking-tight tabular-nums text-gray-900 dark:text-gray-100; }
+.reset-info { @apply mt-2 flex items-start gap-1 text-xs leading-4 text-gray-500 dark:text-gray-400; }
+.reset-info svg { @apply mt-0.5 shrink-0; }
+@container (min-width: 36rem) {
+  .usage-amount { font-size: 1.5rem; line-height: 2rem; }
 }
 </style>

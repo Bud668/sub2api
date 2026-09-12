@@ -41,7 +41,8 @@ const DataTableStub = {
     <div>
       <div v-for="row in data" :key="row.id">
         <slot name="cell-user" :row="row" />
-        <slot name="cell-actions" :row="row" />
+        <slot name="cell-expires_at" :row="row" :value="row.expires_at" />
+        <div data-testid="card-actions"><slot name="cell-actions" :row="row" /></div>
       </div>
     </div>
   `
@@ -149,7 +150,8 @@ describe('admin subscription user usage link', () => {
       data.items[0].user.role = role
       const wrapper = mountView()
       await flushPromises()
-      expect(wrapper.text()).toContain('admin.subscriptions.adjust')
+      expect(wrapper.get('[data-testid=subscription-expiry]').text()).toContain('admin.subscriptions.adjust')
+      expect(wrapper.get('[data-testid=card-actions]').text()).not.toContain('admin.subscriptions.adjust')
       expect(wrapper.text()).not.toContain('admin.subscriptions.resetQuota')
       expect(wrapper.text()).not.toContain('dynamicQuota.groupSettings')
       expect(wrapper.find('#subscription-action-menu').exists()).toBe(false)

@@ -11,9 +11,9 @@
         <div class="min-w-0" data-testid="dynamic-allocated">
           <dt class="text-xs text-gray-500 dark:text-gray-400">{{ t('dynamicQuota.limit') }}</dt>
           <dd class="quota-amount mt-1 break-words text-lg font-semibold tracking-tight">{{ usd(quota.limit_usd) }}</dd>
-          <dd class="mt-2 flex items-start gap-1 text-xs leading-4 text-gray-500 dark:text-gray-400" :title="`${allocationLabel}: ${allocationTime ? date(quota.last_allocation_at) : t('dynamicQuota.notAllocated')}`">
+          <dd class="mt-2 flex flex-wrap items-start gap-1 text-xs leading-4 text-gray-500 dark:text-gray-400" :title="`${allocationLabel}: ${allocationTime ? date(quota.last_allocation_at) : t('dynamicQuota.notAllocated')}`">
             <Icon name="refresh" size="xs" class="mt-0.5 shrink-0" aria-hidden="true" />
-            <span class="sr-only">{{ allocationLabel }}: </span>
+            <span class="shrink-0">{{ allocationLabel }}</span>
             <time v-if="allocationTime" :datetime="quota.last_allocation_at" :aria-label="date(quota.last_allocation_at)">{{ allocationTime }}</time>
             <span v-else>{{ t('dynamicQuota.notAllocated') }}</span>
           </dd>
@@ -28,12 +28,12 @@
           <dd class="quota-amount mt-1 break-words text-lg font-semibold tracking-tight text-primary-700 dark:text-primary-300">{{ usd(quota.remaining_usd) }}</dd>
           <dd class="mt-2 flex items-start gap-1 text-xs leading-4 text-gray-500 dark:text-gray-400" :title="quota.next_adjustment_percent ? t('dynamicQuota.stageAt', { percent: quota.next_adjustment_percent }) : t('dynamicQuota.noNextStage')">
             <Icon name="refresh" size="xs" class="mt-0.5 shrink-0" aria-hidden="true" />
-            <span><span class="sr-only">{{ t('dynamicQuota.nextStage') }}: </span>{{ quota.next_adjustment_percent ? t('dynamicQuota.stageShort', { percent: quota.next_adjustment_percent }) : t('dynamicQuota.noNextStageShort') }}</span>
+            <span>{{ quota.next_adjustment_percent ? t('dynamicQuota.stageShort', { percent: quota.next_adjustment_percent }) : t('dynamicQuota.noNextStageShort') }}</span>
           </dd>
         </div>
       </dl>
-      <div class="quota-progress my-2 h-1 overflow-hidden rounded-full bg-gray-200 dark:bg-dark-600" role="progressbar" :aria-label="t('dynamicQuota.used')" :aria-valuenow="percentage" aria-valuemin="0" aria-valuemax="100">
-        <div class="h-full rounded-full bg-primary-500" :style="{ width: `${percentage}%` }" />
+      <div class="quota-progress my-3 h-2 overflow-hidden rounded-full bg-gray-200 dark:bg-dark-600" role="progressbar" :aria-label="t('dynamicQuota.used')" :aria-valuenow="percentage" aria-valuemin="0" aria-valuemax="100">
+        <div class="h-full rounded-full bg-primary-600 dark:bg-primary-400" :style="{ width: `${percentage}%` }" />
       </div>
       <div class="quota-footer flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
       <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-600 dark:text-gray-300" data-testid="dynamic-bounds">
