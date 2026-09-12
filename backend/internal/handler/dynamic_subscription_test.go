@@ -155,6 +155,18 @@ func TestDynamicQuotaPublicProjectionAndOps(t *testing.T) {
 	require.NotContains(t, string(public), "allocation_budget_conflict")
 	require.True(t, dto.UserSubscriptionFromServiceAdmin(sub).DynamicQuota.AllocationBudgetConflict)
 	require.Equal(t, int64(4), dto.UserSubscriptionFromServiceAdmin(sub).DynamicQuota.AccountID)
+	groupLimit := 10.0
+	group := &service.Group{DailyLimitUSD: &groupLimit, WeeklyLimitUSD: &groupLimit, MonthlyLimitUSD: &groupLimit}
+	sub.DailyUsageUSD, sub.WeeklyUsageUSD, sub.MonthlyUsageUSD = 100, 100, 100
+	h := &GatewayHandler{}
+	require.Equal(t, 180.0, h.calculateSubscriptionRemaining(group, sub), "native limits cannot hide dynamic headroom")
+	sub.DynamicQuota.RemainingUSD = 0
+	require.Zero(t, h.calculateSubscriptionRemaining(group, sub), "dynamic exhaustion still applies")
+	sub.DynamicQuota.Enabled = false
+	sub.DynamicQuota.RemainingUSD = 180
+	require.Zero(t, h.calculateSubscriptionRemaining(group, sub), "disabled policies use native limits")
+	sub.DynamicQuota.RequestedEnabled, sub.DynamicQuota.ActivationPending = true, true
+	require.Zero(t, h.calculateSubscriptionRemaining(group, sub), "pending activation still uses native limits")
 	for _, ws := range []bool{false, true} {
 		setupOpsErrorLogTestQueue(t, 4)
 		ops := service.NewOpsService(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)

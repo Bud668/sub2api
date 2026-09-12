@@ -204,6 +204,144 @@ func TestDynamicQuotaV2FirstCapAndStablePhysicalShare(t *testing.T) {
 	}
 }
 
+func TestDynamicQuotaV2LearningCapEditsKeepUsageAndHolds(t *testing.T) {
+	s, db := dynamicTestStore(t)
+	ctx := context.Background()
+	dynamicExec(t, db, `UPDATE user_subscriptions SET weekly_usage_usd=180 WHERE id=11`)
+	saveDynamicV2(t, s, 11, 4, true, 500, 200)
+	saveDynamicV2(t, s, 12, 4, true, 500, 200)
+	require.NoError(t, s.Refresh(ctx, 4))
+	other, err := s.Load(ctx, 12)
+	require.NoError(t, err)
+	before, err := s.Load(ctx, 11)
+	require.NoError(t, err)
+	request, err := s.Begin(ctx, 101, 4)
+	require.NoError(t, err)
+	saveDynamicV2(t, s, 11, 4, true, 600, 200)
+	after, err := s.Load(ctx, 11)
+	require.NoError(t, err)
+	require.Equal(t, 600.0, after.LimitUSD, "a learning cap edit must change the actual allowance")
+	require.Equal(t, before.UsedUSD, after.UsedUSD)
+	require.Equal(t, before.Cycle, after.Cycle)
+	require.Equal(t, before.StartedAt, after.StartedAt)
+	require.Equal(t, before.ExpectedResetAt, after.ExpectedResetAt)
+	require.Positive(t, after.ReservedUSD)
+	require.Equal(t, 600-before.UsedUSD-after.ReservedUSD, after.RemainingUSD)
+	require.Equal(t, "bounds", after.LastChange.Reason)
+	require.Equal(t, 500.0, after.LastChange.PreviousUSD)
+	dynamicTestSettle(t, db, request, 101, 11, 10, 1)
+	settled, err := s.Load(ctx, 11)
+	require.NoError(t, err)
+	for _, enabled := range []bool{true, false, true} {
+		saveDynamicV2(t, s, 11, 4, enabled, 600, 200)
+	}
+	after, err = s.Load(ctx, 11)
+	require.NoError(t, err)
+	require.Equal(t, 181.0, after.UsedUSD)
+	require.Equal(t, settled.allocatedStandard, after.allocatedStandard, "repeated saves/toggles cannot recreate a spent share")
+	require.Equal(t, settled.RemainingUSD, after.RemainingUSD)
+	require.Equal(t, settled.LastChange, after.LastChange)
+	require.Zero(t, after.ReservedUSD)
+	unchanged, err := s.Load(ctx, 12)
+	require.NoError(t, err)
+	require.Equal(t, other, unchanged, "editing one subscriber cannot redistribute another's allowance")
+
+	// An existing pre-fix cap can be applied by saving it once; no DB backfill.
+	dynamicExec(t, db, `UPDATE dynamic_subscription_policies SET applied_limit_usd=500,allocated_standard_usd=500 WHERE subscription_id=11`)
+	saveDynamicV2(t, s, 11, 4, true, 600, 200)
+	after, err = s.Load(ctx, 11)
+	require.NoError(t, err)
+	require.Equal(t, 600.0, after.LimitUSD)
+	require.Equal(t, 181.0, after.UsedUSD)
+
+	// Raising a cap after a verified allocation must not erase that allocation.
+	updateDynamicGuardPool(t, db, 4, func(p *DynamicQuotaPoolState) {
+		p.Status, p.CapacityUSD, p.LastAllocationAt = "active", 2000, time.Now().UTC()
+	})
+	saveDynamicV2(t, s, 11, 4, true, 700, 200)
+	after, err = s.Load(ctx, 11)
+	require.NoError(t, err)
+	require.Equal(t, 700.0, after.MaxLimitUSD)
+	require.Equal(t, 600.0, after.LimitUSD)
+	require.Equal(t, 181.0, after.UsedUSD)
+}
+
+type dynamicLimitsCache struct {
+	billingCacheWorkerStub
+	data SubscriptionCacheData
+}
+
+func (c *dynamicLimitsCache) GetSubscriptionCache(context.Context, int64, int64) (*SubscriptionCacheData, error) {
+	return &c.data, nil
+}
+
+func TestDynamicQuotaV2IndependentGroupLimits(t *testing.T) {
+	now := time.Now()
+	ctx := context.Background()
+	svc := newTestSubscriptionService()
+	svc.now = func() time.Time { return now }
+	for _, tc := range []struct {
+		name  string
+		quota *DynamicSubscriptionQuota
+		want  error
+	}{
+		{"unconfigured", nil, nil},
+		{"disabled", &DynamicSubscriptionQuota{}, nil},
+		{"pending", &DynamicSubscriptionQuota{RequestedEnabled: true, ActivationPending: true}, nil},
+		{"learning", &DynamicSubscriptionQuota{Enabled: true, Status: "learning", LimitUSD: 600, UsedUSD: 180, ReservedUSD: 20, RemainingUSD: 400}, nil},
+		{"active", &DynamicSubscriptionQuota{Enabled: true, Status: "active", LimitUSD: 600, UsedUSD: 180, ReservedUSD: 20, RemainingUSD: 400}, nil},
+		{"exhausted", &DynamicSubscriptionQuota{Enabled: true, Status: "active", LimitUSD: 600, UsedUSD: 600}, ErrDynamicQuotaExhausted},
+		{"source-unavailable", &DynamicSubscriptionQuota{Enabled: true, Status: "quota_unavailable", LimitUSD: 600}, ErrDynamicQuotaUnavailable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sub := &UserSubscription{DynamicQuota: tc.quota, Status: SubscriptionStatusActive, ExpiresAt: now.Add(24 * time.Hour),
+				DailyWindowStart: &now, WeeklyWindowStart: &now, MonthlyWindowStart: &now,
+				DailyUsageUSD: 180, WeeklyUsageUSD: 180, MonthlyUsageUSD: 180}
+			cache := &dynamicLimitsCache{data: SubscriptionCacheData{Status: sub.Status, ExpiresAt: sub.ExpiresAt,
+				DailyUsage: 180, WeeklyUsage: 180, MonthlyUsage: 180}}
+			billing := &BillingCacheService{cache: cache}
+			for _, native := range []struct {
+				group Group
+				want  error
+			}{
+				{Group{DailyLimitUSD: ptrFloat64(10)}, ErrDailyLimitExceeded},
+				{Group{WeeklyLimitUSD: ptrFloat64(10)}, ErrWeeklyLimitExceeded},
+				{Group{MonthlyLimitUSD: ptrFloat64(10)}, ErrMonthlyLimitExceeded},
+			} {
+				want := native.want
+				if tc.quota != nil && tc.quota.Enabled {
+					want = tc.want
+				}
+				require.ErrorIs(t, svc.CheckUsageLimits(ctx, sub, &native.group, 0), want)
+				maintenance, err := svc.ValidateAndCheckLimits(sub, &native.group)
+				require.False(t, maintenance)
+				require.ErrorIs(t, err, want)
+				require.ErrorIs(t, billing.checkSubscriptionEligibility(ctx, 1, &native.group, sub), want)
+			}
+			group := &Group{DailyLimitUSD: ptrFloat64(10), WeeklyLimitUSD: ptrFloat64(10), MonthlyLimitUSD: ptrFloat64(10)}
+			progress := svc.calculateProgress(sub, group)
+			if tc.quota != nil && tc.quota.Enabled {
+				require.Nil(t, progress.Daily)
+				require.Nil(t, progress.Monthly)
+				require.Equal(t, tc.quota.RemainingUSD, progress.Weekly.RemainingUSD)
+				if tc.want == nil {
+					require.ErrorIs(t, svc.CheckUsageLimits(ctx, sub, group, 401), ErrDynamicQuotaExhausted)
+				}
+				cache.data.Status = SubscriptionStatusSuspended
+				require.ErrorIs(t, billing.checkSubscriptionEligibility(ctx, 1, group, sub), ErrSubscriptionInvalid)
+				cache.data.Status, cache.data.ExpiresAt = SubscriptionStatusActive, now.Add(-time.Hour)
+				require.ErrorIs(t, billing.checkSubscriptionEligibility(ctx, 1, group, sub), ErrSubscriptionInvalid)
+			} else {
+				require.NotNil(t, progress.Daily)
+				require.NotNil(t, progress.Monthly)
+				require.Equal(t, 10.0, progress.Weekly.LimitUSD)
+			}
+			require.Equal(t, 180.0, sub.DailyUsageUSD, "hidden daily accounting remains recorded")
+			require.Equal(t, 180.0, sub.MonthlyUsageUSD, "hidden monthly accounting remains recorded")
+		})
+	}
+}
+
 func TestDynamicQuotaV2SpikeCannotRefillAnExhaustedUser(t *testing.T) {
 	s, db := dynamicTestStore(t)
 	ctx := context.Background()

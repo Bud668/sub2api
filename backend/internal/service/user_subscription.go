@@ -215,10 +215,11 @@ func (s *UserSubscription) MonthlyResetTime() *time.Time {
 }
 
 func (s *UserSubscription) CheckDailyLimit(group *Group, additionalCost float64) bool {
-	if !group.HasDailyLimit() {
+	limit := s.EffectiveDailyLimit(group)
+	if limit == nil || *limit <= 0 {
 		return true
 	}
-	return s.DailyUsageUSD+additionalCost <= *group.DailyLimitUSD
+	return s.DailyUsageUSD+additionalCost <= *limit
 }
 
 func (s *UserSubscription) CheckWeeklyLimit(group *Group, additionalCost float64) bool {
@@ -231,6 +232,15 @@ func (s *UserSubscription) CheckWeeklyLimit(group *Group, additionalCost float64
 	return s.WeeklyUsageUSD+additionalCost <= *group.WeeklyLimitUSD
 }
 
+// Effective limits keep active dynamic subscriptions independent of group quotas.
+// Disabled or pending policies continue to use the group's limits.
+func (s *UserSubscription) EffectiveDailyLimit(group *Group) *float64 {
+	if group == nil || (s.DynamicQuota != nil && s.DynamicQuota.Enabled) {
+		return nil
+	}
+	return group.DailyLimitUSD
+}
+
 func (s *UserSubscription) EffectiveWeeklyLimit(group *Group) *float64 {
 	if s.DynamicQuota != nil && s.DynamicQuota.Enabled {
 		return &s.DynamicQuota.LimitUSD
@@ -241,11 +251,19 @@ func (s *UserSubscription) EffectiveWeeklyLimit(group *Group) *float64 {
 	return group.WeeklyLimitUSD
 }
 
+func (s *UserSubscription) EffectiveMonthlyLimit(group *Group) *float64 {
+	if group == nil || (s.DynamicQuota != nil && s.DynamicQuota.Enabled) {
+		return nil
+	}
+	return group.MonthlyLimitUSD
+}
+
 func (s *UserSubscription) CheckMonthlyLimit(group *Group, additionalCost float64) bool {
-	if !group.HasMonthlyLimit() {
+	limit := s.EffectiveMonthlyLimit(group)
+	if limit == nil || *limit <= 0 {
 		return true
 	}
-	return s.MonthlyUsageUSD+additionalCost <= *group.MonthlyLimitUSD
+	return s.MonthlyUsageUSD+additionalCost <= *limit
 }
 
 func (s *UserSubscription) CheckAllLimits(group *Group, additionalCost float64) (daily, weekly, monthly bool) {

@@ -6,6 +6,28 @@ import DynamicQuotaCard from '../DynamicQuotaCard.vue'
 import type { DynamicSubscriptionQuota } from '@/types'
 
 describe('upstream cycle display', () => {
+  it.each([false, true])('shows the upstream reset outside details and follows refreshed data (compact=%s)', async compact => {
+    const quota: DynamicSubscriptionQuota = { enabled: true, revision: 1, weight: 1, max_limit_usd: 600, cycle: 1, status: 'active', limit_usd: 600, used_usd: 180, reserved_usd: 0, remaining_usd: 420, started_at: '2026-09-01T01:00:00Z', updated_at: '', expected_reset_at: '2026-09-12T01:00:00Z' }
+    const wrapper = mount(DynamicQuotaCard, { props: { quota, compact }, global: { plugins: [createI18n({ legacy: false, locale: 'zh', messages: { zh }, messageCompiler: message => () => String(message) })] } })
+    const reset = wrapper.get('[data-testid="dynamic-reset"]')
+    expect(reset.element.closest('details')).toBeNull()
+    expect(reset.text()).toContain('跟随绑定上游')
+    expect(reset.text()).toContain('待确认')
+    expect(wrapper.findAll('time')).toHaveLength(1)
+    expect(reset.get('time').attributes('datetime')).toBe(quota.expected_reset_at)
+    const previousText = reset.get('time').text()
+    await wrapper.setProps({ quota: { ...quota, expected_reset_at: '2026-09-15T02:30:00Z' } })
+    expect(reset.get('time').attributes('datetime')).toBe('2026-09-15T02:30:00Z')
+    expect(reset.get('time').text()).not.toBe(previousText)
+    expect(wrapper.text()).toContain('$180.00') // A changed forecast does not clear usage.
+    for (const expected_reset_at of [undefined, '', 'invalid-date']) {
+      await wrapper.setProps({ quota: { ...quota, expected_reset_at } })
+      expect(reset.find('time').exists()).toBe(false)
+      expect(reset.text()).toContain('等待上游同步')
+      expect(reset.text()).not.toContain('Invalid Date')
+    }
+  })
+
   it('separates adjustment from reset and never fabricates a local seven-day countdown', async () => {
     const quota: DynamicSubscriptionQuota = { enabled: true, revision: 1, weight: 1, max_limit_usd: 700, floor_limit_usd: 100, next_adjustment_percent: 40, cycle: 4, status: 'confirming', limit_usd: 100, used_usd: 20, reserved_usd: 5, remaining_usd: 75, started_at: '2026-09-01T01:00:00Z', updated_at: '', synced_at: '2026-09-09T01:00:00Z', expected_reset_at: '2026-09-12T01:00:00Z' }
     const wrapper = mount(DynamicQuotaCard, { props: { quota }, global: { plugins: [createI18n({ legacy: false, locale: 'zh', messages: { zh }, messageCompiler: message => () => String(message) })] } })

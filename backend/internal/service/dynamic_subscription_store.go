@@ -468,7 +468,8 @@ func (s *DynamicSubscriptionService) Save(ctx context.Context, subscriptionID in
 	ready := pool.Snapshot != nil && pool.Snapshot.Valid(time.Now()) && (pool.Status == "active" || pool.Status == "learning")
 	waiting := in.Enabled && (!oldEnabled || oldPending) && !ready
 	limit := in.MaxLimitUSD
-	if oldFloor.Valid {
+	// Before the first learned allocation, the saved cap is the allowance.
+	if oldFloor.Valid && (pool.CapacityUSD > 0 || !pool.LastAllocationAt.IsZero()) {
 		limit = math.Min(in.MaxLimitUSD, math.Max(*in.FloorLimitUSD, oldLimit))
 	}
 	allocation := seed + math.Max(0, limit-used)/rate

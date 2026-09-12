@@ -72,7 +72,7 @@
 
               <!-- Progress bars for limited subscriptions -->
               <template v-else>
-                <div v-if="subscription.group?.daily_limit_usd" class="flex items-center gap-2">
+                <div v-if="!subscription.dynamic_quota?.enabled && subscription.group?.daily_limit_usd" class="flex items-center gap-2">
                   <span class="w-8 flex-shrink-0 text-[10px] text-gray-500">{{
                     t('subscriptionProgress.daily')
                   }}</span>
@@ -129,7 +129,7 @@
                   </span>
                 </div>
 
-                <div v-if="subscription.group?.monthly_limit_usd" class="flex items-center gap-2">
+                <div v-if="!subscription.dynamic_quota?.enabled && subscription.group?.monthly_limit_usd" class="flex items-center gap-2">
                   <span class="w-8 flex-shrink-0 text-[10px] text-gray-500">{{
                     t('subscriptionProgress.monthly')
                   }}</span>
@@ -207,14 +207,15 @@ const displaySubscriptions = computed(() => {
 })
 
 function getMaxUsagePercentage(sub: UserSubscription): number {
+  if (sub.dynamic_quota?.enabled) {
+    const q = sub.dynamic_quota
+    return q.limit_usd > 0 ? q.used_usd / q.limit_usd * 100 : 100
+  }
   const percentages: number[] = []
   if (sub.group?.daily_limit_usd) {
     percentages.push(((sub.daily_usage_usd || 0) / sub.group.daily_limit_usd) * 100)
   }
-  if (sub.dynamic_quota?.enabled) {
-    const q = sub.dynamic_quota
-    percentages.push(q.limit_usd > 0 ? q.used_usd / q.limit_usd * 100 : 100)
-  } else if (sub.group?.weekly_limit_usd) {
+  if (sub.group?.weekly_limit_usd) {
     percentages.push(((sub.weekly_usage_usd || 0) / sub.group.weekly_limit_usd) * 100)
   }
   if (sub.group?.monthly_limit_usd) {

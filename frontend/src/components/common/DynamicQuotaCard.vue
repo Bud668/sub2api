@@ -16,6 +16,18 @@
       <div class="h-full rounded-full bg-primary-500" :style="{ width: `${percentage}%` }" />
     </div>
     <p v-if="quota.reserved_usd > 0" class="text-xs text-gray-500">{{ t('dynamicQuota.reserved') }} · {{ usd(quota.reserved_usd) }}</p>
+    <div class="my-3 border-t border-primary-100 pt-3 text-xs dark:border-primary-900" data-testid="dynamic-reset">
+      <dl>
+        <div class="flex flex-wrap justify-between gap-x-3 gap-y-1">
+          <dt class="text-gray-500 dark:text-gray-400">{{ t('dynamicQuota.expected') }}</dt>
+          <dd class="font-medium tabular-nums text-gray-900 dark:text-gray-100">
+            <time v-if="resetTime" :datetime="quota.expected_reset_at">{{ resetTime }}</time>
+            <span v-else>{{ t('dynamicQuota.resetUnavailable') }}</span>
+          </dd>
+        </div>
+      </dl>
+      <p class="mt-1 text-gray-500 dark:text-gray-400">{{ t('dynamicQuota.resetHint') }}</p>
+    </div>
     <template v-if="!compact">
       <div class="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500">
         <span>{{ t('dynamicQuota.cap') }} {{ usd(quota.max_limit_usd) }}</span>
@@ -36,7 +48,6 @@
       <div class="flex flex-wrap justify-between gap-1"><dt>{{ t('dynamicQuota.synced') }}</dt><dd>{{ date(quota.synced_at) }}</dd></div>
       <div v-if="quota.last_allocation_at" class="flex flex-wrap justify-between gap-1"><dt>{{ t('dynamicQuota.allocatedAt') }}</dt><dd>{{ date(quota.last_allocation_at) }}</dd></div>
       <div class="flex flex-wrap justify-between gap-1"><dt>{{ t('dynamicQuota.confirmed') }}</dt><dd>{{ quota.confirmed_at ? date(quota.confirmed_at) : t('dynamicQuota.notReset') }}</dd></div>
-      <div v-if="quota.expected_reset_at" class="flex flex-wrap justify-between gap-1"><dt>{{ t('dynamicQuota.expected') }}</dt><dd>{{ date(quota.expected_reset_at) }}</dd></div>
         </dl>
         <p class="mt-2">{{ t('dynamicQuota.cycleHint') }}</p>
       </details>
@@ -52,7 +63,8 @@ import { formatDateTimeToMinute } from '@/utils/format'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
 
 const props = withDefaults(defineProps<{ quota: DynamicSubscriptionQuota; compact?: boolean }>(), { compact: false })
-const { t } = useI18n()
+const { t, locale } = useI18n()
+const resetTime = computed(() => formatDateTimeToMinute(props.quota.expected_reset_at, locale.value))
 const changeReason = computed(() => ['initial', 'bounds', 'upstream_node', 'reset'].includes(props.quota.last_change?.reason || '') ? props.quota.last_change!.reason : 'bounds')
 const statuses = ['active', 'learning', 'confirming', 'settling', 'reset_unconfirmed', 'identity_changed', 'quota_unavailable', 'invalid_billing_rate', 'upstream_reserve', 'disabled', 'activation_pending']
 const canSpend = computed(() => ['active', 'learning'].includes(props.quota.status))

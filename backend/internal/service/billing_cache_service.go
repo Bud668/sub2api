@@ -929,11 +929,7 @@ func (s *BillingCacheService) checkSubscriptionEligibility(ctx context.Context, 
 		return ErrSubscriptionInvalid
 	}
 
-	// 检查限额（使用传入的Group限额配置）
-	if group.HasDailyLimit() && subData.DailyUsage >= *group.DailyLimitUSD {
-		return ErrDailyLimitExceeded
-	}
-
+	// Effective dynamic quotas replace all group amount limits, not eligibility.
 	if subscription != nil && subscription.DynamicQuota != nil && subscription.DynamicQuota.Enabled {
 		q := subscription.DynamicQuota
 		if err := q.checkReady(); err != nil {
@@ -942,7 +938,14 @@ func (s *BillingCacheService) checkSubscriptionEligibility(ctx context.Context, 
 		if q.RemainingUSD <= 0 {
 			return ErrDynamicQuotaExhausted
 		}
-	} else if group.HasWeeklyLimit() && subData.WeeklyUsage >= *group.WeeklyLimitUSD {
+		return nil
+	}
+
+	// 检查限额（使用传入的Group限额配置）
+	if group.HasDailyLimit() && subData.DailyUsage >= *group.DailyLimitUSD {
+		return ErrDailyLimitExceeded
+	}
+	if group.HasWeeklyLimit() && subData.WeeklyUsage >= *group.WeeklyLimitUSD {
 		return ErrWeeklyLimitExceeded
 	}
 
