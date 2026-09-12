@@ -1634,7 +1634,7 @@ onUnmounted(() => {
   padding: 1rem;
   border-radius: 1rem;
   border-color: color-mix(in srgb, var(--subscription-accent) 28%, transparent);
-  border-left: 3px solid var(--subscription-accent);
+  border-inline: 2px solid var(--subscription-accent);
 }
 :deep(.subscription-list [data-table-card] + [data-table-card]) { margin-top: 1rem; }
 :deep(.subscription-list [data-table-card] > div) { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.75rem 1rem; align-items: center; }
