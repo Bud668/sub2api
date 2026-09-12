@@ -394,7 +394,6 @@
           <template #cell-actions="{ row }">
             <div class="flex flex-wrap items-center gap-1">
               <span v-if="row.admin_debug" class="rounded-md bg-violet-50 px-2 py-1 text-xs font-medium text-violet-700 dark:bg-violet-900/20 dark:text-violet-300">{{ t('dynamicQuota.adminDebug') }}</span>
-              <RouterLink v-else-if="row.group?.platform === 'openai'" to="/admin/groups" class="rounded-lg border border-gray-200 px-2 py-1.5 text-xs text-gray-600 hover:bg-gray-50 focus-visible:ring-2 focus-visible:ring-primary-500 dark:border-dark-600 dark:text-gray-300 dark:hover:bg-dark-700">{{ t('dynamicQuota.groupSettings') }}</RouterLink>
               <button
                 v-if="row.status === 'active' || row.status === 'expired'"
                 @click="handleExtend(row)"
@@ -404,29 +403,16 @@
                 <span class="text-xs">{{ t('admin.subscriptions.adjust') }}</span>
               </button>
               <button
-                v-if="row.status === 'active'"
-                @click="handleResetQuota(row)"
-                :disabled="resettingQuota && resettingSubscription?.id === row.id"
-                class="inline-flex items-center gap-1 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-orange-50 hover:text-orange-600 dark:hover:bg-orange-900/20 dark:hover:text-orange-400 disabled:cursor-not-allowed disabled:opacity-50"
+                v-if="row.status === 'active' || row.status === 'revoked' || canEnableDebug(row)"
+                type="button"
+                data-subscription-menu-trigger
+                :aria-expanded="actionSubscription?.id === row.id"
+                aria-controls="subscription-action-menu"
+                @click="openActionMenu(row, $event)"
+                class="inline-flex items-center gap-1 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 focus-visible:ring-2 focus-visible:ring-primary-500 dark:hover:bg-dark-700 dark:hover:text-white"
               >
-                <Icon name="refresh" size="sm" />
-                <span class="text-xs">{{ t('admin.subscriptions.resetQuota') }}</span>
-              </button>
-              <button
-                v-if="row.status === 'active'"
-                @click="handleRevoke(row)"
-                class="inline-flex items-center gap-1 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400"
-              >
-                <Icon name="ban" size="sm" />
-                <span class="text-xs">{{ t('admin.subscriptions.revoke') }}</span>
-              </button>
-              <button
-                v-if="row.status === 'revoked'"
-                @click="handleRestore(row)"
-                class="inline-flex items-center gap-1 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-green-50 hover:text-green-600 dark:hover:bg-green-900/20 dark:hover:text-green-400"
-              >
-                <Icon name="refresh" size="sm" />
-                <span class="text-xs">{{ t('admin.subscriptions.restore') }}</span>
+                <Icon name="more" size="sm" />
+                <span class="text-xs">{{ t('common.more') }}</span>
               </button>
             </div>
           </template>
@@ -454,6 +440,73 @@
       />
       </template>
     </TablePageLayout>
+
+    <Teleport to="body">
+      <div
+        v-if="actionSubscription"
+        id="subscription-action-menu"
+        ref="actionMenuRef"
+        class="fixed z-[9999] w-56 overflow-y-auto rounded-xl bg-white py-1 text-sm shadow-lg ring-1 ring-black/5 dark:bg-dark-800 dark:ring-white/10"
+        :style="{ top: `${menuPosition.top}px`, left: `${menuPosition.left}px`, maxHeight: 'calc(100dvh - 16px)' }"
+        @keydown.esc.stop.prevent="closeActionMenu"
+      >
+        <button
+          v-if="actionSubscription.dynamic_quota?.enabled && actionSubscription.status === 'active'"
+          type="button"
+          class="flex w-full items-center gap-2 px-4 py-2.5 text-left text-gray-700 hover:bg-gray-100 focus-visible:bg-gray-100 dark:text-gray-300 dark:hover:bg-dark-700 dark:focus-visible:bg-dark-700"
+          @click="openDynamicReset(actionSubscription); closeActionMenu()"
+        >
+          <Icon name="refresh" size="sm" />
+          {{ t('dynamicQuota.manualReset') }}
+        </button>
+        <button
+          v-if="canEnableDebug(actionSubscription)"
+          type="button"
+          class="flex w-full items-center gap-2 px-4 py-2.5 text-left text-violet-700 hover:bg-violet-50 focus-visible:bg-violet-50 dark:text-violet-300 dark:hover:bg-dark-700 dark:focus-visible:bg-dark-700"
+          @click="debugSubscription = actionSubscription; closeActionMenu()"
+        >
+          <Icon name="shield" size="sm" />
+          {{ t('dynamicQuota.enableAdminDebug') }}
+        </button>
+        <button
+          v-if="actionSubscription.status === 'active'"
+          type="button"
+          class="flex w-full items-center gap-2 px-4 py-2.5 text-left text-red-600 hover:bg-red-50 focus-visible:bg-red-50 dark:text-red-400 dark:hover:bg-dark-700 dark:focus-visible:bg-dark-700"
+          @click="handleRevoke(actionSubscription); closeActionMenu()"
+        >
+          <Icon name="ban" size="sm" />
+          {{ t('admin.subscriptions.revoke') }}
+        </button>
+        <button
+          v-if="actionSubscription.status === 'revoked'"
+          type="button"
+          class="flex w-full items-center gap-2 px-4 py-2.5 text-left text-green-700 hover:bg-green-50 focus-visible:bg-green-50 dark:text-green-400 dark:hover:bg-dark-700 dark:focus-visible:bg-dark-700"
+          @click="handleRestore(actionSubscription); closeActionMenu()"
+        >
+          <Icon name="refresh" size="sm" />
+          {{ t('admin.subscriptions.restore') }}
+        </button>
+      </div>
+    </Teleport>
+
+    <BaseDialog :show="resetSubscription !== null" :title="t('dynamicQuota.manualReset')" width="narrow" @close="!syncingReset && (resetSubscription = null)">
+      <div class="space-y-4 text-sm">
+        <p class="text-gray-600 dark:text-gray-300">{{ t('dynamicQuota.manualResetHint') }}</p>
+        <p v-if="resetPreview" class="rounded-lg bg-gray-50 p-3 text-gray-900 dark:bg-dark-700 dark:text-gray-100">
+          {{ t('dynamicQuota.manualResetScope', { source: resetPreview.account_id, cycle: resetPreview.cycle, members: resetPreview.members }) }}
+        </p>
+        <p v-else-if="loadingReset" class="text-gray-500">{{ t('common.loading') }}</p>
+        <p v-if="resetMessage" role="status" class="rounded-lg bg-blue-50 p-3 text-blue-800 dark:bg-blue-900/20 dark:text-blue-200">{{ resetMessage }}</p>
+        <p v-if="resetError" role="alert" class="text-red-600 dark:text-red-400">{{ resetError }}</p>
+      </div>
+      <template #footer>
+        <div class="flex justify-end gap-3">
+          <button class="btn btn-secondary" :disabled="syncingReset" @click="resetSubscription = null">{{ t('common.close') }}</button>
+          <button v-if="resetPreview" class="btn btn-primary" :disabled="syncingReset || resetComplete" @click="confirmSyncReset">{{ syncingReset ? t('common.loading') : t('dynamicQuota.checkReset') }}</button>
+          <button v-else class="btn btn-primary" :disabled="loadingReset" @click="resetSubscription && openDynamicReset(resetSubscription)">{{ t('common.refresh') }}</button>
+        </div>
+      </template>
+    </BaseDialog>
 
     <!-- Assign Subscription Modal -->
     <BaseDialog
@@ -686,15 +739,14 @@
       @cancel="showRestoreDialog = false"
     />
 
-    <!-- Reset Quota Confirmation Dialog -->
     <ConfirmDialog
-      :show="showResetQuotaConfirm"
-      :title="t('admin.subscriptions.resetQuotaTitle')"
-      :message="t('admin.subscriptions.resetQuotaConfirm', { user: resettingSubscription?.user?.email })"
-      :confirm-text="t('admin.subscriptions.resetQuota')"
+      :show="debugSubscription !== null"
+      :title="t('dynamicQuota.enableAdminDebug')"
+      :message="t('dynamicQuota.enableAdminDebugConfirm', { user: debugSubscription?.user?.email })"
+      :confirm-text="enablingDebug ? t('common.saving') : t('common.confirm')"
       :cancel-text="t('common.cancel')"
-      @confirm="confirmResetQuota"
-      @cancel="showResetQuotaConfirm = false"
+      @confirm="confirmEnableDebug"
+      @cancel="!enablingDebug && (debugSubscription = null)"
     />
     <!-- Subscription Guide Modal -->
     <teleport to="body">
@@ -779,12 +831,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { adminAPI } from '@/api/admin'
 import type { UserSubscription, Group, GroupPlatform, SubscriptionType } from '@/types'
 import type { SimpleUser } from '@/api/admin/usage'
+import type { DynamicResetResult } from '@/api/admin/subscriptions'
 import type { Column } from '@/components/common/types'
 import { formatDateTimeToMinute } from '@/utils/format'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
@@ -826,8 +879,8 @@ interface GroupOption {
 const showGuideModal = ref(false)
 
 const guideActionRows = computed(() => [
-  { action: t('admin.subscriptions.guide.actions.adjust'), desc: t('admin.subscriptions.guide.actions.adjustDesc') },
-  { action: t('admin.subscriptions.guide.actions.resetQuota'), desc: t('admin.subscriptions.guide.actions.resetQuotaDesc') },
+  { action: t('admin.subscriptions.adjust'), desc: t('admin.subscriptions.guide.actions.adjustDesc') },
+  { action: t('dynamicQuota.enableAdminDebug'), desc: t('dynamicQuota.adminDebugHint') },
   { action: t('admin.subscriptions.guide.actions.revoke'), desc: t('admin.subscriptions.guide.actions.revokeDesc') }
 ])
 
@@ -991,10 +1044,44 @@ const showAssignModal = ref(false)
 const showExtendModal = ref(false)
 const showRevokeDialog = ref(false)
 const showRestoreDialog = ref(false)
-const showResetQuotaConfirm = ref(false)
 const submitting = ref(false)
-const resettingSubscription = ref<UserSubscription | null>(null)
-const resettingQuota = ref(false)
+const debugSubscription = ref<UserSubscription | null>(null)
+const enablingDebug = ref(false)
+const resetSubscription = ref<UserSubscription | null>(null)
+const resetPreview = ref<DynamicResetResult | null>(null)
+const loadingReset = ref(false)
+const syncingReset = ref(false)
+const resetComplete = ref(false)
+const resetMessage = ref('')
+const resetError = ref('')
+const actionSubscription = ref<UserSubscription | null>(null)
+const actionMenuRef = ref<HTMLElement | null>(null)
+const menuPosition = ref({ top: 8, left: 8 })
+let actionTrigger: HTMLElement | null = null
+
+const canEnableDebug = (row: UserSubscription) => row.user?.role === 'admin' && !row.admin_debug
+const closeActionMenu = () => {
+  if (actionMenuRef.value?.contains(document.activeElement)) actionTrigger?.focus({ preventScroll: true })
+  actionSubscription.value = null
+}
+const positionActionMenu = () => {
+  if (!actionMenuRef.value || !actionTrigger) return
+  const anchor = actionTrigger.getBoundingClientRect()
+  const { width, height } = actionMenuRef.value.getBoundingClientRect()
+  menuPosition.value = {
+    left: Math.max(8, Math.min(anchor.right - width, window.innerWidth - width - 8)),
+    top: Math.max(8, anchor.bottom + height + 12 <= window.innerHeight ? anchor.bottom + 4 : anchor.top - height - 4)
+  }
+}
+const openActionMenu = async (row: UserSubscription, event: MouseEvent) => {
+  if (actionSubscription.value?.id === row.id) return closeActionMenu()
+  actionTrigger = event.currentTarget as HTMLElement
+  actionSubscription.value = row
+  await nextTick()
+  if (!actionMenuRef.value) return
+  positionActionMenu()
+  actionMenuRef.value.querySelector('button')?.focus({ preventScroll: true })
+}
 const extendingSubscription = ref<UserSubscription | null>(null)
 const revokingSubscription = ref<UserSubscription | null>(null)
 const restoringSubscription = ref<UserSubscription | null>(null)
@@ -1048,6 +1135,7 @@ const absorptionFilters = computed(() => ({
   user_id: filters.user_id || undefined
 }))
 const loadSubscriptions = async () => {
+  closeActionMenu()
   absorptionRefreshKey.value++
   if (abortController) {
     abortController.abort()
@@ -1343,26 +1431,53 @@ const confirmRestore = async () => {
   }
 }
 
-const handleResetQuota = (subscription: UserSubscription) => {
-  resettingSubscription.value = subscription
-  showResetQuotaConfirm.value = true
-}
-
-const confirmResetQuota = async () => {
-  if (!resettingSubscription.value) return
-  if (resettingQuota.value) return
-  resettingQuota.value = true
+const confirmEnableDebug = async () => {
+  if (!debugSubscription.value || enablingDebug.value) return
+  enablingDebug.value = true
   try {
-    await adminAPI.subscriptions.resetQuota(resettingSubscription.value.id, { daily: true, weekly: true, monthly: true })
-    appStore.showSuccess(t('admin.subscriptions.quotaResetSuccess'))
-    showResetQuotaConfirm.value = false
-    resettingSubscription.value = null
+    await adminAPI.subscriptions.enableAdminDebug(debugSubscription.value.id)
+    appStore.showSuccess(t('dynamicQuota.adminDebugEnabled'))
+    debugSubscription.value = null
     await loadSubscriptions()
   } catch (error: any) {
-    appStore.showError(error.response?.data?.detail || t('admin.subscriptions.failedToResetQuota'))
-    console.error('Error resetting quota:', error)
+    appStore.showError(error.response?.data?.detail || t('dynamicQuota.adminDebugFailed'))
   } finally {
-    resettingQuota.value = false
+    enablingDebug.value = false
+  }
+}
+
+const openDynamicReset = async (row: UserSubscription) => {
+  resetSubscription.value = row
+  resetPreview.value = null
+  resetMessage.value = ''
+  resetError.value = ''
+  resetComplete.value = false
+  loadingReset.value = true
+  try {
+    const result = await adminAPI.subscriptions.previewDynamicReset(row.id)
+    if (resetSubscription.value?.id === row.id) resetPreview.value = result
+  } catch {
+    resetError.value = t('dynamicQuota.manualResetFailed')
+  } finally {
+    loadingReset.value = false
+  }
+}
+
+const confirmSyncReset = async () => {
+  if (!resetSubscription.value || !resetPreview.value || syncingReset.value || resetComplete.value) return
+  syncingReset.value = true
+  resetError.value = ''
+  try {
+    const { account_id, cycle } = resetPreview.value
+    const result = await adminAPI.subscriptions.syncDynamicReset(resetSubscription.value.id, { account_id, cycle })
+    const status = ['reset', 'confirming', 'unchanged'].includes(result.status) ? result.status : 'unconfirmed'
+    resetMessage.value = t(`dynamicQuota.manualResetResult.${status}`)
+    resetComplete.value = status === 'reset'
+    await loadSubscriptions()
+  } catch {
+    resetError.value = t('dynamicQuota.manualResetFailed')
+  } finally {
+    syncingReset.value = false
   }
 }
 
@@ -1473,6 +1588,7 @@ const formatResetTime = (windowStart: string | null, period: 'daily' | 'weekly' 
 // Handle click outside to close dropdowns
 const handleClickOutside = (event: MouseEvent) => {
   const target = event.target as HTMLElement
+  if (!target.closest('[data-subscription-menu-trigger]') && !actionMenuRef.value?.contains(target)) closeActionMenu()
   if (!target.closest('[data-assign-user-search]')) showUserDropdown.value = false
   if (!target.closest('[data-filter-user-search]')) showFilterUserDropdown.value = false
   if (columnDropdownRef.value && !columnDropdownRef.value.contains(target)) {
@@ -1486,10 +1602,14 @@ onMounted(() => {
   loadSubscriptions()
   loadGroups()
   document.addEventListener('click', handleClickOutside)
+  window.addEventListener('resize', closeActionMenu)
+  document.addEventListener('scroll', positionActionMenu, true)
 })
 
 onUnmounted(() => {
   document.removeEventListener('click', handleClickOutside)
+  window.removeEventListener('resize', closeActionMenu)
+  document.removeEventListener('scroll', positionActionMenu, true)
   if (filterUserSearchTimeout) {
     clearTimeout(filterUserSearchTimeout)
   }

@@ -216,7 +216,7 @@ func (s *DynamicSubscriptionService) applyGroupPolicyTx(ctx context.Context, tx 
 	if err != nil {
 		return err
 	}
-	if source != 0 && source != p.AccountID {
+	if !debug && source != 0 && source != p.AccountID {
 		return ErrDynamicQuotaBinding
 	}
 	if groupRevision.Valid && groupRevision.Int64 == p.Revision && enabled.Bool == (p.Enabled && !debug) {
@@ -235,6 +235,84 @@ func (s *DynamicSubscriptionService) applyGroupPolicyTx(ctx context.Context, tx 
 	}
 	_, err = tx.ExecContext(ctx, `UPDATE dynamic_subscription_policies SET group_revision=$2 WHERE subscription_id=$1`, id, p.Revision)
 	return err
+}
+
+// Conversion keeps the original policy and receipts for late settlement. Lock
+// sources before the subscription, like admission, group saves and billing.
+func (s *DynamicSubscriptionService) ConvertToAdminDebug(ctx context.Context, id, actorID int64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var actorAdmin bool
+	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM users WHERE id=$1 AND role='admin' AND status='active' AND deleted_at IS NULL)`, actorID).Scan(&actorAdmin); err != nil {
+		return err
+	}
+	if !actorAdmin {
+		return infraerrors.Forbidden("ADMIN_DEBUG_SUBSCRIPTION", "An administrator must perform this conversion")
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT account_id FROM dynamic_subscription_policies WHERE subscription_id=$1
+ UNION SELECT g.account_id FROM dynamic_group_policies g JOIN user_subscriptions us ON us.group_id=g.group_id WHERE us.id=$1 ORDER BY account_id`, id)
+	if err != nil {
+		return err
+	}
+	var sources []int64
+	for rows.Next() {
+		var source int64
+		if err = rows.Scan(&source); err != nil {
+			rows.Close()
+			return err
+		}
+		sources = append(sources, source)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	locked := map[int64]bool{}
+	for _, source := range sources {
+		if _, err = lockDynamicPool(ctx, tx, source); err != nil {
+			return err
+		}
+		locked[source] = true
+	}
+	var admin, debug bool
+	var source int64
+	err = tx.QueryRowContext(ctx, `SELECT u.role='admin' AND u.status='active',us.admin_debug
+ FROM user_subscriptions us JOIN users u ON u.id=us.user_id
+ WHERE us.id=$1 AND us.deleted_at IS NULL AND u.deleted_at IS NULL FOR UPDATE OF us`, id).Scan(&admin, &debug)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrSubscriptionNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if !admin {
+		return infraerrors.BadRequest("ADMIN_DEBUG_SUBSCRIPTION", "Debug subscriptions require an administrator account")
+	}
+	// Use a new statement snapshot after waiting for the subscription row: a
+	// concurrent save may have inserted its first policy while we were waiting.
+	if err = tx.QueryRowContext(ctx, `SELECT COALESCE((SELECT account_id FROM dynamic_subscription_policies WHERE subscription_id=$1),0)`, id).Scan(&source); err != nil {
+		return err
+	}
+	if source != 0 && !locked[source] {
+		return ErrDynamicQuotaChanged // A concurrent opt-in must be retried in source lock order.
+	}
+	if !debug {
+		if _, err = tx.ExecContext(ctx, `UPDATE user_subscriptions SET admin_debug=true,updated_at=NOW() WHERE id=$1`, id); err != nil {
+			return err
+		}
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE dynamic_subscription_policies SET enabled=false,activation_pending=false,revision=revision+1,updated_at=NOW()
+ WHERE subscription_id=$1 AND (enabled OR activation_pending)`, id); err != nil {
+		return err
+	}
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	return s.invalidate(ctx, id)
 }
 
 // Enrollment uses only local state and the existing V2 save. It also covers

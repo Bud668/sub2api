@@ -21,6 +21,13 @@ export interface AbsorbedUsageFilters {
   status?: string
   platform?: string
 }
+
+export interface DynamicResetResult {
+  account_id: number
+  cycle: number
+  status: string
+  members: number
+}
 export interface AbsorbedUsageSummary {
   requests: number
   known_requests: number
@@ -245,6 +252,17 @@ export async function listByUser(
 }
 
 export const subscriptionsAPI = {
+  previewDynamicReset: async (id: number): Promise<DynamicResetResult> => {
+    const { data } = await apiClient.get<DynamicResetResult>(`/admin/subscriptions/${id}/dynamic-quota/reset`)
+    return data
+  },
+  syncDynamicReset: async (id: number, source: { account_id: number; cycle: number }): Promise<DynamicResetResult> => {
+    const { data } = await apiClient.post<DynamicResetResult>(`/admin/subscriptions/${id}/dynamic-quota/reset`, source, { timeout: 30000 })
+    return data
+  },
+  enableAdminDebug: async (id: number): Promise<void> => {
+    await apiClient.post(`/admin/subscriptions/${id}/admin-debug`)
+  },
   getDynamicQuota: async (id: number): Promise<DynamicQuotaAdminStatus> => {
     const { data } = await apiClient.get<DynamicQuotaAdminStatus>(`/admin/subscriptions/${id}/dynamic-quota`)
     return data

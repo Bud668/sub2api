@@ -4,14 +4,15 @@ import { defineComponent } from 'vue'
 
 import SubscriptionsView from '../SubscriptionsView.vue'
 
-const { listSubscriptions, getAllGroups } = vi.hoisted(() => ({
+const { listSubscriptions, getAllGroups, enableAdminDebug } = vi.hoisted(() => ({
   listSubscriptions: vi.fn(),
-  getAllGroups: vi.fn()
+  getAllGroups: vi.fn(),
+  enableAdminDebug: vi.fn()
 }))
 
 vi.mock('@/api/admin', () => ({
   adminAPI: {
-    subscriptions: { list: listSubscriptions },
+    subscriptions: { list: listSubscriptions, enableAdminDebug },
     groups: { getAll: getAllGroups }
   }
 }))
@@ -40,6 +41,7 @@ const DataTableStub = {
     <div>
       <div v-for="row in data" :key="row.id">
         <slot name="cell-user" :row="row" />
+        <slot name="cell-actions" :row="row" />
       </div>
     </div>
   `
@@ -139,5 +141,35 @@ describe('admin subscription user usage link', () => {
     const link = wrapper.getComponent(RouterLinkStub)
     expect(link.text()).toBe('User #42')
     expect(link.props('to')).toEqual({ path: '/admin/usage', query: { user_id: 42 } })
+  })
+
+  it('keeps date adjustment visible and only offers debug conversion for administrators', async () => {
+    for (const role of ['user', 'admin']) {
+      const data = await listSubscriptions()
+      data.items[0].user.role = role
+      const wrapper = mountView()
+      await flushPromises()
+      expect(wrapper.text()).toContain('admin.subscriptions.adjust')
+      expect(wrapper.text()).not.toContain('admin.subscriptions.resetQuota')
+      expect(wrapper.text()).not.toContain('dynamicQuota.groupSettings')
+      expect(wrapper.find('#subscription-action-menu').exists()).toBe(false)
+      await wrapper.get('[data-subscription-menu-trigger]').trigger('click')
+      await flushPromises()
+      const menu = wrapper.get('#subscription-action-menu')
+      expect(menu.text()).toContain('admin.subscriptions.revoke')
+      expect(menu.text().includes('dynamicQuota.enableAdminDebug')).toBe(role === 'admin')
+      if (role === 'admin') {
+        const button = menu.findAll('button').find(b => b.text() === 'dynamicQuota.enableAdminDebug')!
+        await button.trigger('click')
+        const dialog = wrapper.findAllComponents({ name: 'ConfirmDialog' }).find(d => d.props('title') === 'dynamicQuota.enableAdminDebug')!
+        expect(dialog.props('show')).toBe(true)
+        expect(enableAdminDebug).not.toHaveBeenCalled()
+        dialog.vm.$emit('confirm')
+        await flushPromises()
+        expect(enableAdminDebug).toHaveBeenCalledTimes(1)
+        expect(enableAdminDebug).toHaveBeenCalledWith(9)
+      }
+      wrapper.unmount()
+    }
   })
 })

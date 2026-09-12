@@ -661,7 +661,7 @@ func (s *DynamicSubscriptionService) Refresh(ctx context.Context, accountID int6
 		if err = absorbDynamicRequests(ctx, tx, accountID, p.Cycle, true); err != nil {
 			return err
 		}
-		rows, e := tx.QueryContext(ctx, `SELECT p.subscription_id,us.weekly_usage_usd FROM dynamic_subscription_policies p
+		rows, e := tx.QueryContext(ctx, `SELECT p.subscription_id,GREATEST(p.cycle_used_usd,us.weekly_usage_usd) FROM dynamic_subscription_policies p
  JOIN user_subscriptions us ON us.id=p.subscription_id WHERE p.account_id=$1 AND `+dynamicActiveMemberSQL+`
  ORDER BY p.subscription_id FOR UPDATE OF us,p`, accountID)
 		if e != nil {

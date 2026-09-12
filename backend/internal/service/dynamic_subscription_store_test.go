@@ -222,6 +222,8 @@ func TestDynamicQuotaPostgresIsolationAndReset(t *testing.T) {
 	_, err = s.Begin(ctx, 104, 4)
 	require.ErrorIs(t, err, ErrDynamicQuotaUnavailable)
 	dynamicTestSettle(t, db, r, 101, 11, 2, 3)
+	// The V2 cycle can retain usage that predates the current native week.
+	dynamicExec(t, db, `UPDATE dynamic_subscription_policies SET cycle_used_usd=53 WHERE subscription_id=11`)
 	fetched = now
 	require.NoError(t, s.Refresh(ctx, 4))
 	q, err = s.Load(ctx, 11)
@@ -242,7 +244,7 @@ func TestDynamicQuotaPostgresIsolationAndReset(t *testing.T) {
 	require.Equal(t, 33.0, monthly)
 	var archived float64
 	require.NoError(t, db.QueryRow(`SELECT (details->'previous_usage_usd'->>'11')::numeric FROM dynamic_quota_events WHERE account_id=4 AND kind='reset_confirmed'`).Scan(&archived))
-	require.Equal(t, 23.0, archived)
+	require.Equal(t, 53.0, archived, "archive the effective V2 cycle usage, not only the native week")
 	require.NoError(t, s.Refresh(ctx, 4))
 	var events int
 	require.NoError(t, db.QueryRow(`SELECT count(*) FROM dynamic_quota_events WHERE kind='reset_confirmed'`).Scan(&events))

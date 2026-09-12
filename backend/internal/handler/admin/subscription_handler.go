@@ -139,6 +139,69 @@ func (h *SubscriptionHandler) SaveDynamicQuota(c *gin.Context) {
 	h.GetDynamicQuota(c)
 }
 
+func (h *SubscriptionHandler) ConvertToAdminDebug(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	middleware2.SetAuditAction(c, "admin.subscription.admin_debug.enable")
+	actor := getAdminIDFromContext(c)
+	if actor <= 0 {
+		response.Unauthorized(c, "Authentication required")
+		return
+	}
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.BadRequest(c, "Invalid subscription ID")
+		return
+	}
+	if h.subscriptionService == nil || h.subscriptionService.DynamicQuotas == nil {
+		response.ErrorFrom(c, service.ErrDynamicQuotaUnavailable)
+		return
+	}
+	if err = h.subscriptionService.DynamicQuotas.ConvertToAdminDebug(c.Request.Context(), id, actor); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, gin.H{"admin_debug": true})
+}
+
+func (h *SubscriptionHandler) DynamicReset(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	if getAdminIDFromContext(c) <= 0 {
+		response.Unauthorized(c, "Authentication required")
+		return
+	}
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.BadRequest(c, "Invalid subscription ID")
+		return
+	}
+	if h.subscriptionService == nil || h.subscriptionService.DynamicQuotas == nil {
+		response.ErrorFrom(c, service.ErrDynamicQuotaUnavailable)
+		return
+	}
+	var out *service.DynamicResetResult
+	if c.Request.Method == http.MethodGet {
+		out, err = h.subscriptionService.DynamicQuotas.ResetPreview(c.Request.Context(), id)
+	} else {
+		middleware2.SetAuditAction(c, "admin.subscription.dynamic_quota.sync_reset")
+		var in struct {
+			AccountID int64 `json:"account_id"`
+			Cycle     int64 `json:"cycle"`
+		}
+		decoder := json.NewDecoder(http.MaxBytesReader(c.Writer, c.Request.Body, 1024))
+		decoder.DisallowUnknownFields()
+		if decoder.Decode(&in) != nil || decoder.Decode(new(any)) != io.EOF || in.AccountID <= 0 || in.Cycle <= 0 {
+			response.BadRequest(c, "Expected the source and cycle shown in the preview")
+			return
+		}
+		out, err = h.subscriptionService.DynamicQuotas.SyncReset(c.Request.Context(), id, in.AccountID, in.Cycle)
+	}
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, out)
+}
+
 // ResolveDynamicAccounting never accepts a price or a user identity from the client.
 func (h *SubscriptionHandler) ResolveDynamicAccounting(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")

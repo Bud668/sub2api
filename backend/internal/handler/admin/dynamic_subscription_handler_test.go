@@ -50,3 +50,44 @@ func TestDynamicQuotaAbsorptionRejectsInvalidQueries(t *testing.T) {
 		require.Equal(t, "no-store", r.Header().Get("Cache-Control"))
 	}
 }
+
+func TestAdminDebugConversionRequiresTrustedActorAndValidID(t *testing.T) {
+	h := NewSubscriptionHandler(nil)
+	for _, tc := range []struct {
+		actor  int64
+		id     string
+		status int
+	}{{0, "11", 401}, {1, "-1", 400}, {1, "abc", 400}, {1, "9223372036854775808", 400}, {1, "11", 503}} {
+		router := gin.New()
+		router.POST("/:id", func(c *gin.Context) {
+			if tc.actor > 0 {
+				c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: tc.actor})
+			}
+			h.ConvertToAdminDebug(c)
+		})
+		r := httptest.NewRecorder()
+		router.ServeHTTP(r, httptest.NewRequest(http.MethodPost, "/"+tc.id, strings.NewReader(`{"actor_id":1,"role":"admin"}`)))
+		require.Equal(t, tc.status, r.Code)
+		require.Equal(t, "no-store", r.Header().Get("Cache-Control"))
+	}
+}
+
+func TestDynamicQuotaManualResetRejectsUntrustedParameters(t *testing.T) {
+	h := NewSubscriptionHandler(&service.SubscriptionService{DynamicQuotas: service.NewDynamicSubscriptionService(nil, nil, nil, nil)})
+	router := gin.New()
+	router.POST("/:id", func(c *gin.Context) {
+		c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: 1})
+		h.DynamicReset(c)
+	})
+	for _, body := range []string{`{}`, `{"account_id":4,"cycle":0}`, `{"account_id":4,"cycle":1,"force":true}`, `{"account_id":4,"cycle":1,"reset_at":"2027-01-01"}`, `{"account_id":4,"cycle":1} {}`} {
+		r := httptest.NewRecorder()
+		router.ServeHTTP(r, httptest.NewRequest(http.MethodPost, "/11", strings.NewReader(body)))
+		require.Equal(t, 400, r.Code, body)
+		require.Equal(t, "no-store", r.Header().Get("Cache-Control"))
+	}
+	unauthenticated := gin.New()
+	unauthenticated.POST("/:id", h.DynamicReset)
+	r := httptest.NewRecorder()
+	unauthenticated.ServeHTTP(r, httptest.NewRequest(http.MethodPost, "/11", strings.NewReader(`{"account_id":4,"cycle":1,"actor_id":1}`)))
+	require.Equal(t, 401, r.Code)
+}

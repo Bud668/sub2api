@@ -60,6 +60,108 @@ func TestDynamicQuotaAdminDebugAssignmentRequiresAdminAccount(t *testing.T) {
 	require.Error(t, s.validateAdminDebug(ctx, in), "self-service assignments cannot claim debug exemption")
 }
 
+func TestDynamicQuotaExistingAdminDebugPreservesAccounting(t *testing.T) {
+	s, db := dynamicTestStore(t)
+	ctx := context.Background()
+	require.NoError(t, s.SaveGroup(ctx, 7, groupQuotaInput()))
+	require.NoError(t, s.Refresh(ctx, 4))
+	dynamicTestSave(t, s, 21, 5, true)
+	old, err := s.Begin(ctx, 101, 4)
+	require.NoError(t, err)
+	ledger := func() string {
+		var value string
+		require.NoError(t, db.QueryRow(`SELECT jsonb_build_object(
+ 'policy', (SELECT to_jsonb(p)-'enabled'-'activation_pending'-'revision'-'updated_at' FROM dynamic_subscription_policies p WHERE subscription_id=11),
+ 'subscription',(SELECT to_jsonb(us)-'admin_debug'-'updated_at' FROM user_subscriptions us WHERE id=11),
+ 'requests',(SELECT jsonb_agg(to_jsonb(r) ORDER BY id) FROM dynamic_quota_requests r),
+ 'sources',(SELECT jsonb_agg(to_jsonb(p) ORDER BY account_id) FROM dynamic_quota_pools p))::text`).Scan(&value))
+		return value
+	}
+	before := ledger()
+	require.Error(t, s.ConvertToAdminDebug(ctx, 11, 2), "ordinary actor cannot grant an exemption")
+	require.Error(t, s.ConvertToAdminDebug(ctx, 12, 1), "ordinary target cannot receive an exemption")
+	require.ErrorIs(t, s.ConvertToAdminDebug(ctx, 999, 1), ErrSubscriptionNotFound)
+	require.Equal(t, before, ledger())
+	require.NoError(t, s.ConvertToAdminDebug(ctx, 11, 1))
+	require.NoError(t, s.ConvertToAdminDebug(ctx, 11, 1), "safe retry after response/cache failure")
+	require.Equal(t, before, ledger(), "conversion must preserve money, holds, cycles and other source state")
+	q, err := s.Load(ctx, 11)
+	require.NoError(t, err)
+	require.False(t, q.Enabled)
+	state, err := s.GroupStatus(ctx, 7)
+	require.NoError(t, err)
+	require.Equal(t, 2, state.Members)
+	require.Equal(t, 1, state.DebugMembers)
+	dynamicTestSettle(t, db, old, 101, 11, 2, 3)
+	q, err = s.Load(ctx, 11)
+	require.NoError(t, err)
+	require.Equal(t, 23.0, q.UsedUSD, "the original in-flight bill still settles")
+	tx, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	subID := int64(11)
+	require.ErrorIs(t, SettleDynamicQuota(ctx, tx, &UsageBillingCommand{DynamicQuotaReservationID: old.ID, AccountID: 4, APIKeyID: 101, SubscriptionID: &subID, DynamicStandardCost: 2, SubscriptionCost: 3}), ErrUsageBillingRequestConflict)
+	require.NoError(t, tx.Rollback())
+	dynamicExec(t, db, `INSERT INTO account_groups VALUES(5,7)`)
+	debug, err := s.Begin(ctx, 101, 5)
+	require.NoError(t, err, "debug can use another allowed upstream without rebinding old bills")
+	dynamicTestSettle(t, db, debug, 101, 11, 4, 4)
+	other, err := s.Load(ctx, 21)
+	require.NoError(t, err)
+	require.Equal(t, 20.0, other.UsedUSD, "the same admin's other subscription is unaffected")
+	in := groupQuotaInput()
+	in.Revision = 1
+	require.NoError(t, s.SaveGroup(ctx, 7, in))
+	q, err = s.Load(ctx, 11)
+	require.NoError(t, err)
+	require.False(t, q.Enabled, "later group saves must preserve debug")
+	dynamicExec(t, db, `UPDATE users SET role='user' WHERE id=1`)
+	q, err = s.Load(ctx, 11)
+	require.NoError(t, err)
+	require.True(t, q.Enabled, "loss of administrator role revokes the exemption")
+}
+
+func TestDynamicQuotaConvertedDebugRetainsOldSourceOnGroupEnrollment(t *testing.T) {
+	s, db := dynamicTestStore(t)
+	ctx := context.Background()
+	dynamicExec(t, db, `INSERT INTO account_groups VALUES(5,7)`)
+	dynamicTestSave(t, s, 11, 5, true)
+	require.NoError(t, s.ConvertToAdminDebug(ctx, 11, 1))
+	require.NoError(t, s.SaveGroup(ctx, 7, groupQuotaInput()))
+	q, err := s.Load(ctx, 11)
+	require.NoError(t, err)
+	require.False(t, q.Enabled)
+	require.Equal(t, int64(5), q.AccountID, "retain the historical binding for settlement")
+	require.Equal(t, 20.0, q.UsedUSD)
+}
+
+func TestDynamicQuotaAdminDebugRechecksConcurrentFirstBinding(t *testing.T) {
+	s, db := dynamicTestStore(t)
+	ctx := context.Background()
+	dynamicExec(t, db, `INSERT INTO dynamic_quota_pools(account_id) VALUES(4)`)
+	tx, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	defer tx.Rollback()
+	_, err = tx.Exec(`SELECT id FROM user_subscriptions WHERE id=11 FOR UPDATE`)
+	require.NoError(t, err)
+	finished := make(chan error, 1)
+	go func() { finished <- s.ConvertToAdminDebug(ctx, 11, 1) }()
+	require.Eventually(t, func() bool {
+		var waiting bool
+		err := db.QueryRow(`SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database()
+ AND wait_event_type='Lock' AND query LIKE 'SELECT u.role=%')`).Scan(&waiting)
+		return err == nil && waiting
+	}, 2*time.Second, 5*time.Millisecond)
+	_, err = tx.Exec(`INSERT INTO dynamic_subscription_policies(subscription_id,account_id,enabled,weight,max_limit_usd,floor_limit_usd) VALUES(11,4,true,1,600,100)`)
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit())
+	require.ErrorIs(t, <-finished, ErrDynamicQuotaChanged)
+	var debug, enabled bool
+	require.NoError(t, db.QueryRow(`SELECT us.admin_debug,p.enabled FROM user_subscriptions us JOIN dynamic_subscription_policies p ON p.subscription_id=us.id WHERE us.id=11`).Scan(&debug, &enabled))
+	require.False(t, debug)
+	require.True(t, enabled, "a conflict leaves the concurrent save intact")
+	require.NoError(t, s.ConvertToAdminDebug(ctx, 11, 1), "retry acquires the newly bound source first")
+}
+
 func TestDynamicQuotaGroupEnrollmentDebugAndLateBilling(t *testing.T) {
 	s, db := dynamicTestStore(t)
 	ctx := context.Background()
