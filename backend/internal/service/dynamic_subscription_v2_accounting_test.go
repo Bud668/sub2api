@@ -40,7 +40,8 @@ func dynamicAccountingException(t *testing.T, s *DynamicSubscriptionService, key
 		raw = string(b)
 	}
 	dynamicExec(t, s.db, `UPDATE dynamic_quota_requests SET finished_at=NOW()-INTERVAL '6 minutes',
- billing_receipt=$2::jsonb,hold_standard_usd=999 WHERE id=$1`, r.ID, raw)
+ billing_receipt=$2::jsonb,hold_standard_usd=999,
+ request_context=request_context-'settlement_policy' WHERE id=$1`, r.ID, raw)
 	return c
 }
 

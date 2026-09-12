@@ -8,6 +8,7 @@ import (
 	"errors"
 	"flag"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -19,6 +20,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/requestdrain"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/setup"
 	"github.com/Wei-Shaw/sub2api/internal/web"
@@ -153,6 +155,9 @@ func runMainServer() {
 		log.Fatalf("Failed to initialize application: %v", err)
 	}
 	defer app.Cleanup()
+	drain := requestdrain.New()
+	defer drain.Cancel()
+	app.Server.Handler = drain.Wrap(app.Server.Handler)
 	if app.PluginManager != nil {
 		if err := app.PluginManager.Start(context.Background()); err != nil {
 			log.Printf("Plugin manager started in degraded state: %v", err)
@@ -183,6 +188,7 @@ func runMainServer() {
 	<-quit
 
 	log.Println("Shutting down server...")
+	drain.StopAccepting()
 	app.DynamicQuotas.BeginShutdown()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -190,6 +196,20 @@ func runMainServer() {
 
 	if err := app.Server.Shutdown(ctx); err != nil {
 		log.Printf("Server forced to shutdown: %v", err)
+	}
+	// Shutdown alone ignores hijacked WS and returns on its HTTP deadline while
+	// handlers are still running. End upstream reads, let them persist collected
+	// usage and finish canonical billing, THEN let Cleanup close Redis/SQL.
+	drain.Cancel()
+	// Evidence persistence has a 5s timeout; canonical billing has 15s. Leave
+	// room for both sequential stages instead of cutting off a valid commit.
+	settlementCtx, cancelSettlement := context.WithTimeout(context.Background(), 25*time.Second)
+	defer cancelSettlement()
+	if err := drain.Wait(settlementCtx); err != nil {
+		slog.Error("shutdown_settlement_incomplete", "error", err)
+		// Fail visibly without racing infrastructure cleanup against live writers.
+		// Durable receipts/leases remain recoverable by the next worker.
+		os.Exit(1)
 	}
 
 	log.Println("Server exited")

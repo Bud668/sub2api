@@ -1070,6 +1070,9 @@ func (s *DynamicSubscriptionService) Begin(ctx context.Context, apiKeyID, accoun
 	r := &DynamicQuotaReservation{ID: uuid.NewString(), AccountID: accountID, Cycle: p.Cycle, service: s}
 	metadata, _ := ctx.Value(dynamicQuotaMetadataKey{}).(dynamicQuotaMetadata)
 	metadata.RequestID = resolveUsageBillingRequestID(ctx, "")
+	// Freeze the policy per request. Old unresolved rows are not silently waived
+	// just because a new binary starts; they retain their original audit trail.
+	metadata.SettlementPolicy = automaticSettlementPolicy
 	raw, err := json.Marshal(metadata)
 	if err != nil {
 		return nil, err
@@ -1138,7 +1141,7 @@ func (r *DynamicQuotaReservation) Finish(result *OpenAIForwardResult, err error,
 			logger.LegacyPrintf("service.dynamic_quota", "dynamic_quota_late_evidence_unavailable account=%d", r.AccountID)
 		}
 	} else if status == "uncertain" {
-		logger.LegacyPrintf("service.dynamic_quota", "dynamic_quota_accounting_review_required account=%d reservation=%s", r.AccountID, r.ID)
+		logger.LegacyPrintf("service.dynamic_quota", "dynamic_quota_accounting_recovery_pending account=%d reservation=%s", r.AccountID, r.ID)
 	}
 }
 

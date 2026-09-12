@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/requestdrain"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
@@ -381,6 +382,8 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 	clientDisconnectDrainStartedAt := time.Time{}
 	readTimeout := s.openAIWSReadTimeout()
 	upstreamReadCtx := ctx
+	releaseUpstreamRead := func() {}
+	defer func() { releaseUpstreamRead() }()
 	upstreamReadDetached := false
 	clientRequestCanceled := func() bool {
 		return ctx != nil && errors.Is(ctx.Err(), context.Canceled)
@@ -392,7 +395,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		clientDisconnected = true
 		clientDisconnectDrainStartedAt = time.Now()
 		if !upstreamReadDetached {
-			upstreamReadCtx = context.WithoutCancel(ctx)
+			upstreamReadCtx, releaseUpstreamRead = requestdrain.Detach(ctx)
 			upstreamReadDetached = true
 		}
 		logOpenAIWSModeInfo(

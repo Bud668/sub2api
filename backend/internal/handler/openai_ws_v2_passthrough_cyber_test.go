@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/requestdrain"
 	"github.com/Wei-Shaw/sub2api/internal/repository"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -27,6 +28,8 @@ type openAIWSPassthroughHandlerHarness struct {
 	gatewayCache   service.GatewayCache
 	apiKey         *service.APIKey
 	users          *openAIWSCyberUserRepo
+	drain          *requestdrain.Drain
+	usageRepo      *openAIWSUsageHandlerUsageLogRepoStub
 }
 
 func newOpenAIWSPassthroughHandlerHarness(t *testing.T, upstreamURL string, cyberAutoBan bool, configure ...func(*OpenAIGatewayHandler, *service.Account)) *openAIWSPassthroughHandlerHarness {
@@ -118,7 +121,9 @@ func newOpenAIWSPassthroughHandlerHarness(t *testing.T, upstreamURL string, cybe
 		h.ResponsesWebSocket(c)
 		close(handlerDone)
 	})
-	handlerServer := httptest.NewServer(router)
+	drain := requestdrain.New()
+	t.Cleanup(drain.Cancel)
+	handlerServer := httptest.NewServer(drain.Wrap(router))
 	t.Cleanup(handlerServer.Close)
 
 	dialCtx, cancelDial := context.WithTimeout(context.Background(), 3*time.Second)
@@ -135,6 +140,8 @@ func newOpenAIWSPassthroughHandlerHarness(t *testing.T, upstreamURL string, cybe
 		gatewayCache:   gatewayCache,
 		apiKey:         apiKey,
 		users:          users,
+		drain:          drain,
+		usageRepo:      usageRepo,
 	}
 }
 

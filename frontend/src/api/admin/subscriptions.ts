@@ -51,9 +51,6 @@ export interface AbsorbedUsageRecord {
   started_at: string
   absorbed_at: string
   closed_at: string | null
-  needs_review?: boolean
-  can_charge?: boolean
-  charge_usd?: number | null
 }
 export interface AbsorbedUsageReport {
   summary: AbsorbedUsageSummary
@@ -63,15 +60,11 @@ export interface AbsorbedUsageReport {
   pages: number
 }
 export async function getAbsorbedUsage(
-  params: AbsorbedUsageFilters & { scope: 'current' | 'history'; category?: 'covered' | 'review'; summary_only?: boolean; page?: number; page_size?: number },
+  params: AbsorbedUsageFilters & { scope: 'current' | 'history'; summary_only?: boolean; page?: number; page_size?: number },
   signal?: AbortSignal
 ): Promise<AbsorbedUsageReport> {
   const { data } = await apiClient.get<AbsorbedUsageReport>('/admin/subscriptions/absorbed-usage', { params, signal })
   return data
-}
-
-export async function resolveDynamicAccounting(id: string, action: 'charge' | 'cover'): Promise<void> {
-  await apiClient.post(`/admin/subscriptions/absorbed-usage/${encodeURIComponent(id)}/resolve`, { action })
 }
 
 /**

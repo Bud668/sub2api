@@ -5,7 +5,7 @@
   "upstream_repo": "https://github.com/Wei-Shaw/sub2api",
   "upstream_tag": "v0.2.4",
   "upstream_commit": "5de5e2bed035d43591a2e10e51f420ef6a84eb98",
-  "version": "0.2.4-Bud.14",
+  "version": "0.2.4-Bud.15",
   "commit": "0000000000000000000000000000000000000000",
   "build_date": "2026-09-12T00:00:00Z",
   "go_version": "go1.27.0",

@@ -11,11 +11,14 @@ import (
 
 type dynamicQuotaMetadataKey struct{}
 type dynamicQuotaMetadata struct {
-	RequestID string `json:"request_id"`
-	Model     string `json:"model,omitempty"`
-	Endpoint  string `json:"endpoint,omitempty"`
-	Turn      int    `json:"turn,omitempty"`
+	RequestID        string `json:"request_id"`
+	Model            string `json:"model,omitempty"`
+	Endpoint         string `json:"endpoint,omitempty"`
+	Turn             int    `json:"turn,omitempty"`
+	SettlementPolicy string `json:"settlement_policy,omitempty"`
 }
+
+const automaticSettlementPolicy = "automatic_v1"
 
 func WithDynamicQuotaRequestMetadata(ctx context.Context, model, endpoint string, turn int) context.Context {
 	return context.WithValue(ctx, dynamicQuotaMetadataKey{}, dynamicQuotaMetadata{Model: model, Endpoint: endpoint, Turn: turn})
@@ -47,16 +50,15 @@ func (s *DynamicSubscriptionService) recoverAccounting(ctx context.Context) erro
 	// A lease belongs to a process, not a request timeout. Long healthy turns
 	// remain in flight. Expiry NEVER refunds or bills, even when dispatch is absent
 	// (a process can die between the durable dispatch mark and the socket write).
-	if !s.stopping.Load() {
-		active := make([]string, 0)
-		s.active.Range(func(id, _ any) bool { active = append(active, id.(string)); return true })
-		raw, _ := json.Marshal(active)
-		if _, err := s.db.ExecContext(ctx, `UPDATE dynamic_quota_requests SET lease_until=NOW()+INTERVAL '2 minutes'
+	// Stopping admission does not mean a still-finalizing request is dead.
+	active := make([]string, 0)
+	s.active.Range(func(id, _ any) bool { active = append(active, id.(string)); return true })
+	raw, _ := json.Marshal(active)
+	if _, err := s.db.ExecContext(ctx, `UPDATE dynamic_quota_requests SET lease_until=NOW()+INTERVAL '2 minutes'
  WHERE worker_id=$1 AND status='pending' AND finished_at IS NULL AND lease_until IS NOT NULL
  AND (operator_absorbed_at IS NULL OR source_closed_at IS NOT NULL)
  AND id IN (SELECT jsonb_array_elements_text($2::jsonb)::uuid)`, s.workerID, string(raw)); err != nil {
-			return err
-		}
+		return err
 	}
 	res, err := s.db.ExecContext(ctx, `UPDATE dynamic_quota_requests SET status='uncertain',
  outcome=COALESCE(outcome,'worker_interrupted'),finished_at=COALESCE(finished_at,NOW())
@@ -65,7 +67,7 @@ func (s *DynamicSubscriptionService) recoverAccounting(ctx context.Context) erro
 		return err
 	}
 	if n, _ := res.RowsAffected(); n > 0 {
-		logger.LegacyPrintf("service.dynamic_quota", "dynamic_quota_accounting_review_required count=%d", n)
+		logger.LegacyPrintf("service.dynamic_quota", "dynamic_quota_accounting_recovery_pending count=%d", n)
 	}
 	if err := s.recoverBillingReceipts(ctx, 0); err != nil {
 		return err

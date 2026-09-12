@@ -2105,10 +2105,14 @@ func (s *openAIWSFailoverHandlerAccountRepoStub) SetRateLimited(ctx context.Cont
 
 type openAIWSUsageHandlerUsageLogRepoStub struct {
 	service.UsageLogRepository
-	created chan *service.UsageLog
+	created      chan *service.UsageLog
+	beforeCreate func(context.Context)
 }
 
 func (s *openAIWSUsageHandlerUsageLogRepoStub) Create(ctx context.Context, log *service.UsageLog) (bool, error) {
+	if s.beforeCreate != nil {
+		s.beforeCreate(ctx)
+	}
 	if s.created != nil {
 		s.created <- log
 	}

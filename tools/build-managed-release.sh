@@ -72,6 +72,7 @@ fi
     go test ./internal/service ./internal/service/openai_ws_v2 ./internal/handler ./internal/handler/admin \
         ./internal/server/... ./internal/repository ./internal/pkg/apicompat ./internal/pkg/openai \
         ./internal/pkg/requestmodel ./internal/pkg/httputil ./migrations ./cmd/server
+    go test -race ./internal/pkg/requestdrain
     go test -tags=unit ./internal/server/middleware \
         -run 'CyberSuspension' -count=1
     go test -race -tags=unit ./internal/service \

@@ -89,10 +89,10 @@ func TestDynamicQuotaAbsorptionRecoveryAndResetIsolation(t *testing.T) {
 	require.NoError(t, s.recoverAccounting(ctx))
 	var waived bool
 	require.NoError(t, db.QueryRow(`SELECT operator_absorbed_at IS NOT NULL FROM dynamic_quota_requests WHERE id=$1`, old.ID).Scan(&waived))
-	require.False(t, waived, "unknown money is reviewed, not assumed small")
+	require.True(t, waived, "unmetered requests close without charging customers")
 	var review bool
 	require.NoError(t, db.QueryRow(`SELECT review_required_at IS NOT NULL FROM dynamic_quota_requests WHERE id=$1`, old.ID).Scan(&review))
-	require.True(t, review)
+	require.False(t, review)
 	_, held, _, _, err := dynamicPoolTotals(ctx, db, 4)
 	require.NoError(t, err)
 	require.Positive(t, held)

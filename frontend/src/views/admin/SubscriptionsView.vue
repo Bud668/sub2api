@@ -93,7 +93,6 @@
 
           <!-- Right: Summary, then actions; summary gets its own row on narrow screens. -->
           <div class="ml-auto flex w-full min-w-0 max-w-full flex-wrap items-center justify-end gap-3 sm:w-auto">
-            <SubscriptionAbsorptionPanel category="review" :filters="absorptionFilters" :refresh-key="absorptionRefreshKey" @resolved="loadSubscriptions" />
             <SubscriptionAbsorptionPanel :filters="absorptionFilters" :refresh-key="absorptionRefreshKey" />
             <button
               @click="loadSubscriptions"

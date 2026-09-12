@@ -140,6 +140,88 @@ func TestDynamicQuotaWSFirstFrameReconnectAndTurns(t *testing.T) {
 	}
 }
 
+// Real WS ingress in all three modes must finish its synchronous usage write
+// before process cleanup, even though net/http no longer owns the connection.
+func TestDynamicQuotaWSShutdownWaitsForUsagePersistence(t *testing.T) {
+	for _, mode := range []string{service.OpenAIWSIngressModePassthrough, service.OpenAIWSIngressModeCtxPool, service.OpenAIWSIngressModeHTTPBridge} {
+		t.Run(mode, func(t *testing.T) {
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				event := []byte(`{"type":"response.completed","response":{"id":"resp_shutdown","model":"gpt-5.6-sol","usage":{"input_tokens":2,"output_tokens":1}}}`)
+				if mode == service.OpenAIWSIngressModeHTTPBridge {
+					w.Header().Set("Content-Type", "text/event-stream")
+					_, _ = w.Write(append(append([]byte("data: "), event...), []byte("\n\n")...))
+					return
+				}
+				conn, err := coderws.Accept(w, r, nil)
+				if err != nil {
+					return
+				}
+				defer conn.CloseNow()
+				ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+				defer cancel()
+				if _, _, err = conn.Read(ctx); err != nil {
+					return
+				}
+				_ = conn.Write(ctx, coderws.MessageText, event)
+				_, _, _ = conn.Read(ctx)
+			}))
+			defer upstream.Close()
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			defer db.Close()
+			expectDynamicWSAdmission(t, mock, true)
+			harness := newOpenAIWSPassthroughHandlerHarness(t, upstream.URL, false, func(h *OpenAIGatewayHandler, account *service.Account) {
+				h.gatewayService.DynamicQuotas = service.NewDynamicSubscriptionService(db, nil, nil, nil)
+				account.Extra["openai_apikey_responses_websockets_v2_mode"] = mode
+			})
+			started, persist := make(chan struct{}), make(chan struct{})
+			defer func() {
+				select {
+				case <-persist:
+				default:
+					close(persist)
+				}
+			}()
+			harness.usageRepo.beforeCreate = func(ctx context.Context) {
+				close(started)
+				<-persist
+				require.NoError(t, ctx.Err(), "shutdown must not cancel billing")
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			// Keep consuming so WebSocket close handshakes are not held by the test.
+			go func() {
+				for {
+					if _, _, err := harness.clientConn.Read(ctx); err != nil {
+						return
+					}
+				}
+			}()
+			require.NoError(t, harness.clientConn.Write(ctx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.6-sol","input":"synthetic"}`)))
+			select {
+			case <-started:
+			case <-ctx.Done():
+				t.Fatal("usage persistence never started")
+			}
+			harness.drain.StopAccepting()
+			harness.drain.Cancel()
+			short, release := context.WithTimeout(ctx, 10*time.Millisecond)
+			require.ErrorIs(t, harness.drain.Wait(short), context.DeadlineExceeded, "cleanup must not pass an unfinished usage write")
+			release()
+			close(persist)
+			select {
+			case usage := <-harness.usageRepo.created:
+				require.Equal(t, 2, usage.InputTokens)
+				require.Equal(t, 1, usage.OutputTokens)
+			case <-ctx.Done():
+				t.Fatal("usage was lost during shutdown")
+			}
+			require.NoError(t, harness.drain.Wait(ctx))
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
 func TestDynamicQuotaPublicProjectionAndOps(t *testing.T) {
 	sub := &service.UserSubscription{ID: 11, AdminDebug: true, Notes: "private-admin-notes", DynamicQuota: &service.DynamicSubscriptionQuota{Enabled: true, AccountID: 4, CapacityEstimateUSD: 12345, SampleCount: 3, LimitUSD: 200, UsedUSD: 20, RemainingUSD: 180,
 		GrowthFrozen: true, AllocationBudgetConflict: true, LearningCheck: &service.DynamicQuotaLearningCheck{Samples: 2, Required: 3}}}

@@ -40,7 +40,8 @@ func classifyDynamicV2Accounting(ctx context.Context, tx *sql.Tx, accountID, cyc
 	if err != nil {
 		return err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT d.id,d.billing_receipt,COALESCE(d.api_key_id,0),d.owner_user_id,d.owner_subscription_id
+	rows, err := tx.QueryContext(ctx, `SELECT d.id,d.billing_receipt,COALESCE(d.api_key_id,0),d.owner_user_id,d.owner_subscription_id,
+ COALESCE(d.request_context->>'settlement_policy','')
  FROM dynamic_quota_requests d WHERE d.account_id=$1 AND (d.cycle=$2 OR ($2=1 AND d.cycle=0))
  AND d.source_closed_at IS NULL AND d.operator_absorbed_at IS NULL AND d.review_required_at IS NULL
  AND d.status IN ('pending','uncertain') AND d.worker_id IS NOT NULL AND d.owner_user_id IS NOT NULL
@@ -53,11 +54,12 @@ func classifyDynamicV2Accounting(ctx context.Context, tx *sql.Tx, accountID, cyc
 		id               string
 		raw              []byte
 		key, user, owner int64
+		policy           string
 	}
 	var requests []request
 	for rows.Next() {
 		var r request
-		if err = rows.Scan(&r.id, &r.raw, &r.key, &r.user, &r.owner); err != nil {
+		if err = rows.Scan(&r.id, &r.raw, &r.key, &r.user, &r.owner, &r.policy); err != nil {
 			rows.Close()
 			return err
 		}
@@ -70,7 +72,8 @@ func classifyDynamicV2Accounting(ctx context.Context, tx *sql.Tx, accountID, cyc
 	for _, r := range requests {
 		var known *float64
 		reason := "missing_evidence"
-		if c := dynamicAbsorptionReceipt(r.raw, r.id, accountID, r.key, r.user); c != nil {
+		c := dynamicAbsorptionReceipt(r.raw, r.id, accountID, r.key, r.user)
+		if c != nil {
 			var billed bool
 			if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM usage_billing_dedup WHERE request_id=$1 AND api_key_id=$2
  UNION ALL SELECT 1 FROM usage_billing_dedup_archive WHERE request_id=$1 AND api_key_id=$2)`, c.RequestID, r.key).Scan(&billed); err != nil {
@@ -85,7 +88,38 @@ func classifyDynamicV2Accounting(ctx context.Context, tx *sql.Tx, accountID, cyc
 			}
 			known = &amount
 		}
-		if reason == "already_billed" || (reason != "receipt_scope" && dynamicV2MayAbsorb(known, cumulative, unknown)) {
+		if r.policy == automaticSettlementPolicy && c != nil && reason != "already_billed" && reason != "receipt_scope" {
+			// A valid unpaid receipt belongs to automatic idempotent billing, not
+			// a size-based waiver or a manual review queue. Keep retrying it.
+			if _, err = tx.ExecContext(ctx, `UPDATE dynamic_quota_requests SET billing_retry_at=COALESCE(billing_retry_at,NOW()) WHERE id=$1`, r.id); err != nil {
+				return err
+			}
+			continue
+		}
+		if r.policy == automaticSettlementPolicy {
+			if reason != "already_billed" {
+				// No verified customer bill: close personal liability without
+				// inventing a price or releasing physical source capacity. Late
+				// evidence remains audit-only through the existing settlement fence.
+				known = nil
+				switch {
+				case reason == "receipt_scope":
+					reason = "automatic_receipt_mismatch"
+					alert++
+				case len(r.raw) > 0:
+					reason = "automatic_invalid_receipt"
+					alert++
+				default:
+					reason = "automatic_unmetered"
+				}
+				if unknown+1 >= dynamicV2UnknownAlert {
+					alert++
+				}
+			}
+			_, err = tx.ExecContext(ctx, `UPDATE dynamic_quota_requests SET operator_absorbed_at=NOW(),
+ operator_absorption_reason=$2,operator_absorbed_standard_usd=$3,billing_retry_at=NULL WHERE id=$1`, r.id, reason, known)
+			covered++
+		} else if reason == "already_billed" || (reason != "receipt_scope" && dynamicV2MayAbsorb(known, cumulative, unknown)) {
 			if reason != "already_billed" {
 				reason = "small_exception"
 			}

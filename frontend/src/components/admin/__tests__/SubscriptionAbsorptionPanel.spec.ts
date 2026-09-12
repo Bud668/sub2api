@@ -5,8 +5,8 @@ import Panel from '../SubscriptionAbsorptionPanel.vue'
 import messages from '@/i18n/locales/zh/common'
 import type { AbsorbedUsageReport } from '@/api/admin/subscriptions'
 
-const { query, resolve } = vi.hoisted(() => ({ query: vi.fn(), resolve: vi.fn() }))
-vi.mock('@/api/admin/subscriptions', () => ({ getAbsorbedUsage: query, resolveDynamicAccounting: resolve }))
+const { query } = vi.hoisted(() => ({ query: vi.fn() }))
+vi.mock('@/api/admin/subscriptions', () => ({ getAbsorbedUsage: query }))
 const report = (n = 14, amount = 12.5, unknown = 3): AbsorbedUsageReport => ({
   summary: { requests: n, known_requests: n - unknown, known_standard_usd: amount, unknown_requests: unknown },
   items: [], page: 1, page_size: 20, pages: 1
@@ -22,7 +22,7 @@ describe('subscription toolbar site-covered usage', () => {
   it('loads counts and a verified subtotal without opening the details', async () => {
     const w = render(); await flushPromises()
     const b = w.get('[data-testid="absorption-summary"]')
-    expect(b.text()).toContain('14 条'); expect(b.text()).toContain('已确认合计'); expect(b.text()).toContain('12.50'); expect(b.text()).toContain('金额未知 3 条')
+    expect(b.text()).toContain('14 条'); expect(b.text()).toContain('已确认合计'); expect(b.text()).toContain('12.50'); expect(b.text()).toContain('未核实金额 3 条')
     expect(query).toHaveBeenCalledWith({ scope: 'current', summary_only: true }, expect.any(AbortSignal))
     expect(w.find('[data-testid="absorption-scope"]').exists()).toBe(false)
     w.unmount()
@@ -39,7 +39,7 @@ describe('subscription toolbar site-covered usage', () => {
   it('does not label entirely unpriced usage as a zero-dollar total', async () => {
     query.mockResolvedValueOnce(report(14, 0, 14))
     const w = render(); await flushPromises()
-    expect(w.get('button').text()).toContain('总金额未知')
+    expect(w.get('button').text()).toContain('无已核实金额')
     expect(w.get('button').text()).not.toContain('$0.00')
     w.unmount()
   })
@@ -74,26 +74,20 @@ describe('subscription toolbar site-covered usage', () => {
     w.unmount()
   })
 
-  it('shows actual customer prices and never charges unknown holds', async () => {
-    resolve.mockResolvedValue(undefined)
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+  it('shows automatic closure as read-only without review or payment actions', async () => {
     const w = render()
-    await w.setProps({ category: 'review' }); await flushPromises()
-    const details = report(2, 5, 1)
-    const row = { id: 'review-receipt', user_id: 7, email: 'reader@example.invalid', subscription_id: 1, group_id: 4, group_name: 'Synthetic group', account_id: 5, account_name: 'Synthetic source', cycle: 1, model: 'synthetic', reason: 'review_threshold', known_standard_usd: 5, reference_hold_usd: 999, started_at: '2026-09-10T00:00:00Z', absorbed_at: '2026-09-10T00:06:00Z', closed_at: null, needs_review: true, can_charge: true, charge_usd: 10 }
-    details.items = [row, { ...row, id: 'unknown', known_standard_usd: null, can_charge: false, charge_usd: null }]
+    await flushPromises()
+    const details = report(1, 0, 1)
+    details.items = [{ id: 'automatic-request', user_id: 7, email: 'reader@example.invalid', subscription_id: 1, group_id: 4, group_name: 'Synthetic group', account_id: 5, account_name: 'Synthetic source', cycle: 1, model: 'synthetic', reason: 'automatic_unmetered', known_standard_usd: null, reference_hold_usd: 999, started_at: '2026-09-10T00:00:00Z', absorbed_at: '2026-09-10T00:06:00Z', closed_at: null }]
     query.mockResolvedValue(details)
     await w.get('[data-testid=absorption-summary]').trigger('click'); await flushPromises()
-    const buttons = w.findAll('[data-testid=accounting-charge]')
-    expect(buttons[0].text()).toContain('10.00')
-    expect(buttons[1].attributes('disabled')).toBeDefined()
-    expect(resolve).not.toHaveBeenCalled()
-    await buttons[0].trigger('click'); await flushPromises()
-    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('10.00'))
-    expect(resolve).toHaveBeenCalledTimes(1)
-    expect(resolve).toHaveBeenCalledWith('review-receipt', 'charge')
-    expect(w.text()).toContain('已处理，账务列表已更新')
+    expect(w.get('[data-testid=absorption-status]').text()).toBe('已结案 · 未向用户计费')
+    expect(w.text()).toContain('不按预占估算扣款')
+    expect(w.find('[data-testid=accounting-charge]').exists()).toBe(false)
+    expect(w.find('[data-testid=accounting-cover]').exists()).toBe(false)
+    expect(query.mock.calls.every(([params]) => !('category' in params))).toBe(true)
+    expect(w.find('[data-testid=absorption-details] details').text()).toContain('999')
     expect(w.find('.min-w-\\[760px\\]').exists()).toBe(false)
-    confirm.mockRestore(); w.unmount()
+    w.unmount()
   })
 })
