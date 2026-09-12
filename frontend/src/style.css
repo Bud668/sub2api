@@ -11,6 +11,7 @@
     @apply scroll-smooth antialiased;
     color-scheme: light;
     --subscription-card-base: #fff;
+    --subscription-card-shadow: theme('boxShadow.card');
   }
 
   .dark {

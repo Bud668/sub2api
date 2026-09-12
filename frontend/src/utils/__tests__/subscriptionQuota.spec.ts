@@ -2,14 +2,17 @@ import { describe, expect, it } from 'vitest'
 
 import { getExpirationDateRelation, getRemainingExpiryDuration, subscriptionBorderStyle } from '../subscriptionQuota'
 
-it('shares stable group tints and reserves purple for debug across both themes', () => {
+it('shares neutral themed cards with soft shadows and reserves purple borders for debug', () => {
   const normal = subscriptionBorderStyle({ group_id: 7 })
   expect(normal).toEqual(subscriptionBorderStyle({ group_id: 7, admin_debug: false }))
   expect(normal['--subscription-accent']).not.toBe(subscriptionBorderStyle({ group_id: 8 })['--subscription-accent'])
   const debug = subscriptionBorderStyle({ group_id: 7, admin_debug: true })
   expect(debug['--subscription-accent']).toBe('#a78bfa')
   expect(debug).toEqual(subscriptionBorderStyle({ group_id: 8, admin_debug: true }))
-  expect(normal.backgroundColor).toContain('7%, var(--subscription-card-base)')
+  expect(normal.backgroundColor).toBe('var(--subscription-card-base)')
+  expect(debug.backgroundColor).toBe(normal.backgroundColor)
+  expect(normal.boxShadow).toBe('var(--subscription-card-shadow)')
+  expect(debug.boxShadow).toBe(normal.boxShadow)
   expect(normal.borderColor).toContain('42%, var(--subscription-card-base)')
 })
 
