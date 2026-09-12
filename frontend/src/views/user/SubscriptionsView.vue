@@ -28,7 +28,7 @@
         <div
           v-for="subscription in subscriptions"
           :key="subscription.id"
-          class="subscription-row min-w-0 overflow-hidden rounded-2xl border-2 bg-white dark:bg-dark-800"
+          class="subscription-row min-w-0 overflow-hidden rounded-2xl border"
           :style="subscriptionBorderStyle(subscription)"
           data-testid="subscription-card"
         >

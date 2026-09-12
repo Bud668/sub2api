@@ -10,10 +10,12 @@
   html {
     @apply scroll-smooth antialiased;
     color-scheme: light;
+    --subscription-card-base: #fff;
   }
 
   .dark {
     color-scheme: dark;
+    --subscription-card-base: theme('colors.dark.900');
   }
 
   body {

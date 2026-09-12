@@ -2,10 +2,13 @@ import type { UserSubscription } from '@/types'
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000
 
-// Keep group colors stable across pages and sorting; purple is reserved for debug.
+// Share theme-aware card borders/tints across pages; purple is reserved for debug.
 export function subscriptionBorderStyle(subscription: Pick<UserSubscription, 'group_id' | 'admin_debug'>) {
+  const accent = subscription.admin_debug ? '#a78bfa' : `hsl(${30 + (subscription.group_id * 137.508) % 210} 65% 57%)`
   return {
-    borderColor: subscription.admin_debug ? '#a78bfa' : `hsl(${30 + (subscription.group_id * 137.508) % 210} 65% 57%)`
+    '--subscription-accent': accent,
+    borderColor: `color-mix(in srgb, ${accent} 42%, var(--subscription-card-base))`,
+    backgroundColor: `color-mix(in srgb, ${accent} 7%, var(--subscription-card-base))`
   }
 }
 

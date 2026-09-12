@@ -176,7 +176,7 @@
           card-layout
           :columns="columns"
           :data="subscriptions"
-          :card-style="row => ({ '--subscription-accent': subscriptionBorderStyle(row).borderColor })"
+          :card-style="subscriptionBorderStyle"
           :loading="loading"
           :server-side-sort="true"
           default-sort-key="created_at"
@@ -223,7 +223,7 @@
           </template>
 
           <template #cell-usage="{ row }">
-            <div class="subscription-usage" :class="{ 'native-usage': !row.dynamic_quota?.enabled }" :style="subscriptionBorderStyle(row)" :data-testid="!row.dynamic_quota?.enabled ? 'subscription-card' : undefined">
+            <div class="subscription-usage" :class="{ 'native-usage': !row.dynamic_quota?.enabled }" :data-testid="!row.dynamic_quota?.enabled ? 'subscription-card' : undefined">
               <!-- Daily Usage -->
               <div v-if="!row.dynamic_quota?.enabled && row.group?.daily_limit_usd" class="usage-row">
                 <div class="flex items-center gap-2">
@@ -262,7 +262,7 @@
               </div>
 
               <!-- Weekly Usage -->
-              <DynamicQuotaCard v-if="row.dynamic_quota?.enabled" :quota="row.dynamic_quota" compact class="border-0" :style="subscriptionBorderStyle(row)" data-testid="subscription-card" />
+              <DynamicQuotaCard v-if="row.dynamic_quota?.enabled" :quota="row.dynamic_quota" compact class="border-0" data-testid="subscription-card" />
               <div v-else-if="row.group?.weekly_limit_usd" class="usage-row">
                 <div class="flex items-center gap-2">
                   <span class="usage-label">{{ t('admin.subscriptions.weekly') }}</span>
@@ -1633,8 +1633,6 @@ onUnmounted(() => {
 :deep(.subscription-list [data-table-card]) {
   padding: 1rem;
   border-radius: 1rem;
-  border-color: color-mix(in srgb, var(--subscription-accent) 28%, transparent);
-  border-inline: 2px solid var(--subscription-accent);
 }
 :deep(.subscription-list [data-table-card] + [data-table-card]) { margin-top: 1rem; }
 :deep(.subscription-list [data-table-card] > div) { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.75rem 1rem; align-items: center; }
@@ -1667,7 +1665,7 @@ onUnmounted(() => {
 }
 
 .native-usage {
-  @apply grid gap-4 rounded-xl bg-gray-50 p-3 dark:bg-dark-800/60;
+  @apply grid gap-4 rounded-xl bg-white p-3 dark:bg-dark-800/60;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
 }
 .usage-row { min-width: 0; }

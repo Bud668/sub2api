@@ -1,5 +1,5 @@
 <template>
-  <section class="quota-card rounded-xl border border-primary-200 bg-primary-50/50 p-4 text-left text-sm dark:border-primary-900 dark:bg-primary-900/10" :aria-label="t('dynamicQuota.title')">
+  <section class="quota-card rounded-xl border border-primary-200 bg-transparent p-4 text-left text-sm dark:border-primary-900" :aria-label="t('dynamicQuota.title')">
     <div class="quota-main" :class="{ 'quota-main-compact': compact }">
       <div class="quota-heading mb-3 flex flex-wrap items-center justify-between gap-2">
         <span class="font-semibold text-gray-900 dark:text-white">{{ t('dynamicQuota.cardTitle') }}</span>
@@ -7,7 +7,7 @@
           {{ t(`dynamicQuota.statuses.${knownStatus}`) }}
         </span>
       </div>
-      <dl class="quota-amounts grid grid-cols-3 gap-4 rounded-xl bg-gray-50 p-3 tabular-nums dark:bg-dark-800/60" data-testid="dynamic-allocation-stage">
+      <dl class="quota-amounts grid grid-cols-3 gap-4 rounded-xl bg-white p-3 tabular-nums dark:bg-dark-800/60" data-testid="dynamic-allocation-stage">
         <div class="min-w-0" data-testid="dynamic-allocated">
           <dt class="flex flex-wrap items-center justify-between gap-2 text-xs text-gray-500 dark:text-gray-400">
             <span>{{ t('dynamicQuota.limit') }}</span>

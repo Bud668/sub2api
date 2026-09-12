@@ -42,7 +42,7 @@
           <div
             v-for="subscription in displaySubscriptions"
             :key="subscription.id"
-            class="rounded-xl border-2 p-3"
+            class="rounded-xl border p-3"
             :style="subscriptionBorderStyle(subscription)"
             data-testid="subscription-card"
           >

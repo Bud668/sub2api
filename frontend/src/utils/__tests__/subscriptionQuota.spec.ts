@@ -1,6 +1,17 @@
 import { describe, expect, it } from 'vitest'
 
-import { getExpirationDateRelation, getRemainingExpiryDuration } from '../subscriptionQuota'
+import { getExpirationDateRelation, getRemainingExpiryDuration, subscriptionBorderStyle } from '../subscriptionQuota'
+
+it('shares stable group tints and reserves purple for debug across both themes', () => {
+  const normal = subscriptionBorderStyle({ group_id: 7 })
+  expect(normal).toEqual(subscriptionBorderStyle({ group_id: 7, admin_debug: false }))
+  expect(normal['--subscription-accent']).not.toBe(subscriptionBorderStyle({ group_id: 8 })['--subscription-accent'])
+  const debug = subscriptionBorderStyle({ group_id: 7, admin_debug: true })
+  expect(debug['--subscription-accent']).toBe('#a78bfa')
+  expect(debug).toEqual(subscriptionBorderStyle({ group_id: 8, admin_debug: true }))
+  expect(normal.backgroundColor).toContain('7%, var(--subscription-card-base)')
+  expect(normal.borderColor).toContain('42%, var(--subscription-card-base)')
+})
 
 describe('subscription expiry timing', () => {
   it('uses local calendar dates for today and tomorrow', () => {
