@@ -1,11 +1,41 @@
 import { describe, expect, it } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import zh from '@/i18n/locales/zh'
 import DynamicQuotaCard from '../DynamicQuotaCard.vue'
 import type { DynamicSubscriptionQuota } from '@/types'
 
 describe('upstream cycle display', () => {
+  it('distinguishes learning checks from stable adjustment nodes without changing amounts or status', async () => {
+    const quota: DynamicSubscriptionQuota = { enabled: true, revision: 1, weight: 1, fixed_slots: 4, max_limit_usd: 600, cycle: 1, status: 'active', limit_usd: 320, used_usd: 50, reserved_usd: 0, remaining_usd: 270, started_at: '', updated_at: '', next_adjustment_percent: 18, learning_check: { samples: 2, required: 3 } }
+    const wrapper = mount(DynamicQuotaCard, { props: { quota, compact: true }, global: { plugins: [createI18n({ legacy: false, locale: 'zh', messages: { zh }, messageCompiler: message => ctx => String(message).replace(/\{(\w+)\}/g, (_, key) => String(ctx.named(key))) })] } })
+    const badge = wrapper.get('[data-testid=dynamic-next-adjustment]')
+    const amounts = () => wrapper.findAll('.quota-amount').map(dd => dd.text())
+    const initialAmounts = amounts()
+    expect(badge.text()).toBe('学习校验 · 18%')
+    expect(badge.attributes('title')).toContain('有效样本 2/3')
+    expect(badge.attributes('title')).toContain('不保证立即调额')
+    expect(wrapper.find('[role=status]').exists()).toBe(false)
+    await badge.trigger('click'); await flushPromises()
+    expect(badge.attributes('aria-expanded')).toBe('true')
+    expect(document.getElementById(badge.attributes('aria-describedby'))?.textContent).toContain('有效样本 2/3')
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); await flushPromises()
+    expect(badge.attributes('aria-expanded')).toBe('false')
+    await wrapper.setProps({ quota: { ...quota, learning_check: undefined, next_adjustment_percent: 20 } })
+    expect(badge.text()).toBe('下次调额 · 20%')
+    expect(badge.attributes('title')).not.toContain('样本')
+    expect(amounts()).toEqual(initialAmounts)
+    await wrapper.setProps({ quota: { ...quota, learning_check: { samples: 1, required: 3, capacity_change: true } } })
+    expect(badge.text()).toBe('学习校验 · 18%')
+    expect(badge.attributes('title')).toContain('验证样本 1/3')
+    expect(badge.attributes('title')).toContain('不按异常估算扩额')
+    await wrapper.setProps({ quota: { ...quota, next_adjustment_percent: 0 } })
+    expect(badge.text()).toBe('暂无下一节点')
+    expect(badge.attributes('title')).not.toContain('0%')
+    expect(amounts()).toEqual(initialAmounts)
+    wrapper.unmount()
+  })
+
   it('separates an overdue allocation from the next milestone and displays both bounds in compact mode', () => {
     const quota: DynamicSubscriptionQuota = { enabled: true, revision: 1, weight: 1, max_limit_usd: 600, floor_limit_usd: 400, cycle: 1, status: 'active', limit_usd: 600, used_usd: 180, reserved_usd: 0, remaining_usd: 420, started_at: '', updated_at: '', next_adjustment_percent: 50, pending_adjustment_percent: 40, pending_adjustment_reason: 'budget_conflict' }
     const wrapper = mount(DynamicQuotaCard, { props: { quota, compact: true }, global: { plugins: [createI18n({ legacy: false, locale: 'zh', messages: { zh }, messageCompiler: message => ctx => String(message).replace(/\{(\w+)\}/g, (_, key) => String(ctx.named(key))) })] } })

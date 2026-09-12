@@ -62,8 +62,18 @@ func (p *DynamicQuotaPoolState) enableFixedSeats() {
 
 // One schedule for learning, allocation and the next-node card. A new mid-cycle
 // source or an unconfirmed anomaly keeps dense checks until evidence is stable.
+func (p *DynamicQuotaPoolState) fixedSeatLearningCheck() *DynamicQuotaLearningCheck {
+	if p.V2 != nil && p.V2.CandidateSamples > 0 {
+		return &DynamicQuotaLearningCheck{Samples: min(p.V2.CandidateSamples, dynamicQuotaGuardChecks), Required: dynamicQuotaGuardChecks, CapacityChange: true}
+	}
+	if len(p.Samples) < dynamicQuotaGuardChecks {
+		return &DynamicQuotaLearningCheck{Samples: len(p.Samples), Required: dynamicQuotaGuardChecks}
+	}
+	return nil
+}
+
 func (p *DynamicQuotaPoolState) fixedSeatStep(percent float64) int {
-	if percent < 10 || len(p.Samples) < 3 || p.V2.CandidateSamples > 0 {
+	if percent < 10 || p.fixedSeatLearningCheck() != nil {
 		return 2
 	}
 	if percent < 30 {

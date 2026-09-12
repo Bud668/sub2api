@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
@@ -17,6 +18,8 @@ type AdminDebugQuota struct {
 	FollowReset      bool       `json:"follow_reset"`
 	ResetPending     bool       `json:"reset_pending"`
 	ExpectedResetAt  *time.Time `json:"expected_reset_at,omitempty"`
+	RemainingUSD     *float64   `json:"remaining_usd"` // Nil means no weekly dollar cap; not a promise of upstream capacity.
+	ReservedUSD      float64    `json:"reserved_usd,omitempty"`
 	used, held, rate float64
 }
 
@@ -62,6 +65,14 @@ func loadAdminDebugQuota(ctx context.Context, db dynamicQuotaQuerier, id int64, 
 	}
 	q.FollowReset = source.Valid
 	q.ResetPending = source.Valid && p.ConfirmedAt != nil && p.Cycle > cycle
+	q.ReservedUSD = QuantizeUsageBillingAmount(q.held * q.rate)
+	if q.WeeklyLimitUSD > 0 || q.ResetPending {
+		remaining := QuantizeUsageBillingAmount(math.Max(0, q.WeeklyLimitUSD-q.used-q.held*q.rate))
+		if q.ResetPending {
+			remaining = 0
+		}
+		q.RemainingUSD = &remaining
+	}
 	if p.Snapshot != nil {
 		t := p.Snapshot.ResetAt
 		q.ExpectedResetAt = &t

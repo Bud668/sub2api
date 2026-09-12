@@ -16,7 +16,7 @@ describe('fixed seat display', () => {
     const button = wrapper.get('button')
     expect(button.text()).toContain('· 4')
     expect(button.attributes('aria-label')).toContain('8')
-    expect(button.attributes('class')).toContain('dark:text-gray-200')
+    expect(button.classes()).toEqual(expect.arrayContaining(['font-semibold', 'text-blue-700', 'dark:text-blue-300']))
     await button.trigger('click'); await flushPromises()
     expect(button.attributes('aria-expanded')).toBe('true')
     await wrapper.setProps({ quota: { ...quota, fixed_slots: 6 } })

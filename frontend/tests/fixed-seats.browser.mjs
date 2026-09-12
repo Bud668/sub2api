@@ -40,12 +40,50 @@ async function checkCard(page, card, dark) {
   const badge = card.getByTestId('fixed-seat-badge')
   assert.equal(await badge.count(), 1)
   assert((await badge.innerText()).includes('· 6'))
+  assert.deepEqual(await badge.evaluate(el => [getComputedStyle(el).color, getComputedStyle(el).fontWeight]), [dark ? 'rgb(147, 197, 253)' : 'rgb(29, 78, 216)', '600'])
   await badge.click()
   const tooltip = page.locator('[role=tooltip]:visible')
   await tooltip.waitFor()
   const rect = await tooltip.boundingBox(), viewport = page.viewportSize()
   assert(rect.x >= 0 && rect.y >= 0 && rect.x + rect.width <= viewport.width + 1 && rect.y + rect.height <= viewport.height + 1)
   assert((await tooltip.innerText()).includes('10'), 'distinguish group seats from shared-source seats')
+  await page.keyboard.press('Escape')
+  assert.equal(await badge.getAttribute('aria-expanded'), 'false')
+}
+async function checkLearning(page, card, locale, learning) {
+  const badge = card.getByTestId('dynamic-next-adjustment')
+  assert.equal(await badge.innerText(), learning ? (locale === 'zh' ? '学习校验 · 18%' : 'Learning check · 18%') : (locale === 'zh' ? '下次调额 · 20%' : 'Next adjustment · 20%'))
+  await badge.focus()
+  await page.keyboard.press('Enter')
+  const tip = page.locator('[role=tooltip]:visible')
+  await tip.waitFor()
+  assert.equal((await tip.innerText()).includes('2/3'), learning)
+  const rect = await tip.boundingBox(), viewport = page.viewportSize()
+  assert(rect.x >= 0 && rect.y >= 0 && rect.x + rect.width <= viewport.width + 1 && rect.y + rect.height <= viewport.height + 1)
+  await page.keyboard.press('Escape')
+  assert.equal(await badge.getAttribute('aria-expanded'), 'false')
+}
+async function checkDebug(page, card, locale, dark, limit) {
+  await fits(card)
+  const usage = card.getByTestId('admin-debug-usage')
+  assert.deepEqual(await usage.locator('.debug-summary dt').allTextContents(), locale === 'zh' ? ['周额度', '本周已用', '剩余可用'] : ['Weekly quota', 'Used this week', 'Available'])
+  const amounts = usage.locator('.debug-amount')
+  for (const [i, value] of [limit, 50, limit - 52].entries()) assert((await amounts.nth(i).innerText()).includes(value.toFixed(2)))
+  const boxes = await Promise.all([0, 1, 2].map(i => amounts.nth(i).boundingBox()))
+  if ((await usage.boundingBox()).width > 512) {
+    assert(boxes[0].x < boxes[1].x && boxes[1].x < boxes[2].x, 'used in the middle, available on the right')
+    assert(Math.abs(boxes[0].y - boxes[1].y) < 1 && Math.abs(boxes[1].y - boxes[2].y) < 1, 'desktop amounts align')
+  } else {
+    assert(boxes[0].y < boxes[1].y && Math.abs(boxes[1].y - boxes[2].y) < 1, 'mobile used and available align below the limit')
+  }
+  const badge = card.getByTestId('admin-debug-badge')
+  assert.equal(await badge.count(), 1)
+  assert.equal(await card.getByTestId('fixed-seat-badge').count(), 0, 'debug does not claim a fixed seat')
+  assert((await badge.locator('..').locator('..').innerText()).includes('Preview Pro 9'), 'debug badge belongs beside group name, not user identity')
+  await fits(badge)
+  assert.deepEqual(await badge.evaluate(el => [getComputedStyle(el).color, getComputedStyle(el).fontWeight, getComputedStyle(el).borderRadius]), [dark ? 'rgb(196, 181, 253)' : 'rgb(109, 40, 217)', '600', '6px'])
+  await badge.click()
+  await page.locator('[role=tooltip]:visible').waitFor()
   await page.keyboard.press('Escape')
   assert.equal(await badge.getAttribute('aria-expanded'), 'false')
 }
@@ -58,7 +96,7 @@ try {
     const errors = []
     page.on('pageerror', e => errors.push(e.message))
     let policy = { group_id: 7, account_id: 4, revision: 1, enabled: true, weight: 1, max_limit_usd: 600, fixed_slots: 4, floor_limit_usd: null }
-    const rows = groups.map((group, i) => ({ id: i + 11, user_id: 999, group_id: group.id, group, user, status: 'active', starts_at: stamp, expires_at: new Date(Date.parse(stamp) + [23, 7, 3][i] * 86400_000).toISOString(), weekly_usage_usd: 50, admin_debug: i === 2, dynamic_quota: i === 2 ? null : { ...base, status: i ? 'learning' : 'active' }, admin_debug_quota: i === 2 ? { weekly_limit_usd: 120, revision: 1, follow_reset: true, reset_pending: false, expected_reset_at: '2026-09-19T05:00:00Z' } : null }))
+    const rows = groups.map((group, i) => ({ id: i + 11, user_id: 999, group_id: group.id, group, user, status: 'active', starts_at: stamp, expires_at: new Date(Date.parse(stamp) + [23, 7, 3][i] * 86400_000).toISOString(), weekly_usage_usd: 50, admin_debug: i === 2, dynamic_quota: i === 2 ? null : { ...base, ...(i === 1 ? { next_adjustment_percent: 18, learning_check: { samples: 2, required: 3 } } : {}) }, admin_debug_quota: i === 2 ? { weekly_limit_usd: 120, remaining_usd: 68, reserved_usd: 2, revision: 1, follow_reset: true, reset_pending: false, expected_reset_at: '2026-09-19T05:00:00Z' } : null }))
     await page.addInitScript(({ user, locale, dark }) => {
       localStorage.setItem('auth_token', 'synthetic-local-preview')
       localStorage.setItem('auth_user', JSON.stringify(user))
@@ -86,6 +124,7 @@ try {
       } else if (path.endsWith('/admin/subscriptions/13/admin-debug/quota')) {
         if (request.postDataJSON().weekly_limit_usd === 444) return route.fulfill({ status: 409, json: { code: 409, reason: 'DYNAMIC_QUOTA_CHANGED', message: 'Synthetic conflict' } })
         rows[2].admin_debug_quota = { ...rows[2].admin_debug_quota, ...request.postDataJSON(), revision: rows[2].admin_debug_quota.revision + 1 }
+        rows[2].admin_debug_quota.remaining_usd = rows[2].admin_debug_quota.weekly_limit_usd - 52
         data = rows[2]
       } else if (path.endsWith('/admin/subscriptions/13')) data = rows[2]
       else if (path.endsWith('/groups/dynamic-quotas')) data = [policy]
@@ -121,7 +160,13 @@ try {
     await card.waitFor()
     await checkCard(page, card, dark)
     await card.screenshot({ path: join(output, `${prefix}-admin.png`) })
-    async function checkExpiry() {
+    const learningCard = page.locator('[data-table-card]').nth(1)
+    await checkLearning(page, learningCard, locale, true)
+    await learningCard.screenshot({ path: join(output, `${prefix}-learning.png`) })
+    const debugCard = page.locator('[data-table-card]').nth(2)
+    await checkDebug(page, debugCard, locale, dark, 120)
+    await debugCard.screenshot({ path: join(output, `${prefix}-admin-debug.png`) })
+    const checkExpiry = async () => {
       const badges = page.getByTestId('subscription-expiry-badge')
       for (const [i, color] of ['green', 'yellow', 'red'].entries()) {
         const badge = badges.nth(i)
@@ -135,11 +180,11 @@ try {
     const initialBadgeColor = await page.getByTestId('subscription-expiry-badge').first().evaluate(el => getComputedStyle(el).backgroundColor)
     await page.evaluate(() => document.documentElement.classList.toggle('dark'))
     await checkCard(page, card, !dark)
+    await checkDebug(page, debugCard, locale, !dark, 120)
     await checkExpiry()
     assert.notEqual(await page.getByTestId('subscription-expiry-badge').first().evaluate(el => getComputedStyle(el).backgroundColor), initialBadgeColor)
     await page.evaluate(() => document.documentElement.classList.toggle('dark'))
     await checkCard(page, card, dark)
-    const debugCard = page.locator('[data-table-card]').nth(2)
     assert.equal(await debugCard.getByTestId('fixed-seat-badge').count(), 0)
     await debugCard.getByRole('button', { name: locale === 'zh' ? '更多' : 'More', exact: true }).click()
     await page.getByRole('button', { name: locale === 'zh' ? '设置周额度' : 'Set weekly quota', exact: true }).click()
@@ -162,17 +207,29 @@ try {
     await checkCard(page, card, dark)
     await checkExpiry()
     await card.screenshot({ path: join(output, `${prefix}-user.png`) })
+    await checkLearning(page, page.getByTestId('subscription-card').nth(1), locale, true)
+    await checkDebug(page, page.getByTestId('subscription-card').nth(2), locale, dark, 250)
     await page.getByTestId('subscription-card').nth(2).screenshot({ path: join(output, `${prefix}-debug.png`) })
     await page.getByTitle(locale === 'zh' ? '查看订阅详情' : 'View subscription details', { exact: true }).click()
     await page.waitForFunction(() => document.querySelectorAll('[data-testid=subscription-card]').length === 6)
     const cards = page.getByTestId('subscription-card')
     assert.equal(await page.getByTestId('fixed-seat-badge').count(), 4)
     for (const item of await cards.all()) await fits(item)
+    await checkLearning(page, cards.filter({ hasText: 'Preview Pro 8' }).first(), locale, true)
+    const headerDebug = cards.filter({ has: page.getByTestId('admin-debug-usage') }).first()
+    await checkDebug(page, headerDebug, locale, dark, 250)
+    await headerDebug.screenshot({ path: join(output, `${prefix}-header-debug.png`) })
+    delete rows[1].dynamic_quota.learning_check
+    rows[1].dynamic_quota.next_adjustment_percent = 20
+    await page.goto(origin + '/subscriptions')
+    await checkLearning(page, page.getByTestId('subscription-card').nth(1), locale, false)
+    assert.equal(rows[1].dynamic_quota.used_usd, 50)
+    assert.equal(rows[1].dynamic_quota.status, 'active')
     await page.clock.fastForward(20 * 86400_000 + 60_000)
     await page.waitForFunction(() => [...document.querySelectorAll('[data-testid=subscription-expiry-badge]')].every(el => el.classList.contains('bg-red-100')))
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1), false)
     assert.deepEqual(errors, [])
-    console.log(`PASS ${prefix}: settings/error/save, admin/user/header seats, independent debug editing, expiry colors/time updates, bold metrics, light/dark switching, tooltips and no overflow`)
+    console.log(`PASS ${prefix}: settings/error/save, admin/user/header badges, learning/stable tooltips, debug available/order/editing, expiry colors/time updates, bold metrics, light/dark switching and no overflow`)
     await context.close()
   }
 } finally {

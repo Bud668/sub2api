@@ -231,6 +231,43 @@ func TestDynamicQuotaFixedSeatsDenseLearningAndReset(t *testing.T) {
 	require.Error(t, validateDynamicInput(&tiny), "rounding must not turn a positive cap into zero")
 }
 
+func TestDynamicQuotaFixedSeatsLearningDisplay(t *testing.T) {
+	s, db := fixedSeatStore(t, 4)
+	ctx := context.Background()
+	fixedSeatEvidence(t, s, 1600, 17, true)
+	baseline, err := s.Load(ctx, 11)
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name                     string
+		samples, candidate, next int
+		percent                  float64
+		check                    *DynamicQuotaLearningCheck
+	}{
+		{"learning", 2, 0, 18, 17, &DynamicQuotaLearningCheck{Samples: 2, Required: 3}},
+		{"stable", 3, 0, 20, 17, nil},
+		{"capacity change", 3, 1, 18, 17, &DynamicQuotaLearningCheck{Samples: 1, Required: 3, CapacityChange: true}},
+		{"early stable", 3, 0, 10, 8, nil},
+		{"no next node", 2, 0, 0, 98, &DynamicQuotaLearningCheck{Samples: 2, Required: 3}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			updateDynamicGuardPool(t, db, 4, func(p *DynamicQuotaPoolState) {
+				p.Samples = []float64{1600, 1600, 1600}[:tc.samples]
+				p.V2.CandidateSamples = tc.candidate
+				p.Snapshot.UsedPercent = tc.percent
+				p.V2.LastNode = p.fixedSeatNode(tc.percent)
+			})
+			q, err := s.Load(ctx, 11)
+			require.NoError(t, err)
+			require.Equal(t, tc.next, q.NextAdjustmentPercent)
+			require.Equal(t, tc.check, q.LearningCheck)
+			require.Equal(t, tc.check, q.Public().LearningCheck)
+			require.Equal(t, baseline.LimitUSD, q.LimitUSD, "display reads do not allocate")
+			require.Equal(t, baseline.UsedUSD, q.UsedUSD, "display reads do not bill or reset")
+			require.Equal(t, baseline.LastAllocationAt, q.LastAllocationAt)
+		})
+	}
+}
+
 func TestDynamicQuotaFixedSeatsSafeCurrentCycleResize(t *testing.T) {
 	s, db := fixedSeatStore(t, 4)
 	ctx := context.Background()

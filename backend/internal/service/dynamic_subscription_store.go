@@ -23,6 +23,13 @@ var (
 	ErrDynamicQuotaChanged     = infraerrors.Conflict("DYNAMIC_QUOTA_CHANGED", "Dynamic quota settings changed; reload before saving")
 )
 
+// Public progress only; raw capacity samples and account diagnostics stay private.
+type DynamicQuotaLearningCheck struct {
+	Samples        int  `json:"samples"`
+	Required       int  `json:"required"`
+	CapacityChange bool `json:"capacity_change,omitempty"`
+}
+
 type DynamicSubscriptionQuota struct {
 	GroupManaged                          bool                `json:"group_managed,omitempty"`
 	Enabled                               bool                `json:"enabled"`
@@ -58,6 +65,8 @@ type DynamicSubscriptionQuota struct {
 	usedStandard, allocatedStandard, rate float64
 	userID, groupID                       int64
 	pool                                  DynamicQuotaPoolState
+
+	LearningCheck *DynamicQuotaLearningCheck `json:"learning_check,omitempty"`
 }
 
 func (q *DynamicSubscriptionQuota) Public() *DynamicSubscriptionQuota {
@@ -318,6 +327,7 @@ func loadDynamicSubscription(ctx context.Context, db dynamicQuotaQuerier, subscr
 			q.PendingAdjustmentPercent = observedNode * 10
 		}
 		if q.pool.V2.FixedSeats {
+			q.LearningCheck = q.pool.fixedSeatLearningCheck()
 			percent := 0.0
 			if snapshot := q.pool.Snapshot; snapshot != nil {
 				percent = snapshot.UsedPercent

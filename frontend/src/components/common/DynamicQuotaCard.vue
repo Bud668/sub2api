@@ -8,13 +8,19 @@
         <div class="min-w-0" data-testid="dynamic-allocated">
           <dt class="flex flex-wrap items-center gap-2 text-xs font-medium text-gray-600 dark:text-gray-300">
             <span class="font-semibold text-gray-700 dark:text-gray-200">{{ t('dynamicQuota.limit') }}</span>
-            <span
-              class="inline-flex rounded-md bg-primary-100/70 px-2 py-0.5 text-xs font-medium leading-4 text-primary-700 outline-offset-2 dark:bg-primary-900/40 dark:text-primary-200"
-              data-testid="dynamic-next-adjustment"
-              tabindex="0"
-              :title="quota.next_adjustment_percent ? t('dynamicQuota.stageAt', { percent: quota.next_adjustment_percent }) : t('dynamicQuota.noNextStage')"
-              :aria-label="quota.next_adjustment_percent ? t('dynamicQuota.stageAt', { percent: quota.next_adjustment_percent }) : t('dynamicQuota.noNextStage')"
-            >{{ quota.next_adjustment_percent ? t('dynamicQuota.stageShort', { percent: quota.next_adjustment_percent }) : t('dynamicQuota.noNextStageShort') }}</span>
+            <HelpTooltip trigger="click" :content="stageHint" class="!ml-0">
+              <template #trigger="{ open, tooltipId }">
+                <button
+                  type="button"
+                  class="inline-flex rounded-md bg-primary-100/70 px-2 py-0.5 text-xs font-medium leading-4 text-primary-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:bg-primary-900/40 dark:text-primary-200"
+                  data-testid="dynamic-next-adjustment"
+                  :title="stageHint"
+                  :aria-label="stageHint"
+                  :aria-expanded="open"
+                  :aria-describedby="tooltipId"
+                >{{ quota.next_adjustment_percent ? t(quota.learning_check ? 'dynamicQuota.learningStageShort' : 'dynamicQuota.stageShort', { percent: quota.next_adjustment_percent }) : t('dynamicQuota.noNextStageShort') }}</button>
+              </template>
+            </HelpTooltip>
           </dt>
           <dd class="quota-amount mt-1 break-words text-lg font-bold tracking-tight text-gray-900 dark:text-gray-100">{{ usd(quota.limit_usd) }}</dd>
           <dd class="mt-2 flex flex-wrap items-start gap-1 text-xs leading-4 text-gray-600 dark:text-gray-300" :title="`${allocationLabel}: ${allocationTime ? date(quota.last_allocation_at) : t('dynamicQuota.notAllocated')}`">
@@ -89,6 +95,14 @@ import Icon from '@/components/icons/Icon.vue'
 
 const props = withDefaults(defineProps<{ quota: DynamicSubscriptionQuota; compact?: boolean }>(), { compact: false })
 const { t, locale } = useI18n()
+const stageHint = computed(() => {
+  const q = props.quota
+  if (!q.next_adjustment_percent) return t('dynamicQuota.noNextStage')
+  if (!q.learning_check) return t('dynamicQuota.stageAt', { percent: q.next_adjustment_percent })
+  return t(q.learning_check.capacity_change ? 'dynamicQuota.capacityCheckHint' : 'dynamicQuota.learningCheckHint', {
+    percent: q.next_adjustment_percent, samples: q.learning_check.samples, required: q.learning_check.required
+  })
+})
 const resetTime = computed(() => formatDateTimeToMinute(props.quota.expected_reset_at, locale.value))
 const allocationTime = computed(() => formatDate(props.quota.last_allocation_at, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }, locale.value))
 const allocationLabel = computed(() => t(props.quota.last_change?.reason === 'initial' ? 'dynamicQuota.initialAllocatedAt' : 'dynamicQuota.allocatedAt'))

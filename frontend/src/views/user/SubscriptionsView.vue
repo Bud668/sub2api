@@ -43,11 +43,11 @@
                   <h3 class="break-words font-semibold text-gray-900 dark:text-white">
                     {{ subscription.group?.name || `Group #${subscription.group_id}` }}
                   </h3>
-                  <FixedSeatBadge :quota="subscription.dynamic_quota" />
+                  <AdminDebugBadge v-if="subscription.admin_debug" />
+                  <FixedSeatBadge v-else :quota="subscription.dynamic_quota" />
                   <span :class="['rounded-md border px-2 py-0.5 text-[11px] font-medium', platformBadgeClass(subscription.group?.platform || '')]">
                     {{ platformLabel(subscription.group?.platform || '') }}
                   </span>
-                  <span v-if="subscription.admin_debug" class="rounded-md bg-violet-50 px-2 py-0.5 text-[11px] font-medium text-violet-700 dark:bg-violet-900/20 dark:text-violet-300">{{ t('dynamicQuota.adminDebug') }}</span>
                 </div>
                 <p v-if="subscription.group?.description" class="mt-0.5 text-xs text-gray-600 dark:text-gray-300">
                   {{ subscription.group.description }}
@@ -245,6 +245,7 @@ import DynamicQuotaCard from '@/components/common/DynamicQuotaCard.vue'
 import SubscriptionStatusBadge from '@/components/common/SubscriptionStatusBadge.vue'
 import FixedSeatBadge from '@/components/common/FixedSeatBadge.vue'
 import AdminDebugUsage from '@/components/common/AdminDebugUsage.vue'
+import AdminDebugBadge from '@/components/common/AdminDebugBadge.vue'
 import { ref, onMounted } from 'vue'
 import { useNow } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'

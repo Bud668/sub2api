@@ -2055,6 +2055,7 @@ export interface DynamicSubscriptionQuota {
   requested_enabled?: boolean
   activation_pending?: boolean
   next_adjustment_percent?: number
+  learning_check?: { samples: number; required: number; capacity_change?: boolean }
   pending_adjustment_percent?: number
   pending_adjustment_reason?: 'budget_conflict' | 'protection' | 'learning' | 'guard' | 'awaiting_allocation'
   allocation_budget_conflict?: boolean
@@ -2108,6 +2109,8 @@ export interface DynamicGroupQuotaStatus {
 
 export interface AdminDebugQuota {
   weekly_limit_usd: number
+  remaining_usd?: number | null
+  reserved_usd?: number
   revision: number
   follow_reset: boolean
   reset_pending: boolean

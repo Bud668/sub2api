@@ -205,7 +205,6 @@
                   : (row.user?.username || t('admin.redeem.userPrefix', { id: row.user_id }))
                 }}
               </RouterLink>
-              <span v-if="row.admin_debug" class="mt-1 block w-fit rounded-md bg-violet-50 px-2 py-0.5 text-xs font-medium text-violet-700 dark:bg-violet-900/20 dark:text-violet-300">{{ t('dynamicQuota.adminDebug') }}</span>
               </div>
             </div>
           </template>
@@ -221,7 +220,8 @@
               :show-rate="false"
             />
             <span v-else class="text-sm text-gray-400 dark:text-dark-500">-</span>
-            <FixedSeatBadge :quota="row.dynamic_quota" />
+            <AdminDebugBadge v-if="row.admin_debug" />
+            <FixedSeatBadge v-else :quota="row.dynamic_quota" />
             </div>
           </template>
 
@@ -866,6 +866,7 @@ import DynamicQuotaCard from '@/components/common/DynamicQuotaCard.vue'
 import SubscriptionStatusBadge from '@/components/common/SubscriptionStatusBadge.vue'
 import FixedSeatBadge from '@/components/common/FixedSeatBadge.vue'
 import AdminDebugUsage from '@/components/common/AdminDebugUsage.vue'
+import AdminDebugBadge from '@/components/common/AdminDebugBadge.vue'
 import AdminDebugQuotaDialog from '@/components/admin/AdminDebugQuotaDialog.vue'
 import { useNow } from '@vueuse/core'
 import SubscriptionAbsorptionPanel from '@/components/admin/SubscriptionAbsorptionPanel.vue'

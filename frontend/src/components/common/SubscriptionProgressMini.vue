@@ -51,7 +51,8 @@
               <span class="break-words text-sm font-medium text-gray-900 dark:text-white">
                 {{ subscription.group?.name || `Group #${subscription.group_id}` }}
               </span>
-              <FixedSeatBadge :quota="subscription.dynamic_quota" />
+              <AdminDebugBadge v-if="subscription.admin_debug" />
+              <FixedSeatBadge v-else :quota="subscription.dynamic_quota" />
               </div>
               <SubscriptionStatusBadge :subscription="subscription" />
             </div>
@@ -63,8 +64,6 @@
             >
               {{ formatDaysRemaining(subscription.expires_at) }}
             </p>
-
-            <p v-if="subscription.admin_debug" class="mb-2 text-xs font-medium text-violet-700 dark:text-violet-300">{{ t('dynamicQuota.adminDebug') }}</p>
 
             <!-- Progress bars or Unlimited badge -->
             <div class="space-y-1.5">
@@ -197,6 +196,7 @@ import DynamicQuotaCard from '@/components/common/DynamicQuotaCard.vue'
 import SubscriptionStatusBadge from '@/components/common/SubscriptionStatusBadge.vue'
 import FixedSeatBadge from '@/components/common/FixedSeatBadge.vue'
 import AdminDebugUsage from '@/components/common/AdminDebugUsage.vue'
+import AdminDebugBadge from '@/components/common/AdminDebugBadge.vue'
 import { useSubscriptionStore } from '@/stores'
 import type { UserSubscription } from '@/types'
 import { subscriptionBorderStyle, subscriptionExpiryClass } from '@/utils/subscriptionQuota'
