@@ -23,18 +23,18 @@
         </p>
       </div>
 
-      <!-- Subscriptions Grid -->
-      <div v-else class="grid gap-6 lg:grid-cols-2">
+      <!-- Wide subscription rows share the space between identity and usage. -->
+      <div v-else class="subscription-list grid gap-3">
         <div
           v-for="subscription in subscriptions"
           :key="subscription.id"
-          class="overflow-hidden rounded-2xl border-2 bg-white dark:bg-dark-800"
+          class="subscription-row min-w-0 overflow-hidden rounded-2xl border-2 bg-white dark:bg-dark-800"
           :style="subscriptionBorderStyle(subscription)"
           data-testid="subscription-card"
         >
           <!-- Header -->
           <div
-            class="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 p-4 dark:border-dark-700"
+            class="subscription-identity flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 px-4 py-3 dark:border-dark-700"
           >
             <div class="flex min-w-0 items-center gap-3">
               <div :class="['h-1.5 w-1.5 shrink-0 rounded-full', platformAccentDotClass(subscription.group?.platform || '')]" />
@@ -80,28 +80,15 @@
                 {{ t('payment.renewNow') }}
               </button>
             </div>
+            <div class="w-full text-xs text-gray-500 dark:text-gray-400">
+              <span>{{ t('userSubscriptions.expires') }} · </span>
+              <span v-if="subscription.expires_at" :class="getExpirationClass(subscription.expires_at)">{{ formatExpirationDate(subscription.expires_at) }}</span>
+              <span v-else>{{ t('userSubscriptions.noExpiration') }}</span>
+            </div>
           </div>
 
           <!-- Usage Progress -->
-          <div class="space-y-4 p-4">
-            <!-- Expiration Info -->
-            <div v-if="subscription.expires_at" class="flex items-center justify-between text-sm">
-              <span class="text-gray-500 dark:text-dark-400">{{
-                t('userSubscriptions.expires')
-              }}</span>
-              <span :class="getExpirationClass(subscription.expires_at)">
-                {{ formatExpirationDate(subscription.expires_at) }}
-              </span>
-            </div>
-            <div v-else class="flex items-center justify-between text-sm">
-              <span class="text-gray-500 dark:text-dark-400">{{
-                t('userSubscriptions.expires')
-              }}</span>
-              <span class="text-gray-700 dark:text-gray-300">{{
-                t('userSubscriptions.noExpiration')
-              }}</span>
-            </div>
-
+          <div class="min-w-0 space-y-2 px-4 py-3">
             <!-- Daily Usage -->
             <div v-if="!subscription.dynamic_quota?.enabled && subscription.group?.daily_limit_usd" class="space-y-2">
               <div class="flex items-center justify-between">
@@ -140,7 +127,7 @@
             </div>
 
             <!-- Weekly Usage -->
-            <DynamicQuotaCard v-if="subscription.dynamic_quota?.enabled" :quota="subscription.dynamic_quota" />
+            <DynamicQuotaCard v-if="subscription.dynamic_quota?.enabled" :quota="subscription.dynamic_quota" class="border-0" />
             <div v-else-if="subscription.group?.weekly_limit_usd" class="space-y-2">
               <div class="flex items-center justify-between">
                 <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
@@ -397,3 +384,11 @@ onMounted(() => {
   loadSubscriptions()
 })
 </script>
+
+<style scoped>
+.subscription-list { container-type: inline-size; max-width: 90rem; margin-inline: auto; }
+@container (min-width: 48rem) {
+  .subscription-row { display: grid; grid-template-columns: minmax(14rem, 1fr) minmax(0, 3fr); }
+  .subscription-identity { flex-direction: column; align-items: flex-start; justify-content: flex-start; border-bottom: 0; border-right-width: 1px; }
+}
+</style>

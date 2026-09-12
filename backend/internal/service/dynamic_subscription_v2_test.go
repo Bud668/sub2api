@@ -80,7 +80,7 @@ func TestDynamicQuotaV2NodesAndIndependentSamples(t *testing.T) {
 	o.FetchedAt = now.Add(2 * time.Minute)
 	o.UsedPercent, o.LocalStandardTotal = 32, 130
 	require.False(t, p.Observe(o, o.FetchedAt))
-	require.InDelta(t, 900, p.CapacityUSD, 1e-8)
+	require.InDelta(t, 1000, p.CapacityUSD, 1e-8)
 	require.True(t, p.v2AllocationDue(o.FetchedAt))
 	p.V2.LastNode, p.LastAllocationAt = dynamicQuotaNode(o.UsedPercent), o.FetchedAt
 	for i := 3; i < 6; i++ {
@@ -127,4 +127,24 @@ func TestDynamicQuotaV2SpikeKeepsLastCapacity(t *testing.T) {
 	require.Zero(t, p.CapacityUSD)
 	require.Zero(t, p.V2.LastNode)
 	require.Zero(t, p.V2.CandidateSamples)
+}
+
+func TestDynamicQuotaV2UnreservedAllocationStillExcludesNativeThreshold(t *testing.T) {
+	now := time.Now().UTC()
+	o := dynamicTestObservation(4, 0, now.Add(6*24*time.Hour), now)
+	p := DynamicQuotaPoolState{ceilingPercent: 99}
+	p.Observe(o, now)
+	o.FetchedAt, o.UsedPercent, o.LocalStandardTotal = now.Add(time.Minute), 10, 150
+	p.Observe(o, o.FetchedAt)
+	require.InDelta(t, 1500, p.CapacityUSD, 1e-8, "no additional ten-percent reserve")
+	members := []dynamicQuotaV2Member{{ID: 1, Weight: 1, Used: 75, Floor: 100, Cap: 1000}, {ID: 2, Weight: 1, Used: 75, Floor: 100, Cap: 1000}}
+	grants, err := allocateDynamicQuotaV2(members, p.Available(o.FetchedAt, 150, 0))
+	require.NoError(t, err)
+	require.InDelta(t, 742.5, grants[1], 1e-8)
+	require.InDelta(t, 1485, grants[1]+grants[2], 1e-8, "the protected final one percent is never allocated")
+	grants, err = allocateDynamicQuotaV2(members, p.Available(o.FetchedAt, 160, 15))
+	require.NoError(t, err)
+	require.InDelta(t, 1460, grants[1]+grants[2], 1e-8, "later settlements and in-flight costs still reduce the budget")
+	p.Snapshot.UsedPercent = 99
+	require.Zero(t, p.Available(o.FetchedAt, 150, 0))
 }

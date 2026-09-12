@@ -12,11 +12,12 @@ import (
 
 // Persisted learning/node metadata. V2 is the only allocation algorithm.
 type DynamicQuotaV2State struct {
-	LastNode         int       `json:"last_node"`
-	SampleAt         time.Time `json:"sample_at"`
-	CandidateUSD     float64   `json:"candidate_usd,omitempty"`
-	CandidateSamples int       `json:"candidate_samples,omitempty"`
-	BudgetConflict   bool      `json:"budget_conflict,omitempty"`
+	LastNode           int       `json:"last_node"`
+	SampleAt           time.Time `json:"sample_at"`
+	CandidateUSD       float64   `json:"candidate_usd,omitempty"`
+	CandidateSamples   int       `json:"candidate_samples,omitempty"`
+	BudgetConflict     bool      `json:"budget_conflict,omitempty"`
+	UnreservedCapacity bool      `json:"unreserved_capacity,omitempty"`
 }
 
 type DynamicQuotaChange struct {
@@ -32,7 +33,7 @@ func dynamicQuotaNode(percent float64) int {
 }
 
 func (p *DynamicQuotaPoolState) startV2() {
-	p.V2 = &DynamicQuotaV2State{}
+	p.V2 = &DynamicQuotaV2State{UnreservedCapacity: true}
 	if p.Snapshot != nil {
 		p.V2.LastNode = dynamicQuotaNode(p.Snapshot.UsedPercent)
 	}
@@ -42,6 +43,28 @@ func (p *DynamicQuotaPoolState) startV2() {
 	if p.Status == "active" && p.CapacityUSD == 0 {
 		p.Status = "learning"
 	}
+}
+
+// Older V2 evidence included a 0.9 factor. Convert the whole evidence set once,
+// preserving its ratios, freshness and guard state. The normal locked write
+// persists the marker; read-only hydration never changes grants or the ledger.
+func (p *DynamicQuotaPoolState) restoreUnreservedCapacity() error {
+	if p.V2 == nil || p.V2.UnreservedCapacity {
+		return nil
+	}
+	p.CapacityUSD /= 0.9
+	p.V2.CandidateUSD /= 0.9
+	if !validDynamicAmount(p.CapacityUSD) || !validDynamicAmount(p.V2.CandidateUSD) {
+		return ErrDynamicQuotaUnavailable
+	}
+	for i := range p.Samples {
+		p.Samples[i] /= 0.9
+		if !validDynamicAmount(p.Samples[i]) {
+			return ErrDynamicQuotaUnavailable
+		}
+	}
+	p.V2.UnreservedCapacity = true
+	return nil
 }
 
 // Only a new, non-overlapping consumption interval is learning evidence.
@@ -61,7 +84,7 @@ func (p *DynamicQuotaPoolState) observeV2Capacity(o DynamicQuotaObservation) {
 	if !validDynamicAmount(spent) || spent <= 0 {
 		return
 	}
-	sample := spent / (delta / 100) * 0.9
+	sample := spent / (delta / 100)
 	if !validDynamicAmount(sample) || sample <= 0 {
 		return
 	}

@@ -35,6 +35,8 @@ type DynamicSubscriptionQuota struct {
 	RequestedEnabled                      bool                `json:"requested_enabled"`
 	ActivationPending                     bool                `json:"activation_pending"`
 	NextAdjustmentPercent                 int                 `json:"next_adjustment_percent,omitempty"`
+	PendingAdjustmentPercent              int                 `json:"pending_adjustment_percent,omitempty"`
+	PendingAdjustmentReason               string              `json:"pending_adjustment_reason,omitempty"`
 	AllocationBudgetConflict              bool                `json:"allocation_budget_conflict,omitempty"`
 	LastAllocationAt                      *time.Time          `json:"last_allocation_at,omitempty"`
 	LastChange                            *DynamicQuotaChange `json:"last_change,omitempty"`
@@ -66,6 +68,9 @@ func (q *DynamicSubscriptionQuota) Public() *DynamicSubscriptionQuota {
 	cp.CapacityEstimateUSD = 0
 	cp.SampleCount = 0
 	cp.AllocationBudgetConflict = false
+	if cp.PendingAdjustmentReason == "budget_conflict" {
+		cp.PendingAdjustmentReason = "protection"
+	}
 	return &cp
 }
 
@@ -269,6 +274,9 @@ func loadDynamicSubscription(ctx context.Context, db dynamicQuotaQuerier, subscr
 	if json.Unmarshal(raw, &q.pool) != nil {
 		return nil, ErrDynamicQuotaUnavailable
 	}
+	if err := q.pool.restoreUnreservedCapacity(); err != nil {
+		return nil, err
+	}
 	q.RequestedEnabled = q.Enabled
 	q.Enabled = q.Enabled && !q.ActivationPending
 	if q.Enabled {
@@ -292,9 +300,16 @@ func loadDynamicSubscription(ctx context.Context, db dynamicQuotaQuerier, subscr
 	q.CapacityEstimateUSD, q.SampleCount = q.pool.CapacityUSD, len(q.pool.Samples)
 	if q.pool.V2 != nil {
 		q.AllocationBudgetConflict = q.pool.V2.BudgetConflict
-		q.NextAdjustmentPercent = (q.pool.V2.LastNode + 1) * 10
+		observedNode := q.pool.V2.LastNode
+		if snapshot := q.pool.Snapshot; snapshot != nil && snapshot.Valid(snapshot.FetchedAt) {
+			observedNode = max(observedNode, dynamicQuotaNode(snapshot.UsedPercent))
+		}
+		q.NextAdjustmentPercent = (observedNode + 1) * 10
 		if float64(q.NextAdjustmentPercent) >= q.pool.stopPercent() {
 			q.NextAdjustmentPercent = 0
+		}
+		if observedNode > q.pool.V2.LastNode {
+			q.PendingAdjustmentPercent = observedNode * 10
 		}
 	}
 	if len(change) > 0 {
@@ -337,6 +352,18 @@ func loadDynamicSubscription(ctx context.Context, db dynamicQuotaQuerier, subscr
 	}
 	if q.ActivationPending {
 		q.Status = "activation_pending"
+	}
+	if q.PendingAdjustmentPercent > 0 {
+		switch {
+		case q.GrowthFrozen || (q.Status != "active" && q.Status != "learning"):
+			q.PendingAdjustmentReason = "guard"
+		case q.AllocationBudgetConflict:
+			q.PendingAdjustmentReason = "budget_conflict"
+		case q.CapacityEstimateUSD <= 0 || !q.pool.V2.SampleAt.After(q.pool.LastAllocationAt):
+			q.PendingAdjustmentReason = "learning"
+		default:
+			q.PendingAdjustmentReason = "awaiting_allocation"
+		}
 	}
 	return q, nil
 }
@@ -560,6 +587,9 @@ func lockDynamicPool(ctx context.Context, tx *sql.Tx, accountID int64) (*Dynamic
 		return nil, err
 	}
 	if err := json.Unmarshal(raw, p); err != nil {
+		return nil, err
+	}
+	if err := p.restoreUnreservedCapacity(); err != nil {
 		return nil, err
 	}
 	return p, nil

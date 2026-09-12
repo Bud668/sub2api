@@ -6,12 +6,22 @@ import DynamicQuotaCard from '../DynamicQuotaCard.vue'
 import type { DynamicSubscriptionQuota } from '@/types'
 
 describe('upstream cycle display', () => {
+  it('separates an overdue allocation from the next milestone and displays both bounds in compact mode', () => {
+    const quota: DynamicSubscriptionQuota = { enabled: true, revision: 1, weight: 1, max_limit_usd: 600, floor_limit_usd: 400, cycle: 1, status: 'active', limit_usd: 600, used_usd: 180, reserved_usd: 0, remaining_usd: 420, started_at: '', updated_at: '', next_adjustment_percent: 50, pending_adjustment_percent: 40, pending_adjustment_reason: 'budget_conflict' }
+    const wrapper = mount(DynamicQuotaCard, { props: { quota, compact: true }, global: { plugins: [createI18n({ legacy: false, locale: 'zh', messages: { zh }, messageCompiler: message => ctx => String(message).replace(/\{(\w+)\}/g, (_, key) => String(ctx.named(key))) })] } })
+    expect(wrapper.get('[data-testid=dynamic-pending-stage]').text()).toContain('40% 节点待分配')
+    expect(wrapper.get('[data-testid=dynamic-pending-stage]').text()).toContain('下调保护合计超出')
+    expect(wrapper.get('[data-testid=dynamic-remaining]').text()).toContain('下次 50%')
+    expect(wrapper.get('[data-testid=dynamic-allocated]').text()).toContain('尚未自动分配')
+    expect(wrapper.get('[data-testid=dynamic-bounds]').text()).toContain('$400.00')
+    expect(wrapper.get('[data-testid=dynamic-bounds]').text()).toContain('$600.00')
+  })
   it.each([false, true])('shows the upstream reset outside details and follows refreshed data (compact=%s)', async compact => {
     const quota: DynamicSubscriptionQuota = { enabled: true, revision: 1, weight: 1, max_limit_usd: 600, cycle: 1, status: 'active', limit_usd: 600, used_usd: 180, reserved_usd: 0, remaining_usd: 420, started_at: '2026-09-01T01:00:00Z', updated_at: '', expected_reset_at: '2026-09-12T01:00:00Z' }
     const wrapper = mount(DynamicQuotaCard, { props: { quota, compact }, global: { plugins: [createI18n({ legacy: false, locale: 'zh', messages: { zh }, messageCompiler: message => () => String(message) })] } })
     const reset = wrapper.get('[data-testid="dynamic-reset"]')
     expect(reset.element.closest('details')).toBeNull()
-    expect(reset.text()).toContain('跟随绑定上游')
+    expect(reset.attributes('title')).toContain('跟随绑定上游')
     expect(reset.text()).toContain('待确认')
     expect(wrapper.findAll('time')).toHaveLength(1)
     expect(reset.get('time').attributes('datetime')).toBe(quota.expected_reset_at)
@@ -63,7 +73,7 @@ describe('upstream cycle display', () => {
     expect(wrapper.text()).toContain('最近实际调额')
     const stage = wrapper.get('[data-testid=dynamic-allocation-stage]')
     expect(stage.element.closest('details')).toBeNull()
-    expect(stage.get('time').attributes('datetime')).toBe('2026-09-08T01:00:00Z')
+    expect(stage.get('[data-testid=dynamic-allocated] time').attributes('datetime')).toBe('2026-09-08T01:00:00Z')
     expect(stage.text()).toContain('下次分配节点')
     expect(stage.get('time').attributes('datetime')).not.toBe(quota.synced_at) // Data sync is not allocation time.
     expect(wrapper.text()).toContain('最近数据同步')

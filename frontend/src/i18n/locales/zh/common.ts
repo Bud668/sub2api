@@ -1,6 +1,10 @@
 export default {
   dynamicQuota: {
     groupEnable: '此分组统一使用动态额度', groupSettings: '分组动态额度',
+    subscriptionType: '订阅（动态额度）', groupSetup: '尚未统一配置动态额度',
+    groupCreateHint: '创建后绑定上游账号，再设置分组动态额度；普通订阅统一继承，无需设置日／周／月限额。',
+    groupBillingHint: '标准计费使用用户余额；OpenAI 订阅使用分组动态额度。',
+    resetShort: '上游重置（待确认）',
     groupHint: '在分组统一设置，现有及新增普通订阅自动继承。每人的分配上限、下调保护和权重相同；生效后替代日／周／月额度，保留已用和在途。仅管理员调试订阅不参与分配。',
     groupMembers: '参与分配 {members} 人 · 管理员调试 {debug} 人',
     legacyMembers: '现有 {n} 条独立配置。保存分组后统一应用本页参数，保留已用量与周期；来源不一致时整批不保存。',
@@ -8,6 +12,9 @@ export default {
     adminDebugOnly: '调试订阅仅能分配给管理员账号，请关闭此开关或选择管理员。',
     initialAllocatedAt: '首次分配时间', notAllocated: '尚未自动分配', nextStage: '下次分配节点',
     stageAt: '上游用量达到 {percent}%', noNextStage: '本周期暂无下一节点',
+    stageShort: '下次 {percent}%', noNextStageShort: '暂无下一节点',
+    pendingStage: '{percent}% 节点待分配',
+    allocationWait: { budget_conflict: '下调保护合计超出当前估算预算，暂缓分配，保留原额度。', protection: '分配条件暂不满足，原额度保留；实际可用量仍受上游余量约束。', learning: '等待足够的有效学习样本，保留原额度。', guard: '等待上游数据校验通过，保留原额度。', awaiting_allocation: '等待后台完成本次分配。' },
     started: '本周期起点',
     changes: { initial: '首次按分配上限', bounds: '管理员调整边界', upstream_node: '上游达到 {percent}% 后重分配', reset: '上游确认重置后重新起步' },
     absorption: {

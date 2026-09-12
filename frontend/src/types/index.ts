@@ -2053,6 +2053,8 @@ export interface DynamicSubscriptionQuota {
   requested_enabled?: boolean
   activation_pending?: boolean
   next_adjustment_percent?: number
+  pending_adjustment_percent?: number
+  pending_adjustment_reason?: 'budget_conflict' | 'protection' | 'learning' | 'guard' | 'awaiting_allocation'
   allocation_budget_conflict?: boolean
   last_allocation_at?: string
   last_change?: { previous_usd: number; current_usd: number; node: number; reason: string; at: string }

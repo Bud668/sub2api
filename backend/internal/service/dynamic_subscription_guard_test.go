@@ -34,7 +34,7 @@ func TestDynamicQuotaFrozenTrustedBudgetAdmission(t *testing.T) {
 		o := dynamicTestObservation(4, 40, now.Add(6*24*time.Hour), now.Add(-time.Hour))
 		*p = DynamicQuotaPoolState{Cycle: 1, StartedAt: now.Add(-24 * time.Hour), Status: "active", CapacityUSD: 2000,
 			Snapshot: &o, SampleAnchor: &o, Health: dynamicQuotaHealth{Failures: 8},
-			V2: &DynamicQuotaV2State{CandidateUSD: 9000, CandidateSamples: 1}}
+			V2: &DynamicQuotaV2State{UnreservedCapacity: true, CandidateUSD: 9000, CandidateSamples: 1}}
 	})
 	q, err := s.Load(ctx, 11)
 	require.NoError(t, err)

@@ -1,6 +1,6 @@
 <template>
   <AppLayout>
-    <TablePageLayout>
+    <TablePageLayout class="subscription-page">
       <template #filters>
         <!-- Top Toolbar: Left (search + filters) / Right (actions) -->
         <div class="flex flex-wrap items-start justify-between gap-4">
@@ -172,6 +172,8 @@
       <!-- Subscriptions Table -->
       <template #table>
         <DataTable
+          class="subscription-list"
+          card-layout
           :columns="columns"
           :data="subscriptions"
           :card-style="row => ({ ...subscriptionBorderStyle(row), borderWidth: '2px' })"
@@ -182,9 +184,9 @@
           @sort="handleSort"
         >
           <template #cell-user="{ row }">
-            <div class="flex items-center gap-2">
+            <div class="flex min-w-0 items-center gap-2">
               <div
-                class="flex h-8 w-8 items-center justify-center rounded-full bg-primary-100 dark:bg-primary-900/30"
+                class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary-100 dark:bg-primary-900/30"
               >
                 <span class="text-sm font-medium text-primary-700 dark:text-primary-300">
                   {{ userColumnMode === 'email'
@@ -195,7 +197,7 @@
               </div>
               <RouterLink
                 :to="{ path: '/admin/usage', query: { user_id: row.user_id } }"
-                class="rounded font-medium text-gray-900 hover:text-primary-600 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:text-white dark:hover:text-primary-400 dark:focus-visible:ring-offset-dark-800"
+                class="min-w-0 break-all rounded font-medium text-gray-900 hover:text-primary-600 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:text-white dark:hover:text-primary-400 dark:focus-visible:ring-offset-dark-800"
               >
                 {{ userColumnMode === 'email'
                   ? (row.user?.email || t('admin.redeem.userPrefix', { id: row.user_id }))
@@ -218,7 +220,7 @@
           </template>
 
           <template #cell-usage="{ row }">
-            <div class="min-w-[280px] space-y-2" :class="!row.dynamic_quota?.enabled ? 'rounded-xl border-2 p-3' : ''" :style="!row.dynamic_quota?.enabled ? subscriptionBorderStyle(row) : undefined" :data-testid="!row.dynamic_quota?.enabled ? 'subscription-card' : undefined">
+            <div class="subscription-usage space-y-2" :style="subscriptionBorderStyle(row)" :data-testid="!row.dynamic_quota?.enabled ? 'subscription-card' : undefined">
               <!-- Daily Usage -->
               <div v-if="!row.dynamic_quota?.enabled && row.group?.daily_limit_usd" class="usage-row">
                 <div class="flex items-center gap-2">
@@ -257,7 +259,7 @@
               </div>
 
               <!-- Weekly Usage -->
-              <DynamicQuotaCard v-if="row.dynamic_quota?.enabled" :quota="row.dynamic_quota" compact class="border-2" :style="subscriptionBorderStyle(row)" data-testid="subscription-card" />
+              <DynamicQuotaCard v-if="row.dynamic_quota?.enabled" :quota="row.dynamic_quota" compact class="border-0" :style="subscriptionBorderStyle(row)" data-testid="subscription-card" />
               <div v-else-if="row.group?.weekly_limit_usd" class="usage-row">
                 <div class="flex items-center gap-2">
                   <span class="usage-label">{{ t('admin.subscriptions.weekly') }}</span>
@@ -390,13 +392,13 @@
           </template>
 
           <template #cell-actions="{ row }">
-            <div class="flex items-center gap-1">
+            <div class="flex flex-wrap items-center gap-1">
               <span v-if="row.admin_debug" class="rounded-md bg-violet-50 px-2 py-1 text-xs font-medium text-violet-700 dark:bg-violet-900/20 dark:text-violet-300">{{ t('dynamicQuota.adminDebug') }}</span>
-              <RouterLink v-else-if="row.group?.platform === 'openai'" to="/admin/groups" class="btn btn-secondary text-xs">{{ t('dynamicQuota.groupSettings') }}</RouterLink>
+              <RouterLink v-else-if="row.group?.platform === 'openai'" to="/admin/groups" class="rounded-lg border border-gray-200 px-2 py-1.5 text-xs text-gray-600 hover:bg-gray-50 focus-visible:ring-2 focus-visible:ring-primary-500 dark:border-dark-600 dark:text-gray-300 dark:hover:bg-dark-700">{{ t('dynamicQuota.groupSettings') }}</RouterLink>
               <button
                 v-if="row.status === 'active' || row.status === 'expired'"
                 @click="handleExtend(row)"
-                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-blue-900/20 dark:hover:text-blue-400"
+                class="inline-flex items-center gap-1 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-blue-900/20 dark:hover:text-blue-400"
               >
                 <Icon name="calendar" size="sm" />
                 <span class="text-xs">{{ t('admin.subscriptions.adjust') }}</span>
@@ -405,7 +407,7 @@
                 v-if="row.status === 'active'"
                 @click="handleResetQuota(row)"
                 :disabled="resettingQuota && resettingSubscription?.id === row.id"
-                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-orange-50 hover:text-orange-600 dark:hover:bg-orange-900/20 dark:hover:text-orange-400 disabled:cursor-not-allowed disabled:opacity-50"
+                class="inline-flex items-center gap-1 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-orange-50 hover:text-orange-600 dark:hover:bg-orange-900/20 dark:hover:text-orange-400 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <Icon name="refresh" size="sm" />
                 <span class="text-xs">{{ t('admin.subscriptions.resetQuota') }}</span>
@@ -413,7 +415,7 @@
               <button
                 v-if="row.status === 'active'"
                 @click="handleRevoke(row)"
-                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400"
+                class="inline-flex items-center gap-1 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400"
               >
                 <Icon name="ban" size="sm" />
                 <span class="text-xs">{{ t('admin.subscriptions.revoke') }}</span>
@@ -421,7 +423,7 @@
               <button
                 v-if="row.status === 'revoked'"
                 @click="handleRestore(row)"
-                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-green-50 hover:text-green-600 dark:hover:bg-green-900/20 dark:hover:text-green-400"
+                class="inline-flex items-center gap-1 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-green-50 hover:text-green-600 dark:hover:bg-green-900/20 dark:hover:text-green-400"
               >
                 <Icon name="refresh" size="sm" />
                 <span class="text-xs">{{ t('admin.subscriptions.restore') }}</span>
@@ -1498,6 +1500,38 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+.subscription-list { container-type: inline-size; overflow-y: auto; padding: 0.25rem; width: 100%; max-width: 90rem; margin-inline: auto; }
+.subscription-page { gap: 1rem; }
+.subscription-page :deep(.table-scroll-container) { background: transparent; border: 0; box-shadow: none; }
+.subscription-usage { width: 100%; min-width: 0; }
+:deep(.subscription-list [data-table-card]) { padding: 0.75rem; }
+:deep(.subscription-list [data-table-card] > div) { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.5rem 1rem; align-items: start; }
+:deep(.subscription-list [data-field]) { min-width: 0; margin: 0; gap: 0.25rem; flex-wrap: wrap; }
+:deep(.subscription-list [data-field] > div) { text-align: left; }
+:deep(.subscription-list [data-field="user"]),
+:deep(.subscription-list [data-field="usage"]),
+:deep(.subscription-list [data-field="actions"]) { grid-column: 1 / -1; }
+:deep(.subscription-list [data-field="user"] > span),
+:deep(.subscription-list [data-field="group"] > span),
+:deep(.subscription-list [data-field="usage"] > span) { display: none; }
+:deep(.subscription-list [data-field="usage"]) { display: block; }
+:deep(.subscription-list [data-field="usage"] > div) { width: 100%; }
+:deep(.subscription-list [data-field="expires_at"]) { grid-column: 1 / -1; }
+:deep(.subscription-list [data-field="actions"]) { padding-top: 0.5rem; }
+@container (min-width: 52rem) {
+  :deep(.subscription-list [data-table-card] > div) {
+    grid-template-columns: minmax(15rem, 1fr) minmax(0, 3fr) minmax(8rem, 0.8fr);
+    grid-template-areas: 'user usage status' 'group usage expires' 'actions usage expires';
+    row-gap: 0.25rem;
+  }
+  :deep(.subscription-list [data-field="user"]) { grid-area: user; }
+  :deep(.subscription-list [data-field="group"]) { grid-area: group; }
+  :deep(.subscription-list [data-field="usage"]) { grid-area: usage; }
+  :deep(.subscription-list [data-field="status"]) { grid-area: status; }
+  :deep(.subscription-list [data-field="expires_at"]) { grid-area: expires; display: block; }
+  :deep(.subscription-list [data-field="actions"]) { grid-area: actions; border: 0; padding-top: 0; }
+}
+
 .usage-row {
   @apply space-y-1;
 }

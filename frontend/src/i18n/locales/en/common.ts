@@ -1,6 +1,10 @@
 export default {
   dynamicQuota: {
     groupEnable: 'Use dynamic quota for this group', groupSettings: 'Group dynamic quota',
+    subscriptionType: 'Subscription (Dynamic quota)', groupSetup: 'Group dynamic quota not configured',
+    groupCreateHint: 'After creating the group, attach an upstream account and configure dynamic quota. Ordinary subscriptions inherit it; no daily, weekly or monthly limits are needed.',
+    groupBillingHint: 'Standard billing uses the user balance; OpenAI subscriptions use group dynamic quota.',
+    resetShort: 'Upstream reset (unconfirmed)',
     groupHint: 'Configure once for existing and new regular subscriptions. Each inherits the same cap, downward protection and weight. Effective dynamic quotas replace daily, weekly and monthly limits while preserving usage and holds. Only administrator debug subscriptions are excluded.',
     groupMembers: '{members} participants · {debug} administrator debug subscriptions',
     legacyMembers: '{n} individual policies exist. Saving applies these group settings together while preserving usage and cycles. Conflicting sources reject the entire save.',
@@ -8,6 +12,9 @@ export default {
     adminDebugOnly: 'Debug subscriptions require an administrator account. Disable this switch or choose an administrator.',
     initialAllocatedAt: 'Initial allocation', notAllocated: 'No automatic allocation yet', nextStage: 'Next allocation milestone',
     stageAt: 'Upstream usage reaches {percent}%', noNextStage: 'No further milestone this cycle',
+    stageShort: 'Next {percent}%', noNextStageShort: 'No next milestone',
+    pendingStage: '{percent}% allocation pending',
+    allocationWait: { budget_conflict: 'Downward protections exceed the estimated budget. Allocation is deferred; existing allowances remain.', protection: 'Allocation conditions are not met. Existing allowances remain; real upstream capacity still limits availability.', learning: 'Waiting for enough valid learning evidence. Existing allowances remain.', guard: 'Waiting for upstream data verification. Existing allowances remain.', awaiting_allocation: 'Waiting for the background allocation to complete.' },
     started: 'Cycle started',
     changes: { initial: 'Initial allocation cap', bounds: 'Operator changed bounds', upstream_node: 'Upstream reached {percent}%', reset: 'Verified upstream reset' },
     absorption: {

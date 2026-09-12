@@ -177,14 +177,16 @@
               >
                 {{
                   row.subscription_type === "subscription"
-                    ? t("admin.groups.subscription.subscription")
+                    ? t(row.platform === 'openai' ? 'dynamicQuota.subscriptionType' : 'admin.groups.subscription.subscription')
                     : t("admin.groups.subscription.standard")
                 }}
               </span>
               <!-- Subscription Limits - compact single line -->
-              <div v-if="dynamicPolicies.get(row.id)?.enabled" class="text-xs text-primary-700 dark:text-primary-300">
-                {{ t('dynamicQuota.groupSettings') }} · {{ t('dynamicQuota.cap') }} {{ formatUsd(dynamicPolicies.get(row.id)!.max_limit_usd) }}
+              <div v-if="dynamicPolicies.get(row.id)?.enabled" class="flex flex-wrap gap-x-2 gap-y-1 text-xs text-primary-700 dark:text-primary-300" data-testid="group-dynamic-bounds">
+                <span>{{ t('dynamicQuota.floor') }} {{ formatUsd(dynamicPolicies.get(row.id)!.floor_limit_usd ?? 0) }}</span>
+                <span>{{ t('dynamicQuota.cap') }} {{ formatUsd(dynamicPolicies.get(row.id)!.max_limit_usd) }}</span>
               </div>
+              <p v-else-if="row.platform === 'openai' && row.subscription_type === 'subscription'" class="text-xs text-gray-500 dark:text-gray-400">{{ t('dynamicQuota.groupSetup') }}</p>
               <div
                 v-else-if="row.subscription_type === 'subscription'"
                 class="space-y-0.5 text-xs text-gray-500 dark:text-gray-400"
@@ -716,16 +718,17 @@
             }}</label>
             <Select
               v-model="createForm.subscription_type"
-              :options="subscriptionTypeOptions"
+              :options="subscriptionTypeOptions(createForm.platform)"
             />
             <p class="input-hint">
-              {{ t("admin.groups.subscription.typeHint") }}
+              {{ t(createForm.platform === 'openai' ? 'dynamicQuota.groupBillingHint' : 'admin.groups.subscription.typeHint') }}
             </p>
           </div>
 
-          <!-- Subscription limits (only show when subscription type is selected) -->
+          <p v-if="createForm.platform === 'openai' && createForm.subscription_type === 'subscription'" class="mt-3 rounded-lg bg-primary-50 p-3 text-sm text-primary-800 dark:bg-primary-900/20 dark:text-primary-200">{{ t('dynamicQuota.groupCreateHint') }}</p>
+          <!-- Native quota inputs only apply to platforms without dynamic allocation. -->
           <div
-            v-if="createForm.subscription_type === 'subscription'"
+            v-if="createForm.subscription_type === 'subscription' && createForm.platform !== 'openai'"
             class="space-y-4 border-l-2 border-primary-200 pl-4 dark:border-primary-800"
           >
             <div>
@@ -2356,7 +2359,7 @@
             }}</label>
             <Select
               v-model="editForm.subscription_type"
-              :options="subscriptionTypeOptions"
+              :options="subscriptionTypeOptions(editForm.platform)"
               :disabled="true"
             />
             <p class="input-hint">
@@ -2370,7 +2373,7 @@
             <button type="button" class="btn btn-primary" @click="dynamicGroup = editingGroup">{{ t('dynamicQuota.groupSettings') }}</button>
           </div>
           <div
-            v-if="editForm.subscription_type === 'subscription' && !dynamicPolicies.get(editingGroup?.id || 0)?.enabled"
+            v-if="editForm.subscription_type === 'subscription' && editForm.platform !== 'openai' && !dynamicPolicies.get(editingGroup?.id || 0)?.enabled"
             class="space-y-4 border-l-2 border-primary-200 pl-4 dark:border-primary-800"
           >
             <div>
@@ -4289,6 +4292,7 @@ import type {
   CompositeRouteEndpoint,
   CompositeRouteMatchType,
   GroupPlatform,
+  UpdateGroupRequest,
   SubscriptionType,
 } from "@/types";
 import {
@@ -4663,10 +4667,10 @@ const editStatusOptions = computed(() => [
   { value: "inactive", label: t("admin.accounts.status.inactive") },
 ]);
 
-const subscriptionTypeOptions = computed(() => [
+const subscriptionTypeOptions = (platform: GroupPlatform) => [
   { value: "standard", label: t("admin.groups.subscription.standard") },
-  { value: "subscription", label: t("admin.groups.subscription.subscription") },
-]);
+  { value: "subscription", label: t(platform === 'openai' ? 'dynamicQuota.subscriptionType' : 'admin.groups.subscription.subscription') },
+];
 
 // 降级分组选项（创建时）- 仅包含 anthropic 平台且未启用 claude_code_only 的分组
 const fallbackGroupOptions = computed(() => {
@@ -5975,6 +5979,11 @@ const handleCreateGroup = async () => {
     requestData.daily_limit_usd = emptyToNull(requestData.daily_limit_usd);
     requestData.weekly_limit_usd = emptyToNull(requestData.weekly_limit_usd);
     requestData.monthly_limit_usd = emptyToNull(requestData.monthly_limit_usd);
+    if (createForm.platform === 'openai') {
+      requestData.daily_limit_usd = null;
+      requestData.weekly_limit_usd = null;
+      requestData.monthly_limit_usd = null;
+    }
     requestData.image_rate_multiplier = normalizeRateMultiplier(
       requestData.image_rate_multiplier,
     );
@@ -6024,9 +6033,10 @@ const handleCreateGroup = async () => {
           platform: createForm.platform,
         }
       : requestData;
-    await adminAPI.groups.create(payload);
+    const created = await adminAPI.groups.create(payload);
     appStore.showSuccess(t("admin.groups.groupCreated"));
     closeCreateModal();
+    if (!authStore.isSimpleMode && created.platform === 'openai' && created.subscription_type === 'subscription') dynamicGroup.value = created;
     loadGroups();
     // Only advance tour if active, on submit step, and creation succeeded
     if (onboardingStore.isCurrentStep('[data-tour="group-form-submit"]')) {
@@ -6367,12 +6377,18 @@ const handleUpdateGroup = async () => {
     payload.peak_rate_multiplier = normalizeRateMultiplier(
       editForm.peak_rate_multiplier,
     );
-    const requestData = authStore.isSimpleMode
+    const requestData: UpdateGroupRequest = authStore.isSimpleMode
       ? {
           name: editForm.name,
           description: editForm.description,
         }
       : payload;
+    // Hidden fields must not overwrite existing limits while editing other settings.
+    if (editForm.platform === 'openai') {
+      delete requestData.daily_limit_usd;
+      delete requestData.weekly_limit_usd;
+      delete requestData.monthly_limit_usd;
+    }
     await adminAPI.groups.update(editingGroup.value.id, requestData);
     appStore.showSuccess(t("admin.groups.groupUpdated"));
     closeEditModal();

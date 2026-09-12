@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"testing"
@@ -20,6 +21,94 @@ func saveDynamicV2(t *testing.T, s *DynamicSubscriptionService, id, source int64
 	}
 	require.NoError(t, s.Save(context.Background(), id, DynamicSubscriptionInput{Enabled: enabled, Revision: revision,
 		AccountID: source, Weight: 1, MaxLimitUSD: cap, FloorLimitUSD: &floor}))
+}
+
+func TestDynamicQuotaV2PassedNodeShowsPendingReasonWithoutGranting(t *testing.T) {
+	s, db := dynamicTestStore(t)
+	ctx := context.Background()
+	saveDynamicV2(t, s, 11, 4, true, 600, 400)
+	now := time.Now().UTC()
+	observation := dynamicTestObservation(4, 36, now.Add(6*24*time.Hour), now.Add(-2*time.Minute))
+	s.fetch = func(context.Context, int64) (DynamicQuotaObservation, error) { return observation, nil }
+	require.NoError(t, s.Refresh(ctx, 4))
+	var raw []byte
+	require.NoError(t, db.QueryRow(`SELECT state FROM dynamic_quota_pools WHERE account_id=4`).Scan(&raw))
+	var pool DynamicQuotaPoolState
+	require.NoError(t, json.Unmarshal(raw, &pool))
+	pool.Snapshot.UsedPercent, pool.Snapshot.FetchedAt = 46, now
+	pool.Status, pool.CapacityUSD = "active", 1209.4021872
+	pool.V2.SampleAt, pool.V2.BudgetConflict = now, true
+	raw, err := json.Marshal(pool)
+	require.NoError(t, err)
+	dynamicExec(t, db, `UPDATE dynamic_quota_pools SET state=$1::jsonb WHERE account_id=4`, string(raw))
+	for range 2 {
+		q, err := s.Load(ctx, 11)
+		require.NoError(t, err)
+		require.Equal(t, 40, q.PendingAdjustmentPercent)
+		require.Equal(t, "budget_conflict", q.PendingAdjustmentReason)
+		require.Equal(t, 50, q.NextAdjustmentPercent)
+		require.Equal(t, 600.0, q.LimitUSD)
+		require.Equal(t, 20.0, q.UsedUSD)
+		require.Equal(t, "protection", q.Public().PendingAdjustmentReason)
+		require.Zero(t, q.Public().CapacityEstimateUSD)
+	}
+	var after []byte
+	require.NoError(t, db.QueryRow(`SELECT state FROM dynamic_quota_pools WHERE account_id=4`).Scan(&after))
+	require.JSONEq(t, string(raw), string(after), "viewing a passed milestone never marks it allocated")
+	pool.V2.BudgetConflict = false
+	pool.V2.SampleAt = time.Time{}
+	raw, err = json.Marshal(pool)
+	require.NoError(t, err)
+	dynamicExec(t, db, `UPDATE dynamic_quota_pools SET state=$1::jsonb WHERE account_id=4`, string(raw))
+	q, err := s.Load(ctx, 11)
+	require.NoError(t, err)
+	require.Equal(t, "learning", q.PendingAdjustmentReason)
+	require.Equal(t, 50, q.NextAdjustmentPercent)
+}
+
+func TestDynamicQuotaV2ExistingEvidenceLosesReserveExactlyOnce(t *testing.T) {
+	s, db := dynamicTestStore(t)
+	ctx := context.Background()
+	saveDynamicV2(t, s, 11, 4, true, 600, 100)
+	now := time.Now().UTC()
+	s.fetch = func(context.Context, int64) (DynamicQuotaObservation, error) {
+		return dynamicTestObservation(4, 40, now.Add(6*24*time.Hour), now), nil
+	}
+	require.NoError(t, s.Refresh(ctx, 4))
+	updateDynamicGuardPool(t, db, 4, func(p *DynamicQuotaPoolState) {
+		p.CapacityUSD, p.Status = 1350, "active"
+		p.Samples = []float64{1350, 1440}
+		p.V2.UnreservedCapacity = false // Persisted by a release using the old 0.9 factor.
+		p.V2.CandidateUSD, p.V2.CandidateSamples = 2700, 1
+	})
+	dynamicExec(t, db, `UPDATE accounts SET extra='{"auto_pause_7d_threshold":0.99}' WHERE id=4`)
+	var before, after []byte
+	require.NoError(t, db.QueryRow(`SELECT state FROM dynamic_quota_pools WHERE account_id=4`).Scan(&before))
+	for range 2 {
+		q, err := s.Load(ctx, 11)
+		require.NoError(t, err)
+		require.InDelta(t, 1500, q.CapacityEstimateUSD, 1e-8)
+		require.InDelta(t, 3000, q.pool.V2.CandidateUSD, 1e-8)
+		require.Equal(t, []float64{1500, 1600}, q.pool.Samples)
+		require.Equal(t, 1, q.pool.V2.CandidateSamples, "conversion does not approve an anomalous estimate")
+		require.True(t, q.GrowthFrozen)
+		require.Equal(t, 600.0, q.LimitUSD)
+		require.Equal(t, 20.0, q.UsedUSD)
+		require.Equal(t, int64(1), q.Cycle)
+		require.InDelta(t, 885, q.pool.Available(now, 0, 0), 1e-8)
+	}
+	require.NoError(t, db.QueryRow(`SELECT state FROM dynamic_quota_pools WHERE account_id=4`).Scan(&after))
+	require.JSONEq(t, string(before), string(after), "viewing the card does not rewrite persisted evidence")
+	for range 2 {
+		tx, err := db.BeginTx(ctx, nil)
+		require.NoError(t, err)
+		pool, err := lockDynamicPool(ctx, tx, 4)
+		require.NoError(t, err)
+		require.True(t, pool.V2.UnreservedCapacity)
+		require.InDelta(t, 1500, pool.CapacityUSD, 1e-8)
+		require.NoError(t, writeDynamicPool(ctx, tx, 4, pool))
+		require.NoError(t, tx.Commit())
+	}
 }
 
 func TestDynamicQuotaV2SaveDoesNotWaitForNetworkOrOldRequests(t *testing.T) {
@@ -133,7 +222,7 @@ func TestDynamicQuotaV2NodePublishesOnceAndResetIsSourceScoped(t *testing.T) {
 	for _, id := range []int64{11, 12} {
 		q, err := s.Load(ctx, id)
 		require.NoError(t, err)
-		require.InDelta(t, 335, q.LimitUSD, 1e-7)
+		require.InDelta(t, 370, q.LimitUSD, 1e-7)
 		require.Equal(t, 20.0, q.UsedUSD)
 		require.Equal(t, 40, q.NextAdjustmentPercent)
 		require.Equal(t, "upstream_node", q.LastChange.Reason)
@@ -367,7 +456,7 @@ func TestDynamicQuotaV2SpikeCannotRefillAnExhaustedUser(t *testing.T) {
 		q, err := s.Load(ctx, 11)
 		require.NoError(t, err)
 		require.Equal(t, 1000.0, q.CapacityEstimateUSD)
-		require.InDelta(t, 9000, q.pool.V2.CandidateUSD, 1e-8)
+		require.InDelta(t, 10000, q.pool.V2.CandidateUSD, 1e-8)
 		require.Equal(t, 1, q.pool.V2.CandidateSamples)
 		require.Zero(t, q.RemainingUSD)
 		_, err = s.Begin(ctx, 101, 4)
