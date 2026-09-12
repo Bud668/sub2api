@@ -9,7 +9,16 @@
       </div>
       <dl class="quota-amounts grid grid-cols-3 gap-4 rounded-xl bg-gray-50 p-3 tabular-nums dark:bg-dark-800/60" data-testid="dynamic-allocation-stage">
         <div class="min-w-0" data-testid="dynamic-allocated">
-          <dt class="text-xs text-gray-500 dark:text-gray-400">{{ t('dynamicQuota.limit') }}</dt>
+          <dt class="flex flex-wrap items-center justify-between gap-2 text-xs text-gray-500 dark:text-gray-400">
+            <span>{{ t('dynamicQuota.limit') }}</span>
+            <span
+              class="inline-flex rounded-md bg-primary-100/70 px-2 py-0.5 text-xs font-medium leading-4 text-primary-700 outline-offset-2 dark:bg-primary-900/40 dark:text-primary-200"
+              data-testid="dynamic-next-adjustment"
+              tabindex="0"
+              :title="quota.next_adjustment_percent ? t('dynamicQuota.stageAt', { percent: quota.next_adjustment_percent }) : t('dynamicQuota.noNextStage')"
+              :aria-label="quota.next_adjustment_percent ? t('dynamicQuota.stageAt', { percent: quota.next_adjustment_percent }) : t('dynamicQuota.noNextStage')"
+            >{{ quota.next_adjustment_percent ? t('dynamicQuota.stageShort', { percent: quota.next_adjustment_percent }) : t('dynamicQuota.noNextStageShort') }}</span>
+          </dt>
           <dd class="quota-amount mt-1 break-words text-lg font-semibold tracking-tight">{{ usd(quota.limit_usd) }}</dd>
           <dd class="mt-2 flex flex-wrap items-start gap-1 text-xs leading-4 text-gray-500 dark:text-gray-400" :title="`${allocationLabel}: ${allocationTime ? date(quota.last_allocation_at) : t('dynamicQuota.notAllocated')}`">
             <Icon name="refresh" size="xs" class="mt-0.5 shrink-0" aria-hidden="true" />
@@ -26,10 +35,6 @@
         <div class="min-w-0" data-testid="dynamic-remaining">
           <dt class="text-xs text-gray-500 dark:text-gray-400">{{ t('dynamicQuota.remaining') }}</dt>
           <dd class="quota-amount mt-1 break-words text-lg font-semibold tracking-tight text-primary-700 dark:text-primary-300">{{ usd(quota.remaining_usd) }}</dd>
-          <dd class="mt-2 flex items-start gap-1 text-xs leading-4 text-gray-500 dark:text-gray-400" :title="quota.next_adjustment_percent ? t('dynamicQuota.stageAt', { percent: quota.next_adjustment_percent }) : t('dynamicQuota.noNextStage')">
-            <Icon name="refresh" size="xs" class="mt-0.5 shrink-0" aria-hidden="true" />
-            <span>{{ quota.next_adjustment_percent ? t('dynamicQuota.stageShort', { percent: quota.next_adjustment_percent }) : t('dynamicQuota.noNextStageShort') }}</span>
-          </dd>
         </div>
       </dl>
       <div class="quota-progress my-3 h-2 overflow-hidden rounded-full bg-gray-200 dark:bg-dark-600" role="progressbar" :aria-label="t('dynamicQuota.used')" :aria-valuenow="percentage" aria-valuemin="0" aria-valuemax="100">
@@ -106,6 +111,9 @@ const date = (value?: string) => formatDateTimeToMinute(value, locale.value) || 
 
 <style scoped>
 .quota-card { container-type: inline-size; }
+.quota-amounts { grid-template-rows: auto auto auto; row-gap: 0; }
+.quota-amounts > div { display: grid; grid-row: span 3; grid-template-rows: subgrid; }
+.quota-amounts dt { align-self: center; }
 .quota-amount { line-height: 1.75rem; }
 .quota-main-compact {
   display: grid;
@@ -124,9 +132,7 @@ const date = (value?: string) => formatDateTimeToMinute(value, locale.value) || 
 }
 @container (max-width: 32rem) {
   .quota-main-compact { grid-template-columns: minmax(0, 1fr); grid-template-areas: 'amounts' 'progress' 'heading' 'footer'; row-gap: 0.5rem; }
-}
-@container (max-width: 22rem) {
-  .quota-amounts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  [data-testid="dynamic-remaining"] { grid-column: 1 / -1; grid-row: 1; }
+  .quota-amounts { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 0.5rem; }
+  [data-testid="dynamic-allocated"] { grid-column: 1 / -1; }
 }
 </style>

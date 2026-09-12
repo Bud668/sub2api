@@ -30,6 +30,10 @@ const {
 
 const authState = vi.hoisted(() => ({ isSimpleMode: false }))
 
+vi.mock('@/api/modelPolicy', () => ({
+  getMyModelPolicy: async () => ({ enabled: false })
+}))
+
 vi.mock('@/api/admin', () => ({
   adminAPI: {
     groups: {
@@ -246,21 +250,27 @@ describe('GroupsView duplicate action', () => {
     wrapper.unmount()
   })
 
-  it('shows group dynamic settings and replaces the fixed quota editor when enabled', async () => {
-    const group = { ...sourceGroup, subscription_type: 'subscription', daily_limit_usd: 50, weekly_limit_usd: 100, monthly_limit_usd: 200 }
+  it.each(['openai', 'anthropic'] as const)('removes the old quota editor without clearing stored limits for %s', async platform => {
+    const group = { ...sourceGroup, platform, subscription_type: 'subscription', daily_limit_usd: 50, weekly_limit_usd: 100, monthly_limit_usd: 200 }
     listGroups.mockResolvedValueOnce({ items: [group], total: 1, page: 1, page_size: 20, pages: 1 })
-    vi.mocked(adminAPI.groups.getDynamicQuotas).mockResolvedValueOnce([{ group_id: 42, account_id: 4, enabled: true, revision: 1, weight: 1, max_limit_usd: 600, floor_limit_usd: 200 }])
+    vi.mocked(adminAPI.groups.getDynamicQuotas).mockResolvedValueOnce(platform === 'openai' ? [{ group_id: 42, account_id: 4, enabled: true, revision: 1, weight: 1, max_limit_usd: 600, floor_limit_usd: 200 }] : [])
     const wrapper = mountView()
     await flushPromises()
-    expect(wrapper.text()).toContain('dynamicQuota.groupSettings')
+    if (platform === 'openai') expect(wrapper.text()).toContain('dynamicQuota.groupSettings')
     const editButton = wrapper.findAll('button').find(button => button.text() === 'common.edit')!
     await editButton.trigger('click')
     await flushPromises()
     const form = wrapper.get('#edit-group-form')
-    expect(form.text()).toContain('dynamicQuota.groupHint')
+    if (platform === 'openai') expect(form.text()).toContain('dynamicQuota.groupHint')
     expect(form.text()).not.toContain('admin.groups.subscription.dailyLimit')
     expect(form.text()).not.toContain('admin.groups.subscription.weeklyLimit')
     expect(form.text()).not.toContain('admin.groups.subscription.monthlyLimit')
+    await form.trigger('submit')
+    await flushPromises()
+    expect(updateGroup).toHaveBeenCalledTimes(1)
+    const payload = updateGroup.mock.calls[0][1]
+    for (const key of ['daily_limit_usd', 'weekly_limit_usd', 'monthly_limit_usd']) expect(Object.hasOwn(payload, key)).toBe(false)
+    expect(payload.subscription_type).toBe('subscription')
     wrapper.unmount()
   })
 

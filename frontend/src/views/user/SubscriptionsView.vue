@@ -80,10 +80,18 @@
                 {{ t('payment.renewNow') }}
               </button>
             </div>
-            <div class="w-full text-xs text-gray-500 dark:text-gray-400">
-              <span>{{ t('userSubscriptions.expires') }} · </span>
-              <span v-if="subscription.expires_at" :class="getExpirationClass(subscription.expires_at)">{{ formatExpirationDate(subscription.expires_at) }}</span>
-              <span v-else>{{ t('userSubscriptions.noExpiration') }}</span>
+            <div class="mt-1 w-full rounded-xl border border-gray-200/70 bg-gray-50 px-3 py-2.5 dark:border-dark-600 dark:bg-dark-900/50" data-testid="user-subscription-expiry">
+              <div class="mb-1.5 flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
+                <Icon name="calendar" size="sm" aria-hidden="true" />
+                <span>{{ t('userSubscriptions.expires') }}</span>
+              </div>
+              <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
+                <template v-if="subscription.expires_at">
+                  <time :datetime="subscription.expires_at" class="text-base font-semibold leading-6 tabular-nums text-gray-900 dark:text-gray-100">{{ formatDateTimeToMinute(subscription.expires_at) || '—' }}</time>
+                  <span class="rounded-md px-2 py-1 text-xs font-medium" :class="getExpirationClass(subscription.expires_at)">{{ formatExpirationRemaining(subscription.expires_at) }}</span>
+                </template>
+                <span v-else class="text-base font-semibold text-gray-900 dark:text-gray-100">{{ t('userSubscriptions.noExpiration') }}</span>
+              </div>
             </div>
           </div>
 
@@ -309,7 +317,7 @@ function getProgressBarClass(used: number | undefined, limit: number | null | un
   return 'bg-green-500'
 }
 
-function formatExpirationDate(expiresAt: string): string {
+function formatExpirationRemaining(expiresAt: string): string {
   const now = new Date()
   const expires = new Date(expiresAt)
   const diff = expires.getTime() - now.getTime()
@@ -322,16 +330,14 @@ function formatExpirationDate(expiresAt: string): string {
     return t('userSubscriptions.status.expired')
   }
 
-  const dateStr = formatDateTimeToMinute(expires)
-
   if (relation === 'today') {
-    return `${dateStr} (${t('common.today')})`
+    return t('common.today')
   }
   if (relation === 'tomorrow') {
-    return `${dateStr} (${t('common.tomorrow')})`
+    return t('common.tomorrow')
   }
 
-  return t('userSubscriptions.daysRemaining', { days }) + ` (${dateStr})`
+  return t('userSubscriptions.daysRemaining', { days })
 }
 
 function getExpirationClass(expiresAt: string): string {
@@ -340,10 +346,9 @@ function getExpirationClass(expiresAt: string): string {
   const diff = expires.getTime() - now.getTime()
   const days = Math.ceil(diff / (1000 * 60 * 60 * 24))
 
-  if (diff <= 0) return 'text-red-600 dark:text-red-400 font-medium'
-  if (days <= 3) return 'text-red-600 dark:text-red-400'
-  if (days <= 7) return 'text-orange-600 dark:text-orange-400'
-  return 'text-gray-700 dark:text-gray-300'
+  if (days <= 3) return 'bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-300'
+  if (days <= 7) return 'bg-orange-50 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300'
+  return 'bg-gray-200/60 text-gray-700 dark:bg-dark-600 dark:text-gray-200'
 }
 
 function formatDurationParts(parts: RemainingDurationParts): string {

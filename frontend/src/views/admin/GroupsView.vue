@@ -187,80 +187,6 @@
                 <span>{{ t('dynamicQuota.cap') }} {{ formatUsd(dynamicPolicies.get(row.id)!.max_limit_usd) }}</span>
               </div>
               <p v-else-if="row.platform === 'openai' && row.subscription_type === 'subscription'" class="text-xs text-gray-500 dark:text-gray-400">{{ t('dynamicQuota.groupSetup') }}</p>
-              <div
-                v-else-if="row.subscription_type === 'subscription'"
-                class="space-y-0.5 text-xs text-gray-500 dark:text-gray-400"
-              >
-                <div
-                  v-if="
-                    row.daily_limit_usd ||
-                    row.weekly_limit_usd ||
-                    row.monthly_limit_usd
-                  "
-                  class="flex flex-wrap items-center gap-x-1 gap-y-0.5"
-                >
-                  <span v-if="row.daily_limit_usd" class="whitespace-nowrap">
-                    <span
-                      v-if="usageLoading"
-                      class="font-medium text-gray-400 dark:text-gray-500"
-                      >—</span
-                    >
-                    <span
-                      v-else
-                      :class="
-                        getQuotaUsageClass(
-                          usageMap.get(row.id)?.today_cost ?? 0,
-                          row.daily_limit_usd
-                        )
-                      "
-                      >{{
-                        formatUsd(usageMap.get(row.id)?.today_cost ?? 0)
-                      }}</span
-                    >
-                    <span class="text-gray-400 dark:text-gray-500">
-                      / {{ formatUsd(row.daily_limit_usd) }}/{{
-                        t("admin.groups.limitDay")
-                      }}</span
-                    >
-                  </span>
-                  <span
-                    v-if="
-                      row.daily_limit_usd &&
-                      (row.weekly_limit_usd || row.monthly_limit_usd)
-                    "
-                    class="mx-1 text-gray-300 dark:text-gray-600"
-                    >·</span
-                  >
-                  <span v-if="row.weekly_limit_usd" class="whitespace-nowrap"
-                    >{{ formatUsd(row.weekly_limit_usd) }}/{{
-                      t("admin.groups.limitWeek")
-                    }}</span
-                  >
-                  <span
-                    v-if="row.weekly_limit_usd && row.monthly_limit_usd"
-                    class="mx-1 text-gray-300 dark:text-gray-600"
-                    >·</span
-                  >
-                  <span v-if="row.monthly_limit_usd" class="whitespace-nowrap"
-                    >{{ formatUsd(row.monthly_limit_usd) }}/{{
-                      t("admin.groups.limitMonth")
-                    }}</span
-                  >
-                </div>
-                <span v-else class="text-gray-400 dark:text-gray-500">{{
-                  t("admin.groups.subscription.noLimit")
-                }}</span>
-                <div class="text-gray-400 dark:text-gray-500">
-                  {{ t("admin.groups.usageTotal") }}
-                  <span class="ml-1 font-medium text-gray-600 dark:text-gray-300"
-                    >{{
-                      usageLoading
-                        ? "—"
-                        : formatUsd(usageMap.get(row.id)?.total_cost ?? 0)
-                    }}</span
-                  >
-                </div>
-              </div>
             </div>
           </template>
 
@@ -721,56 +647,11 @@
               :options="subscriptionTypeOptions(createForm.platform)"
             />
             <p class="input-hint">
-              {{ t(createForm.platform === 'openai' ? 'dynamicQuota.groupBillingHint' : 'admin.groups.subscription.typeHint') }}
+              {{ t(createForm.platform === 'openai' ? 'dynamicQuota.groupBillingHint' : 'dynamicQuota.unsupportedPlatform') }}
             </p>
           </div>
 
           <p v-if="createForm.platform === 'openai' && createForm.subscription_type === 'subscription'" class="mt-3 rounded-lg bg-primary-50 p-3 text-sm text-primary-800 dark:bg-primary-900/20 dark:text-primary-200">{{ t('dynamicQuota.groupCreateHint') }}</p>
-          <!-- Native quota inputs only apply to platforms without dynamic allocation. -->
-          <div
-            v-if="createForm.subscription_type === 'subscription' && createForm.platform !== 'openai'"
-            class="space-y-4 border-l-2 border-primary-200 pl-4 dark:border-primary-800"
-          >
-            <div>
-              <label class="input-label">{{
-                t("admin.groups.subscription.dailyLimit")
-              }}</label>
-              <input
-                v-model.number="createForm.daily_limit_usd"
-                type="number"
-                step="0.01"
-                min="0"
-                class="input"
-                :placeholder="t('admin.groups.subscription.noLimit')"
-              />
-            </div>
-            <div>
-              <label class="input-label">{{
-                t("admin.groups.subscription.weeklyLimit")
-              }}</label>
-              <input
-                v-model.number="createForm.weekly_limit_usd"
-                type="number"
-                step="0.01"
-                min="0"
-                class="input"
-                :placeholder="t('admin.groups.subscription.noLimit')"
-              />
-            </div>
-            <div>
-              <label class="input-label">{{
-                t("admin.groups.subscription.monthlyLimit")
-              }}</label>
-              <input
-                v-model.number="createForm.monthly_limit_usd"
-                type="number"
-                step="0.01"
-                min="0"
-                class="input"
-                :placeholder="t('admin.groups.subscription.noLimit')"
-              />
-            </div>
-          </div>
         </div>
 
         <div class="border-t pt-4">
@@ -2359,7 +2240,7 @@
             }}</label>
             <Select
               v-model="editForm.subscription_type"
-              :options="subscriptionTypeOptions(editForm.platform)"
+              :options="subscriptionTypeOptions(editForm.platform, true)"
               :disabled="true"
             />
             <p class="input-hint">
@@ -2371,50 +2252,6 @@
           <div v-if="!authStore.isSimpleMode && editingGroup && (dynamicPolicies.has(editingGroup.id) || (editingGroup.platform === 'openai' && editingGroup.subscription_type === 'subscription'))" class="my-3 rounded-lg bg-primary-50 p-3 dark:bg-primary-900/20">
             <p class="mb-2 text-xs text-gray-600 dark:text-gray-300">{{ t('dynamicQuota.groupHint') }}</p>
             <button type="button" class="btn btn-primary" @click="dynamicGroup = editingGroup">{{ t('dynamicQuota.groupSettings') }}</button>
-          </div>
-          <div
-            v-if="editForm.subscription_type === 'subscription' && editForm.platform !== 'openai' && !dynamicPolicies.get(editingGroup?.id || 0)?.enabled"
-            class="space-y-4 border-l-2 border-primary-200 pl-4 dark:border-primary-800"
-          >
-            <div>
-              <label class="input-label">{{
-                t("admin.groups.subscription.dailyLimit")
-              }}</label>
-              <input
-                v-model.number="editForm.daily_limit_usd"
-                type="number"
-                step="0.01"
-                min="0"
-                class="input"
-                :placeholder="t('admin.groups.subscription.noLimit')"
-              />
-            </div>
-            <div>
-              <label class="input-label">{{
-                t("admin.groups.subscription.weeklyLimit")
-              }}</label>
-              <input
-                v-model.number="editForm.weekly_limit_usd"
-                type="number"
-                step="0.01"
-                min="0"
-                class="input"
-                :placeholder="t('admin.groups.subscription.noLimit')"
-              />
-            </div>
-            <div>
-              <label class="input-label">{{
-                t("admin.groups.subscription.monthlyLimit")
-              }}</label>
-              <input
-                v-model.number="editForm.monthly_limit_usd"
-                type="number"
-                step="0.01"
-                min="0"
-                class="input"
-                :placeholder="t('admin.groups.subscription.noLimit')"
-              />
-            </div>
           </div>
         </div>
 
@@ -4569,7 +4406,7 @@ const saveColumnsToStorage = () => {
 
 const isColumnVisible = (key: string) => !hiddenColumns.has(key);
 const hasVisibleUsageSummaryConsumer = computed(
-  () => !authStore.isSimpleMode && (isColumnVisible("usage") || isColumnVisible("billing_type")),
+  () => !authStore.isSimpleMode && isColumnVisible("usage"),
 );
 const hasVisibleCapacityColumn = computed(() => !authStore.isSimpleMode && isColumnVisible("capacity"));
 
@@ -4667,10 +4504,10 @@ const editStatusOptions = computed(() => [
   { value: "inactive", label: t("admin.accounts.status.inactive") },
 ]);
 
-const subscriptionTypeOptions = (platform: GroupPlatform) => [
+const subscriptionTypeOptions = (platform: GroupPlatform, existing = false) => [
   { value: "standard", label: t("admin.groups.subscription.standard") },
   { value: "subscription", label: t(platform === 'openai' ? 'dynamicQuota.subscriptionType' : 'admin.groups.subscription.subscription') },
-];
+].filter(option => option.value === 'standard' || platform === 'openai' || existing);
 
 // 降级分组选项（创建时）- 仅包含 anthropic 平台且未启用 claude_code_only 的分组
 const fallbackGroupOptions = computed(() => {
@@ -4955,13 +4792,10 @@ const submitEditAllowlistCustomEntry = () => {
 const createForm = reactive({
   name: "",
   description: "",
-  platform: "anthropic" as GroupPlatform,
+  platform: "openai" as GroupPlatform,
   rate_multiplier: 1.0,
   is_exclusive: false,
   subscription_type: "standard" as SubscriptionType,
-  daily_limit_usd: null as number | null,
-  weekly_limit_usd: null as number | null,
-  monthly_limit_usd: null as number | null,
   long_context_pricing_enabled: true,
   force_openai_fast: false,
   free_openai_fast: false,
@@ -5324,9 +5158,6 @@ const editForm = reactive({
   is_exclusive: false,
   status: "active" as "active" | "inactive",
   subscription_type: "standard" as SubscriptionType,
-  daily_limit_usd: null as number | null,
-  weekly_limit_usd: null as number | null,
-  monthly_limit_usd: null as number | null,
   long_context_pricing_enabled: true,
   force_openai_fast: false,
   free_openai_fast: false,
@@ -5668,23 +5499,6 @@ const formatCost = (cost: number): string => {
 const formatUsd = (cost: number | null | undefined): string =>
   `$${formatCost(cost ?? 0)}`;
 
-const getQuotaUsageClass = (
-  used: number,
-  limit: number | null | undefined,
-): string => {
-  if (!limit || limit <= 0) {
-    return "font-medium text-gray-700 dark:text-gray-300";
-  }
-  const ratio = used / limit;
-  if (ratio >= 1) {
-    return "font-semibold text-red-600 dark:text-red-400";
-  }
-  if (ratio >= 0.8) {
-    return "font-semibold text-amber-600 dark:text-amber-400";
-  }
-  return "font-medium text-gray-700 dark:text-gray-300";
-};
-
 const loadUsageSummary = async () => {
   if (!hasVisibleUsageSummaryConsumer.value) {
     usageLoading.value = false;
@@ -5782,13 +5596,10 @@ const closeCreateModal = () => {
   clearAllAccountSearchState();
   createForm.name = "";
   createForm.description = "";
-  createForm.platform = "anthropic";
+  createForm.platform = "openai";
   createForm.rate_multiplier = 1.0;
   createForm.is_exclusive = false;
   createForm.subscription_type = "standard";
-  createForm.daily_limit_usd = null;
-  createForm.weekly_limit_usd = null;
-  createForm.monthly_limit_usd = null;
   createForm.allow_image_generation = false;
   createForm.allow_batch_image_generation = false;
   createForm.image_rate_independent = false;
@@ -5837,25 +5648,6 @@ const closeCreateModal = () => {
   createReasoningEffortPolicyRef.value?.resetValidation();
   resetModelAllowlistState(createModelAllowlistState);
   createModelRoutingRules.value = [];
-};
-
-const normalizeOptionalLimit = (
-  value: number | string | null | undefined,
-): number | null => {
-  if (value === null || value === undefined) {
-    return null;
-  }
-
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    if (!trimmed) {
-      return null;
-    }
-    const parsed = Number(trimmed);
-    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
-  }
-
-  return Number.isFinite(value) && value > 0 ? value : null;
 };
 
 const normalizeRateMultiplier = (
@@ -5928,15 +5720,6 @@ const handleCreateGroup = async () => {
         createForm.model_pricing,
         createForm.platform,
       ),
-      daily_limit_usd: normalizeOptionalLimit(
-        createForm.daily_limit_usd as number | string | null,
-      ),
-      weekly_limit_usd: normalizeOptionalLimit(
-        createForm.weekly_limit_usd as number | string | null,
-      ),
-      monthly_limit_usd: normalizeOptionalLimit(
-        createForm.monthly_limit_usd as number | string | null,
-      ),
       ...(Object.keys(videoModelPrices).length > 0
         ? { video_model_prices: videoModelPrices }
         : {}),
@@ -5976,14 +5759,6 @@ const handleCreateGroup = async () => {
     delete (requestData as Record<string, unknown>).profit_safety_buffer_percent;
     // v-model.number 清空输入框时产生 ""，转为 null 让后端设为无限制
     const emptyToNull = (v: any) => (v === "" ? null : v);
-    requestData.daily_limit_usd = emptyToNull(requestData.daily_limit_usd);
-    requestData.weekly_limit_usd = emptyToNull(requestData.weekly_limit_usd);
-    requestData.monthly_limit_usd = emptyToNull(requestData.monthly_limit_usd);
-    if (createForm.platform === 'openai') {
-      requestData.daily_limit_usd = null;
-      requestData.weekly_limit_usd = null;
-      requestData.monthly_limit_usd = null;
-    }
     requestData.image_rate_multiplier = normalizeRateMultiplier(
       requestData.image_rate_multiplier,
     );
@@ -6062,9 +5837,6 @@ const handleEdit = async (group: AdminGroup) => {
   editForm.is_exclusive = group.is_exclusive;
   editForm.status = group.status;
   editForm.subscription_type = group.subscription_type || "standard";
-  editForm.daily_limit_usd = group.daily_limit_usd;
-  editForm.weekly_limit_usd = group.weekly_limit_usd;
-  editForm.monthly_limit_usd = group.monthly_limit_usd;
   editForm.long_context_pricing_enabled =
     group.long_context_pricing_enabled ?? true;
   editForm.force_openai_fast = group.force_openai_fast ?? false;
@@ -6269,15 +6041,6 @@ const handleUpdateGroup = async () => {
         editForm.model_pricing,
         editForm.platform,
       ),
-      daily_limit_usd: normalizeOptionalLimit(
-        editForm.daily_limit_usd as number | string | null,
-      ),
-      weekly_limit_usd: normalizeOptionalLimit(
-        editForm.weekly_limit_usd as number | string | null,
-      ),
-      monthly_limit_usd: normalizeOptionalLimit(
-        editForm.monthly_limit_usd as number | string | null,
-      ),
       video_model_prices: serializeVideoModelPrices(
         editForm.video_model_prices,
       ),
@@ -6328,11 +6091,6 @@ const handleUpdateGroup = async () => {
     };
     delete (payload as Record<string, unknown>).profit_min_margin_percent;
     delete (payload as Record<string, unknown>).profit_safety_buffer_percent;
-    // v-model.number 清空输入框时产生 ""，转为 null 让后端设为无限制
-    const emptyToNull = (v: any) => (v === "" ? null : v);
-    payload.daily_limit_usd = emptyToNull(payload.daily_limit_usd);
-    payload.weekly_limit_usd = emptyToNull(payload.weekly_limit_usd);
-    payload.monthly_limit_usd = emptyToNull(payload.monthly_limit_usd);
     payload.image_rate_multiplier = normalizeRateMultiplier(
       payload.image_rate_multiplier,
     );
@@ -6383,12 +6141,6 @@ const handleUpdateGroup = async () => {
           description: editForm.description,
         }
       : payload;
-    // Hidden fields must not overwrite existing limits while editing other settings.
-    if (editForm.platform === 'openai') {
-      delete requestData.daily_limit_usd;
-      delete requestData.weekly_limit_usd;
-      delete requestData.monthly_limit_usd;
-    }
     await adminAPI.groups.update(editingGroup.value.id, requestData);
     appStore.showSuccess(t("admin.groups.groupUpdated"));
     closeEditModal();
@@ -6692,6 +6444,7 @@ watch(
 watch(
   () => createForm.platform,
   (newVal) => {
+    if (newVal !== 'openai') createForm.subscription_type = 'standard';
     if (!["anthropic", "antigravity"].includes(newVal)) {
       createForm.fallback_group_id_on_invalid_request = null;
     }

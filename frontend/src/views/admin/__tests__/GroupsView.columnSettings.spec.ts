@@ -50,6 +50,10 @@ const messages: Record<string, string> = {
   'admin.groups.usageTotal': 'Total',
 }
 
+vi.mock('@/api/modelPolicy', () => ({
+  getMyModelPolicy: async () => ({ enabled: false })
+}))
+
 vi.mock('@/api/admin', () => ({
   adminAPI: {
     groups: {
@@ -399,7 +403,7 @@ describe('admin GroupsView column settings', () => {
   it('skips usage and capacity fetches until consuming columns are shown', async () => {
     localStorage.setItem(
       'group-hidden-columns',
-      JSON.stringify(['billing_type', 'usage', 'capacity']),
+      JSON.stringify(['usage', 'capacity']),
     )
 
     const wrapper = await mountView()
