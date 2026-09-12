@@ -50,14 +50,15 @@
               <span class="break-words text-sm font-medium text-gray-900 dark:text-white">
                 {{ subscription.group?.name || `Group #${subscription.group_id}` }}
               </span>
-              <span
-                v-if="subscription.expires_at"
-                class="text-xs"
-                :class="getDaysRemainingClass(subscription.expires_at)"
-              >
-                {{ formatDaysRemaining(subscription.expires_at) }}
-              </span>
+              <SubscriptionStatusBadge :subscription="subscription" />
             </div>
+            <p
+              v-if="subscription.expires_at"
+              class="mb-2 text-xs"
+              :class="getDaysRemainingClass(subscription.expires_at)"
+            >
+              {{ formatDaysRemaining(subscription.expires_at) }}
+            </p>
 
             <p v-if="subscription.admin_debug" class="mb-2 text-xs font-medium text-violet-700 dark:text-violet-300">{{ t('dynamicQuota.adminDebug') }}</p>
 
@@ -188,6 +189,7 @@ import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
 import DynamicQuotaCard from '@/components/common/DynamicQuotaCard.vue'
+import SubscriptionStatusBadge from '@/components/common/SubscriptionStatusBadge.vue'
 import AdminDebugUsage from '@/components/common/AdminDebugUsage.vue'
 import { useSubscriptionStore } from '@/stores'
 import type { UserSubscription } from '@/types'

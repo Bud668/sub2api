@@ -393,19 +393,8 @@
             </div>
           </template>
 
-          <template #cell-status="{ value }">
-            <span
-              :class="[
-                'badge',
-                value === 'active'
-                  ? 'badge-success'
-                  : value === 'expired'
-                    ? 'badge-warning'
-                    : 'badge-danger'
-              ]"
-            >
-              {{ t(`admin.subscriptions.status.${value}`) }}
-            </span>
+          <template #cell-status="{ row }">
+            <SubscriptionStatusBadge :subscription="row" />
           </template>
 
           <template #cell-actions="{ row }">
@@ -861,6 +850,7 @@ import GroupBadge from '@/components/common/GroupBadge.vue'
 import GroupOptionItem from '@/components/common/GroupOptionItem.vue'
 import Icon from '@/components/icons/Icon.vue'
 import DynamicQuotaCard from '@/components/common/DynamicQuotaCard.vue'
+import SubscriptionStatusBadge from '@/components/common/SubscriptionStatusBadge.vue'
 import AdminDebugUsage from '@/components/common/AdminDebugUsage.vue'
 import SubscriptionAbsorptionPanel from '@/components/admin/SubscriptionAbsorptionPanel.vue'
 import {
@@ -933,7 +923,7 @@ const allColumns = computed<Column[]>(() => [
   { key: 'group', label: t('admin.subscriptions.columns.group'), sortable: false },
   { key: 'usage', label: t('admin.subscriptions.columns.usage'), sortable: false },
   { key: 'expires_at', label: t('admin.subscriptions.columns.expires'), sortable: true },
-  { key: 'status', label: t('admin.subscriptions.columns.status'), sortable: true },
+  { key: 'status', label: t('admin.subscriptions.columns.status'), sortable: false },
   { key: 'actions', label: t('admin.subscriptions.columns.actions'), sortable: false }
 ])
 
@@ -1647,9 +1637,11 @@ onUnmounted(() => {
 :deep(.subscription-list [data-field="actions"]) { grid-column: 1 / -1; }
 :deep(.subscription-list [data-field="user"] > span),
 :deep(.subscription-list [data-field="group"] > span),
+:deep(.subscription-list [data-field="status"] > span),
 :deep(.subscription-list [data-field="usage"] > span) { display: none; }
 :deep(.subscription-list [data-field="usage"]) { display: block; }
 :deep(.subscription-list [data-field="usage"] > div) { width: 100%; }
+:deep(.subscription-list [data-field="status"]) { grid-column: 2; grid-row: 2; justify-content: flex-end; }
 :deep(.subscription-list .quota-card) { padding: 0; background: transparent; }
 :deep(.subscription-list [data-field="expires_at"]) { grid-column: 1 / -1; }
 :deep(.subscription-list [data-field="actions"]) { padding-top: 1rem; }

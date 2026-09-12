@@ -81,6 +81,14 @@ export default {
     unavailable: '尚未取得新鲜且身份一致的完整周额度，未启用修改。请核对来源并稍后重试。',
     statuses: { active: '正常可用', learning: '学习期', confirming: '确认上游重置中', settling: '等待旧请求结算', reset_unconfirmed: '重置信号待核对', identity_changed: '上游身份变更待核对', quota_unavailable: '额度数据待同步', growth_frozen: '调额暂缓，余量可用', invalid_billing_rate: '计费倍率待核对', upstream_reserve: '上游暂不可用', disabled: '未开启', activation_pending: '等待来源数据生效', exhausted: '当前额度已用尽', reserved: '额度正在处理中' }
   },
+  subscriptionStatus: {
+    subscription: '订阅状态', quota: '动态额度',
+    labels: { active: '生效中', learning: '学习中 · 可用', growth_frozen: '调额暂缓 · 可用', exhausted: '额度已用尽', suspended: '已暂停', unknown: '状态待核对' },
+    availableHint: '当前动态额度可用；实际请求仍受上游状态、并发和模型规则限制。',
+    blockedHint: '当前动态额度状态不允许新请求，已有请求仍按原规则结算。',
+    inactiveHint: '订阅当前不可用，保留的额度信息不代表可以发起请求。',
+    nativeHint: '按原分组限额使用，实际请求仍受上游和其他使用规则限制。'
+  },
   common: {
     loading: '加载中...',
     submitting: '提交中...',

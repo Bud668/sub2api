@@ -81,6 +81,14 @@ export default {
     unavailable: 'Fresh, identity-matched weekly quota data is unavailable. The change was not enabled. Check the source and retry.',
     statuses: { active: 'Available', learning: 'Learning', confirming: 'Confirming reset', settling: 'Waiting for settlement', reset_unconfirmed: 'Reset needs review', identity_changed: 'Identity needs review', quota_unavailable: 'Waiting for quota data', growth_frozen: 'Adjustments deferred; remaining budget usable', invalid_billing_rate: 'Review billing rate', upstream_reserve: 'Upstream unavailable', disabled: 'Disabled', activation_pending: 'Waiting to activate', exhausted: 'Current allowance used up', reserved: 'Allowance reserved by active requests' }
   },
+  subscriptionStatus: {
+    subscription: 'Subscription', quota: 'Dynamic quota',
+    labels: { active: 'Active', learning: 'Learning · Usable', growth_frozen: 'Adjustment deferred · Usable', exhausted: 'Quota exhausted', suspended: 'Suspended', unknown: 'Status needs review' },
+    availableHint: 'Dynamic quota is available. Requests still depend on upstream status, concurrency and model rules.',
+    blockedHint: 'The current dynamic quota state does not admit new requests. Existing requests settle under the original rules.',
+    inactiveHint: 'The subscription is unavailable. Retained quota data does not grant request access.',
+    nativeHint: 'Original group limits apply. Requests still depend on upstream and other usage rules.'
+  },
   common: {
     loading: 'Loading...',
     submitting: 'Submitting...',

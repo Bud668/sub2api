@@ -60,18 +60,7 @@
               </div>
             </div>
             <div class="flex items-center gap-2">
-              <span
-                :class="[
-                  'rounded-full px-2 py-0.5 text-xs font-medium',
-                  subscription.status === 'active'
-                    ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
-                    : subscription.status === 'expired'
-                      ? 'bg-gray-100 text-gray-600 dark:bg-dark-700 dark:text-gray-400'
-                      : 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'
-                ]"
-              >
-                {{ t(`userSubscriptions.status.${subscription.status}`) }}
-              </span>
+              <SubscriptionStatusBadge :subscription="subscription" />
               <button
                 v-if="subscription.status === 'active'"
                 :class="['rounded-lg px-3 py-1.5 text-xs font-semibold text-white transition-colors', platformButtonClass(subscription.group?.platform || '')]"
@@ -252,6 +241,7 @@
 
 <script setup lang="ts">
 import DynamicQuotaCard from '@/components/common/DynamicQuotaCard.vue'
+import SubscriptionStatusBadge from '@/components/common/SubscriptionStatusBadge.vue'
 import AdminDebugUsage from '@/components/common/AdminDebugUsage.vue'
 import { ref, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'

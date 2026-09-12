@@ -1,11 +1,8 @@
 <template>
   <section class="quota-card rounded-xl border border-primary-200 bg-transparent p-4 text-left text-sm dark:border-primary-900" :aria-label="t('dynamicQuota.title')">
-    <div class="quota-main" :class="{ 'quota-main-compact': compact }">
-      <div class="quota-heading mb-3 flex flex-wrap items-center justify-between gap-2">
+    <div class="quota-main">
+      <div v-if="!compact" class="quota-heading mb-3">
         <span class="font-semibold text-gray-900 dark:text-white">{{ t('dynamicQuota.cardTitle') }}</span>
-        <span class="rounded-full px-2 py-0.5 text-xs font-medium" :class="available ? 'bg-primary-100 text-primary-700 dark:bg-primary-900 dark:text-primary-200' : 'bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-100'">
-          {{ t(`dynamicQuota.statuses.${knownStatus}`) }}
-        </span>
       </div>
       <dl class="quota-amounts grid grid-cols-3 gap-4 rounded-xl bg-white p-3 tabular-nums dark:bg-dark-800/60" data-testid="dynamic-allocation-stage">
         <div class="min-w-0" data-testid="dynamic-allocated">
@@ -96,13 +93,6 @@ const resetTime = computed(() => formatDateTimeToMinute(props.quota.expected_res
 const allocationTime = computed(() => formatDate(props.quota.last_allocation_at, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }, locale.value))
 const allocationLabel = computed(() => t(props.quota.last_change?.reason === 'initial' ? 'dynamicQuota.initialAllocatedAt' : 'dynamicQuota.allocatedAt'))
 const changeReason = computed(() => ['initial', 'bounds', 'upstream_node', 'reset'].includes(props.quota.last_change?.reason || '') ? props.quota.last_change!.reason : 'bounds')
-const statuses = ['active', 'learning', 'confirming', 'settling', 'reset_unconfirmed', 'identity_changed', 'quota_unavailable', 'invalid_billing_rate', 'upstream_reserve', 'disabled', 'activation_pending']
-const canSpend = computed(() => ['active', 'learning'].includes(props.quota.status))
-const knownStatus = computed(() => {
-  if (canSpend.value && props.quota.remaining_usd <= 0) return props.quota.reserved_usd > 0 ? 'reserved' : 'exhausted'
-  return canSpend.value && props.quota.growth_frozen ? 'growth_frozen' : (statuses.includes(props.quota.status) ? props.quota.status : 'quota_unavailable')
-})
-const available = computed(() => canSpend.value && props.quota.remaining_usd > 0)
 const pendingReason = computed(() => ['budget_conflict', 'protection', 'learning', 'guard', 'awaiting_allocation'].includes(props.quota.pending_adjustment_reason || '') ? props.quota.pending_adjustment_reason : 'guard')
 const percentage = computed(() => props.quota.limit_usd > 0 ? Math.min(100, Math.max(0, Math.round(props.quota.used_usd / props.quota.limit_usd * 100))) : 0)
 const usd = (value: number) => Number.isFinite(value) ? new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(value) : '—'
@@ -115,23 +105,10 @@ const date = (value?: string) => formatDateTimeToMinute(value, locale.value) || 
 .quota-amounts > div { display: grid; grid-row: span 3; grid-template-rows: subgrid; }
 .quota-amounts dt { align-self: center; }
 .quota-amount { line-height: 1.75rem; }
-.quota-main-compact {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  grid-template-areas: 'amounts amounts' 'progress progress' 'footer heading';
-  column-gap: 1rem;
-  align-items: center;
-}
-.quota-main-compact .quota-amounts { grid-area: amounts; }
-.quota-main-compact .quota-progress { grid-area: progress; }
-.quota-main-compact .quota-footer { grid-area: footer; }
-.quota-main-compact .quota-heading { grid-area: heading; margin: 0; }
-.quota-main-compact .quota-heading > span:first-child { display: none; }
 @container (min-width: 36rem) {
   .quota-amount { font-size: 1.5rem; line-height: 2rem; }
 }
 @container (max-width: 32rem) {
-  .quota-main-compact { grid-template-columns: minmax(0, 1fr); grid-template-areas: 'amounts' 'progress' 'heading' 'footer'; row-gap: 0.5rem; }
   .quota-amounts { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 0.5rem; }
   [data-testid="dynamic-allocated"] { grid-column: 1 / -1; }
 }

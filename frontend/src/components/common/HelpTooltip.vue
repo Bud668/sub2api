@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, useTemplateRef, nextTick } from 'vue'
+import { onBeforeUnmount, onMounted, ref, useTemplateRef, useId, nextTick } from 'vue'
 
 const props = withDefaults(defineProps<{
   content?: string
@@ -11,6 +11,9 @@ const props = withDefaults(defineProps<{
 })
 
 const show = ref(false)
+const tooltipId = useId()
+const above = ref(true)
+const arrowLeft = ref('50%')
 const triggerRef = useTemplateRef<HTMLElement>('trigger')
 const tooltipRef = useTemplateRef<HTMLElement>('tooltip')
 const tooltipStyle = ref({ top: '0px', left: '0px' })
@@ -78,12 +81,21 @@ function onViewportChange() {
 
 function updatePosition() {
   const el = triggerRef.value
-  if (!el) return
+  const tooltip = tooltipRef.value
+  if (!el || !tooltip) return
   const rect = el.getBoundingClientRect()
+  const tip = tooltip.getBoundingClientRect()
+  const width = document.documentElement.clientWidth || window.innerWidth
+  const height = window.innerHeight
+  // Fixed tooltips use viewport coordinates, not document scroll offsets.
+  const left = Math.max(8, Math.min(rect.left + rect.width / 2 - tip.width / 2, width - tip.width - 8))
+  above.value = rect.top >= tip.height + 8
+  const top = above.value ? rect.top - tip.height - 8 : rect.bottom + 8
   tooltipStyle.value = {
-    top: `${rect.top + window.scrollY}px`,
-    left: `${rect.left + rect.width / 2 + window.scrollX}px`,
+    top: `${Math.max(8, Math.min(top, height - tip.height - 8))}px`,
+    left: `${left}px`,
   }
+  arrowLeft.value = `${Math.max(8, Math.min(rect.left + rect.width / 2 - left, tip.width - 8))}px`
 }
 
 onMounted(() => {
@@ -110,7 +122,7 @@ onBeforeUnmount(() => {
     @click="onClick"
   >
     <!-- Trigger Icon -->
-    <slot name="trigger">
+    <slot name="trigger" :open="show" :tooltip-id="tooltipId">
       <svg
         class="h-4 w-4 cursor-help text-gray-400 transition-colors hover:text-primary-600 dark:text-gray-500 dark:hover:text-primary-400"
         fill="none"
@@ -131,13 +143,15 @@ onBeforeUnmount(() => {
       <!-- before: 伪元素向下延伸一段透明区域，盖住提示框与触发图标之间的空隙，让指针能连续移入提示框。 -->
       <div
         ref="tooltip"
+        :id="tooltipId"
         v-show="show"
         role="tooltip"
         :class="[
-          'fixed z-[99999] -translate-x-1/2 -translate-y-full rounded-lg bg-gray-900 p-3 text-xs leading-relaxed text-white shadow-xl ring-1 ring-white/10 selection:bg-primary-200 selection:text-gray-900 before:absolute before:inset-x-0 before:top-full before:h-3 dark:bg-gray-800 dark:selection:bg-primary-200 dark:selection:text-gray-900',
+          'fixed z-[99999] max-w-[calc(100vw-1rem)] rounded-lg bg-gray-900 p-3 text-xs leading-relaxed text-white shadow-xl ring-1 ring-white/10 selection:bg-primary-200 selection:text-gray-900 before:absolute before:inset-x-0 before:h-3 dark:bg-gray-800 dark:selection:bg-primary-200 dark:selection:text-gray-900',
+          above ? 'before:top-full' : 'before:bottom-full',
           props.widthClass,
         ]"
-        :style="{ top: `calc(${tooltipStyle.top} - 8px)`, left: tooltipStyle.left }"
+        :style="tooltipStyle"
         @mouseleave="onTooltipLeave"
       >
         <button
@@ -151,8 +165,8 @@ onBeforeUnmount(() => {
             <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
           </svg>
         </button>
-        <slot>{{ content }}</slot>
-        <div class="absolute -bottom-1 left-1/2 h-2 w-2 -translate-x-1/2 rotate-45 bg-gray-900 dark:bg-gray-800"></div>
+        <div class="max-h-[calc(100dvh-2.5rem)] overflow-y-auto"><slot>{{ content }}</slot></div>
+        <div class="absolute h-2 w-2 -translate-x-1/2 rotate-45 bg-gray-900 dark:bg-gray-800" :class="above ? '-bottom-1' : '-top-1'" :style="{ left: arrowLeft }"></div>
       </div>
     </Teleport>
   </div>

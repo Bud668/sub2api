@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
@@ -13,6 +13,7 @@ function getTooltipElement(): HTMLDivElement {
 
 describe('HelpTooltip', () => {
   afterEach(() => {
+    vi.restoreAllMocks()
     document.body.innerHTML = ''
   })
 
@@ -105,6 +106,26 @@ describe('HelpTooltip', () => {
     await nextTick()
     expect(tooltip.style.display).toBe('none')
 
+    wrapper.unmount()
+  })
+
+  it('uses fixed viewport coordinates after scrolling and keeps edge tooltips onscreen', async () => {
+    vi.spyOn(window, 'scrollY', 'get').mockReturnValue(900)
+    vi.spyOn(window, 'scrollX', 'get').mockReturnValue(100)
+    const wrapper = mount(HelpTooltip, { attachTo: document.body, props: { content: 'quota help', trigger: 'click' } })
+    const trigger = wrapper.get('.group')
+    const tip = getTooltipElement()
+    vi.spyOn(tip, 'getBoundingClientRect').mockReturnValue({ width: 256, height: 80 } as DOMRect)
+    const rect = vi.spyOn(trigger.element, 'getBoundingClientRect')
+    rect.mockReturnValue({ top: 400, bottom: 416, left: 10, width: 16 } as DOMRect)
+    await trigger.trigger('click')
+    expect(tip.style.top).toBe('312px')
+    expect(tip.style.left).toBe('8px')
+    rect.mockReturnValue({ top: 0, bottom: 16, left: window.innerWidth - 16, width: 16 } as DOMRect)
+    window.dispatchEvent(new Event('scroll'))
+    await nextTick()
+    expect(tip.style.top).toBe('24px')
+    expect(tip.style.left).toBe(`${window.innerWidth - 256 - 8}px`)
     wrapper.unmount()
   })
 })
