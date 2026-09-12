@@ -16,3 +16,11 @@ The proposed lifetime-consumption footer is not part of this frontend update. It
 Reset audit records use the effective V2 cycle consumption, matching the subscription card even when the legacy native weekly counter is lower. Existing billing records and historical audit events are not rewritten.
 
 Regression checks cover source isolation, role restrictions, retained in-flight billing, duplicate operations, independent reset observations and failed quota fetches. Browser checks use synthetic API data across desktop/mobile widths, both languages and themes. Deployment stays on the primary during active development; standby synchronization is deferred until stabilization.
+
+## Frontend-only rollout, 2026-09-12
+
+`0.2.4-cyberaudit.12-ui.1` was activated at 10:23:47 UTC from fixed source `120ed3ca6d0c5853758c0326ab8956b789be8219`. Backend `.12`, its release tag and accounting logic remain unchanged. Only Nginx was gracefully reloaded; the application, monitoring process and Nginx master retained their process identities. There was no maintenance page or standby synchronization.
+
+The frontend passed 2,031 tests in 274 files, locale/type/build checks, targeted lint, and eight local plus eight public-site browser scenarios across Chinese/English, light/dark, desktop/mobile and live theme switching. Public-site checks used synthetic intercepted APIs, verified the real published asset bytes and CSP, and confirmed protected APIs reject unauthenticated access. Real Nginx integration verified CSP/live settings, cache validators, immutable old/new assets and existing SSE/WS connections across activation and restoration. Source changes and public assets passed secret scanning. All 65 public health samples around activation succeeded; sampling is not a guarantee about every natural request.
+
+Future frontend work must follow [AGENTS.md](../AGENTS.md): design and verify both themes, including contrast, controls, feedback states and responsive layout. No lifetime-consumption total or illustrative preview amount was included.
