@@ -176,7 +176,7 @@
           card-layout
           :columns="columns"
           :data="subscriptions"
-          :card-style="row => ({ ...subscriptionBorderStyle(row), borderWidth: '2px' })"
+          :card-style="row => ({ '--subscription-accent': subscriptionBorderStyle(row).borderColor })"
           :loading="loading"
           :server-side-sort="true"
           default-sort-key="created_at"
@@ -1500,13 +1500,20 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.subscription-list { container-type: inline-size; overflow-y: auto; padding: 0.25rem; width: 100%; max-width: 90rem; margin-inline: auto; }
-.subscription-page { gap: 1rem; }
-.subscription-page :deep(.table-scroll-container) { background: transparent; border: 0; box-shadow: none; }
+.subscription-list { container-type: inline-size; width: 100%; }
+.subscription-page { height: auto; max-width: 84rem; margin-inline: auto; gap: 1.5rem; }
+.subscription-page :deep(.layout-section-scrollable) { display: block; flex: none; }
+.subscription-page :deep(.table-scroll-container) { display: block; height: auto; overflow: visible; background: transparent; border: 0; box-shadow: none; }
 .subscription-usage { width: 100%; min-width: 0; }
-:deep(.subscription-list [data-table-card]) { padding: 0.75rem; }
-:deep(.subscription-list [data-table-card] > div) { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.5rem 1rem; align-items: start; }
-:deep(.subscription-list [data-field]) { min-width: 0; margin: 0; gap: 0.25rem; flex-wrap: wrap; }
+:deep(.subscription-list [data-table-card]) {
+  padding: 1rem;
+  border-radius: 1rem;
+  border-color: color-mix(in srgb, var(--subscription-accent) 28%, transparent);
+  border-left: 3px solid var(--subscription-accent);
+}
+:deep(.subscription-list [data-table-card] + [data-table-card]) { margin-top: 1rem; }
+:deep(.subscription-list [data-table-card] > div) { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.75rem 1rem; align-items: center; }
+:deep(.subscription-list [data-field]) { min-width: 0; margin: 0; gap: 0.5rem; flex-wrap: wrap; }
 :deep(.subscription-list [data-field] > div) { text-align: left; }
 :deep(.subscription-list [data-field="user"]),
 :deep(.subscription-list [data-field="usage"]),
@@ -1516,20 +1523,22 @@ onUnmounted(() => {
 :deep(.subscription-list [data-field="usage"] > span) { display: none; }
 :deep(.subscription-list [data-field="usage"]) { display: block; }
 :deep(.subscription-list [data-field="usage"] > div) { width: 100%; }
+:deep(.subscription-list .quota-card) { padding: 0; background: transparent; }
 :deep(.subscription-list [data-field="expires_at"]) { grid-column: 1 / -1; }
-:deep(.subscription-list [data-field="actions"]) { padding-top: 0.5rem; }
+:deep(.subscription-list [data-field="actions"]) { padding-top: 1rem; }
 @container (min-width: 52rem) {
   :deep(.subscription-list [data-table-card] > div) {
-    grid-template-columns: minmax(15rem, 1fr) minmax(0, 3fr) minmax(8rem, 0.8fr);
-    grid-template-areas: 'user usage status' 'group usage expires' 'actions usage expires';
-    row-gap: 0.25rem;
+    grid-template-columns: minmax(16rem, 1fr) minmax(12rem, 1fr) auto;
+    grid-template-areas: 'user group status' 'usage usage usage' 'expires actions actions';
+    column-gap: 1.5rem;
   }
   :deep(.subscription-list [data-field="user"]) { grid-area: user; }
   :deep(.subscription-list [data-field="group"]) { grid-area: group; }
   :deep(.subscription-list [data-field="usage"]) { grid-area: usage; }
-  :deep(.subscription-list [data-field="status"]) { grid-area: status; }
-  :deep(.subscription-list [data-field="expires_at"]) { grid-area: expires; display: block; }
+  :deep(.subscription-list [data-field="status"]) { grid-area: status; justify-content: end; }
+  :deep(.subscription-list [data-field="expires_at"]) { grid-area: expires; justify-content: start; }
   :deep(.subscription-list [data-field="actions"]) { grid-area: actions; border: 0; padding-top: 0; }
+  :deep(.subscription-list [data-field="actions"] > div) { justify-content: flex-end; }
 }
 
 .usage-row {

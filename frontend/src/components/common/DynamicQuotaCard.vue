@@ -1,45 +1,48 @@
 <template>
-  <section class="quota-card rounded-xl border border-primary-200 bg-primary-50/50 p-2.5 text-left text-sm dark:border-primary-900 dark:bg-primary-900/10" :aria-label="t('dynamicQuota.title')">
-    <div class="quota-main">
-      <div class="quota-heading mb-2 flex flex-wrap items-center justify-between gap-2">
+  <section class="quota-card rounded-xl border border-primary-200 bg-primary-50/50 p-4 text-left text-sm dark:border-primary-900 dark:bg-primary-900/10" :aria-label="t('dynamicQuota.title')">
+    <div class="quota-main" :class="{ 'quota-main-compact': compact }">
+      <div class="quota-heading mb-3 flex flex-wrap items-center justify-between gap-2">
         <span class="font-semibold text-gray-900 dark:text-white">{{ t('dynamicQuota.cardTitle') }}</span>
         <span class="rounded-full px-2 py-0.5 text-xs font-medium" :class="available ? 'bg-primary-100 text-primary-700 dark:bg-primary-900 dark:text-primary-200' : 'bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-100'">
           {{ t(`dynamicQuota.statuses.${knownStatus}`) }}
         </span>
       </div>
-      <dl class="quota-amounts grid grid-cols-3 gap-2 rounded-lg bg-white/70 px-2.5 py-1.5 tabular-nums dark:bg-dark-800/60" data-testid="dynamic-allocation-stage">
-        <div class="min-w-0" data-testid="dynamic-remaining">
-          <dt class="text-xs text-gray-500 dark:text-gray-400">{{ t('dynamicQuota.remaining') }}</dt>
-          <dd class="quota-amount mt-1 break-words text-lg font-semibold tracking-tight text-primary-700 dark:text-primary-300">{{ usd(quota.remaining_usd) }}</dd>
-          <dd class="mt-1 flex items-start gap-1 text-[11px] leading-4 text-gray-500 dark:text-gray-400" :title="quota.next_adjustment_percent ? t('dynamicQuota.stageAt', { percent: quota.next_adjustment_percent }) : t('dynamicQuota.noNextStage')">
-            <Icon name="refresh" size="xs" class="mt-0.5 shrink-0" aria-hidden="true" />
-            <span><span class="sr-only">{{ t('dynamicQuota.nextStage') }}: </span>{{ quota.next_adjustment_percent ? t('dynamicQuota.stageShort', { percent: quota.next_adjustment_percent }) : t('dynamicQuota.noNextStageShort') }}</span>
-          </dd>
-        </div>
-        <div class="min-w-0"><dt class="text-xs text-gray-500 dark:text-gray-400">{{ t('dynamicQuota.used') }}</dt><dd class="quota-amount mt-1 break-words text-lg font-semibold tracking-tight">{{ usd(quota.used_usd) }}</dd></div>
+      <dl class="quota-amounts grid grid-cols-3 gap-4 rounded-xl bg-gray-50 p-3 tabular-nums dark:bg-dark-800/60" data-testid="dynamic-allocation-stage">
         <div class="min-w-0" data-testid="dynamic-allocated">
           <dt class="text-xs text-gray-500 dark:text-gray-400">{{ t('dynamicQuota.limit') }}</dt>
           <dd class="quota-amount mt-1 break-words text-lg font-semibold tracking-tight">{{ usd(quota.limit_usd) }}</dd>
-          <dd class="mt-1 flex items-start gap-1 text-[11px] leading-4 text-gray-500 dark:text-gray-400" :title="`${allocationLabel}: ${allocationTime ? date(quota.last_allocation_at) : t('dynamicQuota.notAllocated')}`">
+          <dd class="mt-2 flex items-start gap-1 text-xs leading-4 text-gray-500 dark:text-gray-400" :title="`${allocationLabel}: ${allocationTime ? date(quota.last_allocation_at) : t('dynamicQuota.notAllocated')}`">
             <Icon name="refresh" size="xs" class="mt-0.5 shrink-0" aria-hidden="true" />
             <span class="sr-only">{{ allocationLabel }}: </span>
             <time v-if="allocationTime" :datetime="quota.last_allocation_at" :aria-label="date(quota.last_allocation_at)">{{ allocationTime }}</time>
             <span v-else>{{ t('dynamicQuota.notAllocated') }}</span>
           </dd>
         </div>
+        <div class="min-w-0">
+          <dt class="text-xs text-gray-500 dark:text-gray-400">{{ t('dynamicQuota.used') }}</dt>
+          <dd class="quota-amount mt-1 break-words text-lg font-semibold tracking-tight">{{ usd(quota.used_usd) }}</dd>
+          <dd v-if="quota.reserved_usd > 0" class="quota-reserved mt-2 text-xs leading-4 text-gray-500 dark:text-gray-400">{{ t('dynamicQuota.reserved') }} · {{ usd(quota.reserved_usd) }}</dd>
+        </div>
+        <div class="min-w-0" data-testid="dynamic-remaining">
+          <dt class="text-xs text-gray-500 dark:text-gray-400">{{ t('dynamicQuota.remaining') }}</dt>
+          <dd class="quota-amount mt-1 break-words text-lg font-semibold tracking-tight text-primary-700 dark:text-primary-300">{{ usd(quota.remaining_usd) }}</dd>
+          <dd class="mt-2 flex items-start gap-1 text-xs leading-4 text-gray-500 dark:text-gray-400" :title="quota.next_adjustment_percent ? t('dynamicQuota.stageAt', { percent: quota.next_adjustment_percent }) : t('dynamicQuota.noNextStage')">
+            <Icon name="refresh" size="xs" class="mt-0.5 shrink-0" aria-hidden="true" />
+            <span><span class="sr-only">{{ t('dynamicQuota.nextStage') }}: </span>{{ quota.next_adjustment_percent ? t('dynamicQuota.stageShort', { percent: quota.next_adjustment_percent }) : t('dynamicQuota.noNextStageShort') }}</span>
+          </dd>
+        </div>
       </dl>
       <div class="quota-progress my-2 h-1 overflow-hidden rounded-full bg-gray-200 dark:bg-dark-600" role="progressbar" :aria-label="t('dynamicQuota.used')" :aria-valuenow="percentage" aria-valuemin="0" aria-valuemax="100">
         <div class="h-full rounded-full bg-primary-500" :style="{ width: `${percentage}%` }" />
       </div>
-      <p v-if="quota.reserved_usd > 0" class="quota-reserved text-xs text-gray-500">{{ t('dynamicQuota.reserved') }} · {{ usd(quota.reserved_usd) }}</p>
-      <div class="quota-footer grid gap-2">
+      <div class="quota-footer flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
       <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-600 dark:text-gray-300" data-testid="dynamic-bounds">
         <span v-if="quota.floor_limit_usd != null" class="inline-flex items-center">{{ t('dynamicQuota.floor') }} <strong class="ml-1 font-medium tabular-nums">{{ usd(quota.floor_limit_usd) }}</strong><HelpTooltip trigger="click" :content="t('dynamicQuota.floorHint')"><template #trigger><button type="button" class="rounded px-1 focus-visible:ring-2 focus-visible:ring-primary-500" :aria-label="t('dynamicQuota.floorHelp')">ⓘ</button></template></HelpTooltip></span>
         <span>{{ t('dynamicQuota.cap') }} <strong class="ml-1 font-medium tabular-nums">{{ usd(quota.max_limit_usd) }}</strong></span>
       </div>
       <div class="text-xs" data-testid="dynamic-reset" :title="t('dynamicQuota.resetHint')">
         <dl>
-          <div class="flex flex-wrap justify-between gap-x-3 gap-y-1">
+          <div class="flex flex-wrap gap-x-3 gap-y-1">
             <dt class="text-gray-500 dark:text-gray-400">{{ t('dynamicQuota.resetShort') }}</dt>
             <dd class="font-medium tabular-nums text-gray-900 dark:text-gray-100">
               <time v-if="resetTime" :datetime="quota.expected_reset_at">{{ resetTime }}</time>
@@ -50,7 +53,7 @@
       </div>
       </div>
     </div>
-    <div v-if="quota.pending_adjustment_percent" class="mt-1.5 rounded-lg bg-amber-50 px-2.5 py-1.5 text-xs text-amber-800 dark:bg-amber-900/20 dark:text-amber-200" role="status" data-testid="dynamic-pending-stage">
+    <div v-if="quota.pending_adjustment_percent" class="mt-2 rounded-lg bg-amber-50 px-3 py-1.5 text-xs leading-5 text-amber-800 dark:bg-amber-900/20 dark:text-amber-200" role="status" data-testid="dynamic-pending-stage">
       <p><span class="font-medium">{{ t('dynamicQuota.pendingStage', { percent: quota.pending_adjustment_percent }) }} · </span>{{ t(`dynamicQuota.allocationWait.${pendingReason}`) }}</p>
     </div>
     <template v-if="!compact">
@@ -103,22 +106,27 @@ const date = (value?: string) => formatDateTimeToMinute(value, locale.value) || 
 
 <style scoped>
 .quota-card { container-type: inline-size; }
-.quota-amount { line-height: 1.5rem; }
-@container (min-width: 36rem) {
-  .quota-main {
-    display: grid;
-    grid-template-columns: minmax(0, 1.2fr) minmax(15rem, 1fr);
-    grid-template-areas: 'amounts heading' 'amounts footer' 'progress footer' 'reserved reserved';
-    gap: 0.25rem 1rem;
-    align-items: start;
-  }
-  .quota-heading { grid-area: heading; margin: 0; }
-  .quota-amounts { grid-area: amounts; }
-  .quota-progress { grid-area: progress; margin: 0; }
-  .quota-footer { grid-area: footer; gap: 0.25rem; }
-  .quota-reserved { grid-area: reserved; }
+.quota-amount { line-height: 1.75rem; }
+.quota-main-compact {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: 'amounts amounts' 'progress progress' 'footer heading';
+  column-gap: 1rem;
+  align-items: center;
 }
-@container (max-width: 18rem) {
-  .quota-amount { font-size: 0.875rem; overflow-wrap: anywhere; }
+.quota-main-compact .quota-amounts { grid-area: amounts; }
+.quota-main-compact .quota-progress { grid-area: progress; }
+.quota-main-compact .quota-footer { grid-area: footer; }
+.quota-main-compact .quota-heading { grid-area: heading; margin: 0; }
+.quota-main-compact .quota-heading > span:first-child { display: none; }
+@container (min-width: 36rem) {
+  .quota-amount { font-size: 1.5rem; line-height: 2rem; }
+}
+@container (max-width: 32rem) {
+  .quota-main-compact { grid-template-columns: minmax(0, 1fr); grid-template-areas: 'amounts' 'progress' 'heading' 'footer'; row-gap: 0.5rem; }
+}
+@container (max-width: 22rem) {
+  .quota-amounts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  [data-testid="dynamic-remaining"] { grid-column: 1 / -1; grid-row: 1; }
 }
 </style>
