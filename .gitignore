@@ -120,6 +120,7 @@ tests
 !frontend/tests/
 frontend/tests/*
 !frontend/tests/fixed-seats.browser.mjs
+!frontend/tests/bud-update.browser.mjs
 !deploy/tests/
 !deploy/tests/**
 CLAUDE.md
@@ -137,6 +138,7 @@ deploy/docker-compose.override.yml
 vite.config.js
 docs/*
 !docs/CUSTOM-FORK.md
+!docs/BUD-UPDATES.md
 !docs/UPSTREAM-INTEGRATION.md
 !docs/DYNAMIC-SUBSCRIPTIONS.md
 !docs/UPSTREAM-LEDGER.md
@@ -156,6 +158,7 @@ docs/screenshots/*
 .serena/
 .codex/
 frontend/coverage/
+__pycache__/
 aicodex
 output/
 .codegraph/

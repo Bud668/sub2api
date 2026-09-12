@@ -19,6 +19,17 @@ export interface VersionInfo {
   cached: boolean
   warning?: string
   build_type: string // "source" for manual builds, "release" for CI builds
+  update_source?: string
+  can_update?: boolean
+  official?: {
+    base_version: string
+    latest_version: string
+    has_update: boolean
+    html_url?: string
+    published_at?: string
+    checked_at: number
+    warning?: string
+  }
 }
 
 /**
@@ -43,6 +54,19 @@ export async function checkUpdates(force = false): Promise<VersionInfo> {
 export interface UpdateResult {
   message: string
   need_restart: boolean
+  update_started?: boolean
+  already_up_to_date?: boolean
+}
+
+export interface ManagedUpdateStatus {
+  phase: string
+  version?: string
+  updated_at?: number
+}
+
+export async function getUpdateStatus(): Promise<ManagedUpdateStatus> {
+  const { data } = await apiClient.get<ManagedUpdateStatus>('/admin/system/update-status', { timeout: 5000 })
+  return data
 }
 
 export interface RollbackVersionInfo {

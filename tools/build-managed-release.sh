@@ -72,10 +72,12 @@ fi
     go test ./internal/service ./internal/service/openai_ws_v2 ./internal/handler ./internal/handler/admin \
         ./internal/server/... ./internal/repository ./internal/pkg/apicompat ./internal/pkg/openai \
         ./internal/pkg/requestmodel ./internal/pkg/httputil ./migrations ./cmd/server
-	go test -tags=unit ./internal/server/middleware \
-		-run 'CyberSuspension' -count=1
+    go test -tags=unit ./internal/server/middleware \
+        -run 'CyberSuspension' -count=1
     go test -race -tags=unit ./internal/service \
         -run 'QuotaFetcher|UsageQuotaTiers|ChannelMonitorUserView|RunCheck_Quota|AccountUsageService_LocalOpenAI' -count=1
+    go test -race -tags=unit ./internal/service ./internal/handler/admin \
+        -run 'BudUpdate|SystemHandler' -count=1
     go test -race -tags=unit ./internal/service \
         -run 'CancelsUpstreamBeforeClosingBody|RuntimeBlock|OpsSystemLog|RuntimeLog|ComputeEffective|OpsCleanup' -count=1
     go test -race ./internal/service \
@@ -92,6 +94,11 @@ fi
         go test -race ./internal/service ./internal/handler/... ./internal/server/... ./internal/repository \
             -run 'DynamicQuota|DynamicGroup|AdminDebug' -count=2
     fi
+)
+(
+    cd "$release_dir/source"
+    python3 -m unittest deploy/test_bud_updater.py
+    bash -n deploy/install-bud-updater.sh tools/package-managed-update.sh
 )
 (
     cd "$release_dir/source/frontend"

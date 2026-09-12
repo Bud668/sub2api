@@ -1,0 +1,13 @@
+[Unit]
+Description=Sub2API signed Bud update requests (local only)
+
+[Socket]
+ListenStream=/run/sub2api-update.sock
+SocketUser=root
+SocketGroup=sub2api
+SocketMode=0660
+Accept=yes
+MaxConnections=4
+
+[Install]
+WantedBy=sockets.target

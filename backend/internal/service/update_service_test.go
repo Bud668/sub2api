@@ -4,184 +4,162 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net"
+	"os"
+	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 )
 
-type updateServiceCacheStub struct {
-	data string
-}
+type updateServiceCacheStub struct{ data string }
 
-func (s *updateServiceCacheStub) GetUpdateInfo(context.Context) (string, error) {
-	if s.data == "" {
-		return "", errors.New("cache miss")
-	}
-	return s.data, nil
-}
-
+func (s *updateServiceCacheStub) GetUpdateInfo(context.Context) (string, error) { return s.data, nil }
 func (s *updateServiceCacheStub) SetUpdateInfo(_ context.Context, data string, _ time.Duration) error {
 	s.data = data
 	return nil
 }
 
 type updateServiceGitHubClientStub struct {
-	release        *GitHubRelease
-	recentReleases []*GitHubRelease
-	recentErr      error
+	mu       sync.Mutex
+	releases map[string]*GitHubRelease
+	calls    map[string]int
+	failures map[string]bool
 }
 
-func (s *updateServiceGitHubClientStub) FetchLatestRelease(context.Context, string) (*GitHubRelease, error) {
-	return s.release, nil
+func (s *updateServiceGitHubClientStub) FetchLatestRelease(_ context.Context, repo string) (*GitHubRelease, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.calls[repo]++
+	if s.failures[repo] {
+		return nil, errors.New("upstream unavailable")
+	}
+	return s.releases[repo], nil
 }
-
 func (s *updateServiceGitHubClientStub) FetchRecentReleases(context.Context, string, int) ([]*GitHubRelease, error) {
-	return s.recentReleases, s.recentErr
+	panic("rollback must not fetch")
 }
-
 func (s *updateServiceGitHubClientStub) DownloadFile(context.Context, string, string, int64) error {
-	panic("DownloadFile should not be called when no update is available")
+	panic("app must not install executable")
 }
-
 func (s *updateServiceGitHubClientStub) FetchChecksumFile(context.Context, string) ([]byte, error) {
-	panic("FetchChecksumFile should not be called when no update is available")
+	panic("app must not install executable")
 }
-
-func TestUpdateServicePerformUpdateNoUpdateReturnsSentinel(t *testing.T) {
-	svc := NewUpdateService(
-		&updateServiceCacheStub{},
-		&updateServiceGitHubClientStub{
-			release: &GitHubRelease{
-				TagName: "v0.1.132",
-				Name:    "v0.1.132",
-			},
-		},
-		"0.1.132",
-		"release",
-	)
-
-	err := svc.PerformUpdate(context.Background())
-
-	require.Error(t, err)
-	require.True(t, errors.Is(err, ErrNoUpdateAvailable))
-	require.ErrorIs(t, err, ErrNoUpdateAvailable)
+func newBudUpdateTest(t *testing.T) (*UpdateService, *updateServiceGitHubClientStub) {
+	t.Helper()
+	client := &updateServiceGitHubClientStub{calls: map[string]int{}, failures: map[string]bool{}, releases: map[string]*GitHubRelease{
+		githubRepo: {TagName: "v0.2.4-Bud.14"}, officialGitHubRepo: {TagName: "v0.2.5"},
+	}}
+	return NewUpdateService(&updateServiceCacheStub{}, client, "0.2.4-cyberaudit.13", "release"), client
 }
-
-func newRollbackTestService(current string, releases []*GitHubRelease) *UpdateService {
-	return NewUpdateService(
-		&updateServiceCacheStub{},
-		&updateServiceGitHubClientStub{recentReleases: releases},
-		current,
-		"release",
-	)
-}
-
-func TestUpdateServiceListRollbackVersionsFiltersAndCaps(t *testing.T) {
-	releases := []*GitHubRelease{
-		{TagName: "v0.1.148", PublishedAt: "2026-07-09T00:00:00Z"},                       // newer than current: excluded
-		{TagName: "v0.1.147", PublishedAt: "2026-07-08T00:00:00Z"},                       // current: excluded
-		{TagName: "v0.1.146-rc1", PublishedAt: "2026-07-07T12:00:00Z", Prerelease: true}, // prerelease: excluded
-		{TagName: "v0.1.146", PublishedAt: "2026-07-07T00:00:00Z"},
-		{TagName: "v0.1.145", PublishedAt: "2026-07-06T00:00:00Z", Draft: true}, // draft: excluded
-		{TagName: "v0.1.144", PublishedAt: "2026-07-05T00:00:00Z"},
-		{TagName: "v0.1.144", PublishedAt: "2026-07-05T00:00:00Z"}, // duplicate: excluded
-		{TagName: "v0.1.143", PublishedAt: "2026-07-04T00:00:00Z"},
-		{TagName: "v0.1.142", PublishedAt: "2026-07-03T00:00:00Z"}, // beyond cap of 3: excluded
+func TestBudUpdateVersions(t *testing.T) {
+	for _, tc := range []struct {
+		a, b string
+		want int
+	}{
+		{"0.2.4-cyberaudit.13", "0.2.4-Bud.14", -1}, {"0.2.4-Bud.9", "0.2.4-Bud.10", -1},
+		{"0.2.4-Bud.14", "v0.2.4-Bud.14", 0}, {"0.2.4-Bud.20", "0.2.4-Bud.14", 1},
+		{"0.2.4-Bud.99", "0.2.5-Bud.1", -1}, {"0.2.4", "0.2.4", 0},
+	} {
+		require.Equal(t, tc.want, compareVersions(tc.a, tc.b), "%s / %s", tc.a, tc.b)
 	}
-	svc := newRollbackTestService("0.1.147", releases)
-
-	versions, err := svc.ListRollbackVersions(context.Background())
-
+	for _, v := range []string{"0.2.4", "0.2.4-Bud.0", "0.2.4-Bud.014", "0.2.4-Bud.14/../x", "0.2.4-Bud.14;id", "0.2.4-Bud.14-rc1", "0.2.4-cyberaudit.15"} {
+		require.False(t, validRelease(&GitHubRelease{TagName: v}, githubRepo), v)
+	}
+}
+func TestBudUpdateSourcesAndCache(t *testing.T) {
+	svc, client := newBudUpdateTest(t)
+	// Legacy cache or another repository cannot become the custom install target.
+	svc.cache.(*updateServiceCacheStub).data = `{"latest":"99.0.0","timestamp":9999999999}`
+	info, err := svc.CheckUpdate(context.Background(), false)
 	require.NoError(t, err)
-	require.Len(t, versions, 3)
-	require.Equal(t, "0.1.146", versions[0].Version)
-	require.Equal(t, "0.1.144", versions[1].Version)
-	require.Equal(t, "0.1.143", versions[2].Version)
-}
-
-func TestUpdateServiceListRollbackVersionsSortsUnorderedInput(t *testing.T) {
-	releases := []*GitHubRelease{
-		{TagName: "v0.1.144"},
-		{TagName: "v0.1.146"},
-		{TagName: "v0.1.145"},
-	}
-	svc := newRollbackTestService("0.1.147", releases)
-
-	versions, err := svc.ListRollbackVersions(context.Background())
-
+	require.True(t, info.HasUpdate)
+	require.Equal(t, "0.2.4-Bud.14", info.LatestVersion)
+	require.Equal(t, githubRepo, info.UpdateSource)
+	require.True(t, info.Official.HasUpdate)
+	require.Equal(t, "0.2.4", info.Official.BaseVersion)
+	require.Equal(t, "0.2.5", info.Official.LatestVersion)
+	require.Empty(t, info.ReleaseInfo.Assets)
+	require.False(t, info.CanUpdate)
+	info, err = svc.CheckUpdate(context.Background(), false)
 	require.NoError(t, err)
-	require.Len(t, versions, 3)
-	require.Equal(t, "0.1.146", versions[0].Version)
-	require.Equal(t, "0.1.145", versions[1].Version)
-	require.Equal(t, "0.1.144", versions[2].Version)
+	require.True(t, info.Cached)
+	require.Equal(t, 1, client.calls[githubRepo])
+	require.Equal(t, 1, client.calls[officialGitHubRepo])
+	client.failures[githubRepo] = true
+	info, err = svc.CheckUpdate(context.Background(), true)
+	require.NoError(t, err)
+	require.NotEmpty(t, info.Warning)
+	require.Empty(t, info.Official.Warning)
+	require.Equal(t, "0.2.4-Bud.14", info.LatestVersion)
+	require.ErrorContains(t, svc.PerformUpdate(context.Background()), "release check failed")
 }
-
-func TestUpdateServiceListRollbackVersionsEmptyWhenNoneOlder(t *testing.T) {
-	releases := []*GitHubRelease{
-		{TagName: "v0.1.147"},
-		{TagName: "v0.1.148"},
-	}
-	svc := newRollbackTestService("0.1.147", releases)
-
+func TestBudUpdateCannotInstallOfficialOrRollback(t *testing.T) {
+	svc, client := newBudUpdateTest(t)
+	client.releases[githubRepo] = &GitHubRelease{TagName: "v0.9.9"}
+	require.Error(t, svc.PerformUpdate(context.Background()))
+	require.ErrorIs(t, svc.Rollback(), ErrRollbackVersionNotAllowed)
+	require.ErrorIs(t, svc.RollbackToVersion(context.Background(), "0.2.3"), ErrRollbackVersionNotAllowed)
 	versions, err := svc.ListRollbackVersions(context.Background())
-
 	require.NoError(t, err)
 	require.Empty(t, versions)
 }
-
-func TestUpdateServiceListRollbackVersionsPropagatesFetchError(t *testing.T) {
-	svc := NewUpdateService(
-		&updateServiceCacheStub{},
-		&updateServiceGitHubClientStub{recentErr: errors.New("github unavailable")},
-		"0.1.147",
-		"release",
-	)
-
-	_, err := svc.ListRollbackVersions(context.Background())
-
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "github unavailable")
+func TestBudUpdateNoUpdateAndIndependentOfficialFailure(t *testing.T) {
+	svc, client := newBudUpdateTest(t)
+	svc.currentVersion = "0.2.4-Bud.14"
+	client.failures[officialGitHubRepo] = true
+	require.ErrorIs(t, svc.PerformUpdate(context.Background()), ErrNoUpdateAvailable)
+	info, err := svc.CheckUpdate(context.Background(), false)
+	require.NoError(t, err)
+	require.Empty(t, info.Warning)
+	require.NotEmpty(t, info.Official.Warning)
+	require.False(t, info.HasUpdate)
 }
-
-func TestUpdateServiceRollbackToVersionRejectsDisallowedTargets(t *testing.T) {
-	releases := []*GitHubRelease{
-		{TagName: "v0.1.148"},
-		{TagName: "v0.1.147"},
-		{TagName: "v0.1.146"},
-		{TagName: "v0.1.145"},
-		{TagName: "v0.1.144"},
-		{TagName: "v0.1.143"},
-		{TagName: "v0.1.142"},
+func TestBudUpdateManagedBundleAndIPC(t *testing.T) {
+	svc, client := newBudUpdateTest(t)
+	dir := t.TempDir()
+	svc.updaterSocket = filepath.Join(dir, "u.sock")
+	svc.updaterStatus = filepath.Join(dir, "status.json")
+	listener, err := net.Listen("unix", svc.updaterSocket)
+	require.NoError(t, err)
+	defer listener.Close()
+	name := "sub2api_0.2.4-Bud.14_linux_amd64.update.tar.gz"
+	release := client.releases[githubRepo]
+	for _, file := range []string{name, name + ".sig"} {
+		release.Assets = append(release.Assets, GitHubAsset{Name: file, Size: 64, BrowserDownloadURL: "https://github.com/" + githubRepo + "/releases/download/" + release.TagName + "/" + file})
 	}
-	svc := newRollbackTestService("0.1.147", releases)
-
-	for _, target := range []string{
-		"",         // empty
-		"0.1.147",  // current version
-		"v0.1.147", // current version with prefix
-		"0.1.148",  // newer than current
-		"0.1.142",  // older than the 3 most recent
-		"9.9.9",    // nonexistent
-	} {
-		err := svc.RollbackToVersion(context.Background(), target)
-		require.ErrorIs(t, err, ErrRollbackVersionNotAllowed, "target %q should be rejected", target)
-	}
-}
-
-func TestUpdateServiceRollbackToVersionAcceptsVPrefix(t *testing.T) {
-	// No platform asset in the release: the target passes the allowlist check
-	// and fails later at asset lookup, proving the version itself was accepted.
-	releases := []*GitHubRelease{
-		{TagName: "v0.1.147"},
-		{TagName: "v0.1.146"},
-	}
-	svc := newRollbackTestService("0.1.147", releases)
-
-	err := svc.RollbackToVersion(context.Background(), "v0.1.146")
-
-	require.Error(t, err)
-	require.NotErrorIs(t, err, ErrRollbackVersionNotAllowed)
-	require.Contains(t, err.Error(), "no compatible release found")
+	require.True(t, hasManagedBundle(release))
+	release.Assets[1].BrowserDownloadURL = "https://github.com/other/project/releases/download/x/" + name + ".sig"
+	require.False(t, hasManagedBundle(release))
+	release.Assets[1].BrowserDownloadURL = "https://github.com/" + githubRepo + "/releases/download/" + release.TagName + "/" + name + ".sig"
+	received := make(chan string, 1)
+	go func() {
+		conn, e := listener.Accept()
+		if e != nil {
+			received <- ""
+			return
+		}
+		defer conn.Close()
+		_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+		var request map[string]string
+		if json.NewDecoder(conn).Decode(&request) != nil || len(request) != 1 {
+			received <- ""
+			return
+		}
+		received <- request["version"]
+		_, _ = conn.Write([]byte("{\"accepted\":true}\n"))
+	}()
+	require.NoError(t, svc.PerformUpdate(context.Background()))
+	require.Equal(t, "0.2.4-Bud.14", <-received)
+	status, err := svc.GetUpdateStatus(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, "idle", status.Phase)
+	require.NoError(t, os.WriteFile(svc.updaterStatus, []byte(`{"phase":"preparing","version":"0.2.4-Bud.14"}`), 0600))
+	status, err = svc.GetUpdateStatus(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, "preparing", status.Phase)
 }

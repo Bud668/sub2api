@@ -1,0 +1,19 @@
+[Unit]
+Description=Independent signed Bud release installer
+
+[Service]
+Type=exec
+User=root
+Group=root
+ExecStart=/usr/bin/python3 -I /usr/local/libexec/sub2api-bud-update
+ExecStopPost=/usr/bin/python3 -I /usr/local/libexec/sub2api-bud-update reconcile
+StandardInput=socket
+StandardOutput=journal
+StandardError=journal
+UMask=0077
+RuntimeMaxSec=20min
+TimeoutStopSec=30
+KillMode=control-group
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes

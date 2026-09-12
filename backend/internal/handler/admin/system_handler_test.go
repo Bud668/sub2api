@@ -48,6 +48,10 @@ func (s *systemHandlerUpdateServiceStub) PerformUpdate(ctx context.Context) erro
 	return s.performErr
 }
 
+func (s *systemHandlerUpdateServiceStub) GetUpdateStatus(context.Context) (*service.ManagedUpdateStatus, error) {
+	return &service.ManagedUpdateStatus{Phase: "idle"}, nil
+}
+
 func (s *systemHandlerUpdateServiceStub) Rollback() error {
 	s.rollbackCall++
 	return nil

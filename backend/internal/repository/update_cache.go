@@ -8,7 +8,7 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-const updateCacheKey = "update:latest"
+const updateCacheKey = "update:bud:v1" // Never reuse the official install-target cache.
 
 type updateCache struct {
 	rdb *redis.Client

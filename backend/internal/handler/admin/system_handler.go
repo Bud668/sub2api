@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/sysutil"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
@@ -46,6 +45,7 @@ func systemUpdateContext(ctx context.Context) (context.Context, context.CancelFu
 type systemUpdateService interface {
 	CheckUpdate(ctx context.Context, force bool) (*service.UpdateInfo, error)
 	PerformUpdate(ctx context.Context) error
+	GetUpdateStatus(ctx context.Context) (*service.ManagedUpdateStatus, error)
 	Rollback() error
 	ListRollbackVersions(ctx context.Context) ([]service.RollbackVersion, error)
 	RollbackToVersion(ctx context.Context, version string) error
@@ -75,6 +75,15 @@ func (h *SystemHandler) CheckUpdates(c *gin.Context) {
 	info, err := h.updateSvc.CheckUpdate(c.Request.Context(), force)
 	if err != nil {
 		response.Error(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	response.Success(c, info)
+}
+
+func (h *SystemHandler) GetUpdateStatus(c *gin.Context) {
+	info, err := h.updateSvc.GetUpdateStatus(c.Request.Context())
+	if err != nil {
+		response.Error(c, http.StatusServiceUnavailable, err.Error())
 		return
 	}
 	response.Success(c, info)
@@ -121,9 +130,10 @@ func (h *SystemHandler) PerformUpdate(c *gin.Context) {
 		succeeded = true
 
 		return gin.H{
-			"message":      "Update completed. Please restart the service.",
-			"need_restart": true,
-			"operation_id": lock.OperationID(),
+			"message":        "Signed Bud update accepted; the independent installer will back up, restart and verify the service.",
+			"need_restart":   false,
+			"update_started": true,
+			"operation_id":   lock.OperationID(),
 		}, nil
 	})
 }
@@ -201,31 +211,9 @@ func (h *SystemHandler) Rollback(c *gin.Context) {
 // RestartService restarts the systemd service
 // POST /api/v1/admin/system/restart
 func (h *SystemHandler) RestartService(c *gin.Context) {
-	operationID := buildSystemOperationID(c, "restart")
-	payload := gin.H{"operation_id": operationID}
-	executeAdminIdempotentJSON(c, "admin.system.restart", payload, service.DefaultSystemOperationIdempotencyTTL(), func(ctx context.Context) (any, error) {
-		lock, release, err := h.acquireSystemLock(ctx, operationID)
-		if err != nil {
-			return nil, err
-		}
-		succeeded := false
-		defer func() {
-			release("", succeeded)
-		}()
-
-		// Schedule service restart in background after sending response
-		// This ensures the client receives the success response before the service restarts
-		go func() {
-			// Wait a moment to ensure the response is sent
-			time.Sleep(500 * time.Millisecond)
-			sysutil.RestartServiceAsync()
-		}()
-		succeeded = true
-		return gin.H{
-			"message":      "Service restart initiated",
-			"operation_id": lock.OperationID(),
-		}, nil
-	})
+	// os.Exit bypassed billing shutdown and could clear an in-process security
+	// latch. Only the independent reviewed installer may restart a managed update.
+	response.Error(c, http.StatusConflict, "Bud updates restart through the verified installer; direct web restart is disabled")
 }
 
 func (h *SystemHandler) acquireSystemLock(

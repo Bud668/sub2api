@@ -43,6 +43,10 @@ export const useAppStore = defineStore('app', () => {
   const hasUpdate = ref<boolean>(false)
   const buildType = ref<string>('source')
   const releaseInfo = ref<ReleaseInfo | null>(null)
+  const officialUpdate = ref<VersionInfo['official']>()
+  const canUpdate = ref(false)
+  const versionWarning = ref('')
+  let versionFetchedAt = 0
 
   // Auto-incrementing ID for toasts
   let toastIdCounter = 0
@@ -242,13 +246,16 @@ export const useAppStore = defineStore('app', () => {
    */
   async function fetchVersion(force = false): Promise<VersionInfo | null> {
     // Return cached data if available and not forcing refresh
-    if (versionLoaded.value && !force) {
+    if (versionLoaded.value && !force && Date.now() - versionFetchedAt < 5 * 60_000) {
       return {
         current_version: currentVersion.value,
         latest_version: latestVersion.value,
         has_update: hasUpdate.value,
         build_type: buildType.value,
         release_info: releaseInfo.value || undefined,
+        official: officialUpdate.value,
+        can_update: canUpdate.value,
+        warning: versionWarning.value,
         cached: true
       }
     }
@@ -266,7 +273,11 @@ export const useAppStore = defineStore('app', () => {
       hasUpdate.value = data.has_update
       buildType.value = data.build_type || 'source'
       releaseInfo.value = data.release_info || null
+      officialUpdate.value = data.official
+      canUpdate.value = data.can_update === true
+      versionWarning.value = data.warning || ''
       versionLoaded.value = true
+      versionFetchedAt = Date.now()
       return data
     } catch (error) {
       console.error('Failed to fetch version:', error)
@@ -460,6 +471,9 @@ export const useAppStore = defineStore('app', () => {
     hasUpdate,
     buildType,
     releaseInfo,
+    officialUpdate,
+    canUpdate,
+    versionWarning,
 
     // Computed
     hasActiveToasts,
