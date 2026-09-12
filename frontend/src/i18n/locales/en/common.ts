@@ -67,7 +67,7 @@ export default {
     pendingActivation: 'Configuration saved; waiting for source data. Previous rules remain effective until activation.',
     budgetConflict: 'Downward protection exceeds the estimated budget. Previous allocations are retained; real upstream availability still gates new requests.',
     nativeProtectionHint: 'Configure percentage protection in Accounts → Edit → 5h / 7d auto-pause. Blank thresholds inherit Ops defaults; disabling a window bypasses its pause threshold. Dynamic weekly allocation uses the same native 7d threshold, with no separate percentage setting. Personal quotas and in-flight reserves still apply.',
-    cycle: 'Subscription quota cycle', used: 'Used this cycle', limit: 'Allocated quota', remaining: 'Available', reserved: 'In-flight reserve',
+    cycle: 'Subscription quota cycle', used: 'Used this cycle', limit: 'Current quota', remaining: 'Available', reserved: 'In-flight reserve',
     synced: 'Latest data sync', confirmed: 'Last confirmed reset', notReset: 'No confirmed reset yet', expected: 'Next upstream reset (estimated)',
     resetUnavailable: 'Waiting for upstream sync', resetHint: 'Follows the bound upstream account. This is the next estimated reset, not an unfinished previous reset. A new cycle starts only after the actual reset is confirmed.',
     cycleHint: 'The cycle number is not an upstream account ID. Syncs and adjustments preserve usage; only a confirmed bound-source reset changes the cycle. Upstream-reported dates are indicative and may change. Available funds also honor billing shares and in-flight reserves.',

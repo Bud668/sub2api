@@ -59,7 +59,7 @@ describe('upstream cycle display', () => {
     expect(wrapper.text()).toContain('分配上限')
     expect(wrapper.text()).toContain('下调保护')
     expect(wrapper.find('details').attributes('open')).toBeUndefined()
-    expect(wrapper.text()).toContain('分配额度')
+    expect(wrapper.text()).toContain('当前额度')
     expect(wrapper.text()).toContain('$200.00')
     expect(wrapper.text()).toContain('周期编号不是上游账号编号')
     expect(wrapper.text()).toContain('仅供参考')
