@@ -746,6 +746,7 @@ type Setting struct {
 }
 
 type UserSubscription struct {
+	AdminDebug   bool                              `json:"admin_debug"` // Own subscription's display flag, not an authorization input.
 	DynamicQuota *service.DynamicSubscriptionQuota `json:"dynamic_quota,omitempty"`
 	ID           int64                             `json:"id"`
 	UserID       int64                             `json:"user_id"`

@@ -883,6 +883,7 @@ func UserSubscriptionFromServiceAdmin(sub *service.UserSubscription) *AdminUserS
 
 func userSubscriptionFromServiceBase(sub *service.UserSubscription) UserSubscription {
 	return UserSubscription{
+		AdminDebug:         sub.AdminDebug,
 		DynamicQuota:       sub.DynamicQuota,
 		ID:                 sub.ID,
 		UserID:             sub.UserID,

@@ -1,5 +1,13 @@
 export default {
   dynamicQuota: {
+    groupEnable: 'Use dynamic quota for this group', groupSettings: 'Group dynamic quota',
+    groupHint: 'Configure once for existing and new regular subscriptions. Each inherits the same cap, downward protection and weight. Effective dynamic quotas replace daily, weekly and monthly limits while preserving usage and holds. Only administrator debug subscriptions are excluded.',
+    groupMembers: '{members} participants · {debug} administrator debug subscriptions',
+    legacyMembers: '{n} individual policies exist. Saving applies these group settings together while preserving usage and cycles. Conflicting sources reject the entire save.',
+    adminDebug: 'Administrator debug subscription', adminDebugHint: 'Administrator accounts only. Excluded from dynamic allocation and share counts; real consumption still reduces upstream capacity. Expiry, original group quotas, model rules and security limits still apply.',
+    adminDebugOnly: 'Debug subscriptions require an administrator account. Disable this switch or choose an administrator.',
+    initialAllocatedAt: 'Initial allocation', notAllocated: 'No automatic allocation yet', nextStage: 'Next allocation milestone',
+    stageAt: 'Upstream usage reaches {percent}%', noNextStage: 'No further milestone this cycle',
     started: 'Cycle started',
     changes: { initial: 'Initial allocation cap', bounds: 'Operator changed bounds', upstream_node: 'Upstream reached {percent}%', reset: 'Verified upstream reset' },
     absorption: {

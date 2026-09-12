@@ -24,6 +24,7 @@ const {
 vi.mock("@/api/admin", () => ({
   adminAPI: {
     groups: {
+      getDynamicQuotas: vi.fn().mockResolvedValue([]),
       list: listGroups,
       getAll: vi.fn(),
       getModelAllowlistCandidates,

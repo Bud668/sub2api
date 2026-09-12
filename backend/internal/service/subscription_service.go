@@ -194,6 +194,7 @@ func (s *SubscriptionService) invalidateSubscriptionCaches(userID, groupID int64
 
 // AssignSubscriptionInput 分配订阅输入
 type AssignSubscriptionInput struct {
+	AdminDebug   bool
 	UserID       int64
 	GroupID      int64
 	ValidityDays int
@@ -411,6 +412,9 @@ func appendSubscriptionNotes(existingNotes, newNotes string) string {
 
 // createSubscription 创建新订阅（内部方法）
 func (s *SubscriptionService) createSubscription(ctx context.Context, input *AssignSubscriptionInput) (*UserSubscription, error) {
+	if err := s.validateAdminDebug(ctx, input); err != nil {
+		return nil, err
+	}
 	validityDays := input.ValidityDays
 	if validityDays <= 0 {
 		validityDays = 30
@@ -426,6 +430,7 @@ func (s *SubscriptionService) createSubscription(ctx context.Context, input *Ass
 	}
 
 	sub := &UserSubscription{
+		AdminDebug: input.AdminDebug,
 		UserID:     input.UserID,
 		GroupID:    input.GroupID,
 		StartsAt:   now,
@@ -451,6 +456,7 @@ func (s *SubscriptionService) createSubscription(ctx context.Context, input *Ass
 
 // BulkAssignSubscriptionInput 批量分配订阅输入
 type BulkAssignSubscriptionInput struct {
+	AdminDebug   bool
 	UserIDs      []int64
 	GroupID      int64
 	ValidityDays int
@@ -479,6 +485,7 @@ func (s *SubscriptionService) BulkAssignSubscription(ctx context.Context, input 
 
 	for _, userID := range input.UserIDs {
 		sub, reused, err := s.assignSubscriptionWithReuse(ctx, &AssignSubscriptionInput{
+			AdminDebug:   input.AdminDebug,
 			UserID:       userID,
 			GroupID:      input.GroupID,
 			ValidityDays: input.ValidityDays,
@@ -525,6 +532,9 @@ func (s *SubscriptionService) assignSubscriptionWithReuse(ctx context.Context, i
 		if getErr != nil {
 			return nil, false, getErr
 		}
+		if sub.AdminDebug != input.AdminDebug {
+			return nil, false, ErrSubscriptionAssignConflict.WithMetadata(map[string]string{"conflict_reason": "admin_debug_mismatch"})
+		}
 		now := time.Now()
 		if sub.Status == SubscriptionStatusExpired ||
 			(sub.Status != SubscriptionStatusSuspended && !sub.ExpiresAt.After(now)) {
@@ -566,6 +576,9 @@ func (s *SubscriptionService) assignSubscriptionWithReuse(ctx context.Context, i
 func detectAssignSemanticConflict(existing *UserSubscription, input *AssignSubscriptionInput) (string, bool) {
 	if existing == nil || input == nil {
 		return "", false
+	}
+	if existing.AdminDebug != input.AdminDebug {
+		return "admin_debug_mismatch", true
 	}
 
 	normalizedDays := normalizeAssignValidityDays(input.ValidityDays)

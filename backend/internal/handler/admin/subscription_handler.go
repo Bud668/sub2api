@@ -170,6 +170,7 @@ func (h *SubscriptionHandler) ResolveDynamicAccounting(c *gin.Context) {
 
 // AssignSubscriptionRequest represents assign subscription request
 type AssignSubscriptionRequest struct {
+	AdminDebug   bool   `json:"admin_debug"`
 	UserID       int64  `json:"user_id" binding:"required"`
 	GroupID      int64  `json:"group_id" binding:"required"`
 	ValidityDays int    `json:"validity_days" binding:"omitempty,max=36500"` // max 100 years
@@ -178,6 +179,7 @@ type AssignSubscriptionRequest struct {
 
 // BulkAssignSubscriptionRequest represents bulk assign subscription request
 type BulkAssignSubscriptionRequest struct {
+	AdminDebug   bool    `json:"admin_debug"`
 	UserIDs      []int64 `json:"user_ids" binding:"required,min=1"`
 	GroupID      int64   `json:"group_id" binding:"required"`
 	ValidityDays int     `json:"validity_days" binding:"omitempty,max=36500"` // max 100 years
@@ -275,6 +277,7 @@ func (h *SubscriptionHandler) Assign(c *gin.Context) {
 	adminID := getAdminIDFromContext(c)
 
 	subscription, err := h.subscriptionService.AssignSubscription(c.Request.Context(), &service.AssignSubscriptionInput{
+		AdminDebug:   req.AdminDebug,
 		UserID:       req.UserID,
 		GroupID:      req.GroupID,
 		ValidityDays: req.ValidityDays,
@@ -302,6 +305,7 @@ func (h *SubscriptionHandler) BulkAssign(c *gin.Context) {
 	adminID := getAdminIDFromContext(c)
 
 	result, err := h.subscriptionService.BulkAssignSubscription(c.Request.Context(), &service.BulkAssignSubscriptionInput{
+		AdminDebug:   req.AdminDebug,
 		UserIDs:      req.UserIDs,
 		GroupID:      req.GroupID,
 		ValidityDays: req.ValidityDays,

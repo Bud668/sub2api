@@ -26,6 +26,21 @@ func TestDynamicQuotaAccountingRequiresAdminRoute(t *testing.T) {
 	stepUp := servermiddleware.StepUpAuthMiddleware(func(c *gin.Context) { c.Next() })
 	RegisterAdminRoutes(router.Group("/api/v1"), h, auth, audit, stepUp, nil, nil)
 	for _, token := range []string{"", "Bearer user-token"} {
+		for _, target := range []struct{ method, path string }{
+			{http.MethodGet, "/api/v1/admin/groups/dynamic-quotas"},
+			{http.MethodGet, "/api/v1/admin/groups/7/dynamic-quota"},
+			{http.MethodPut, "/api/v1/admin/groups/7/dynamic-quota"},
+		} {
+			req := httptest.NewRequest(target.method, target.path, nil)
+			req.Header.Set("Authorization", token)
+			r := httptest.NewRecorder()
+			router.ServeHTTP(r, req)
+			if token == "" {
+				require.Equal(t, http.StatusUnauthorized, r.Code)
+			} else {
+				require.Equal(t, http.StatusForbidden, r.Code)
+			}
+		}
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/subscriptions/absorbed-usage/00000000-0000-0000-0000-000000000001/resolve", nil)
 		req.Header.Set("Authorization", token)
 		r := httptest.NewRecorder()

@@ -6,6 +6,9 @@
 import { apiClient } from '../client'
 import type {
   AdminGroup,
+  DynamicGroupPolicy,
+  DynamicGroupQuotaStatus,
+  DynamicQuotaInput,
   GroupPlatform,
   CompositeModelRoute,
   CompositeModelRouteInput,
@@ -471,7 +474,25 @@ export async function getCapacitySummary(): Promise<
   return data
 }
 
+export async function getDynamicQuotas(): Promise<DynamicGroupPolicy[]> {
+  const { data } = await apiClient.get<DynamicGroupPolicy[]>('/admin/groups/dynamic-quotas')
+  return data
+}
+
+export async function getDynamicQuota(id: number): Promise<DynamicGroupQuotaStatus> {
+  const { data } = await apiClient.get<DynamicGroupQuotaStatus>(`/admin/groups/${id}/dynamic-quota`)
+  return data
+}
+
+export async function saveDynamicQuota(id: number, input: DynamicQuotaInput): Promise<DynamicGroupQuotaStatus> {
+  const { data } = await apiClient.put<DynamicGroupQuotaStatus>(`/admin/groups/${id}/dynamic-quota`, input)
+  return data
+}
+
 export const groupsAPI = {
+  getDynamicQuotas,
+  getDynamicQuota,
+  saveDynamicQuota,
   list,
   getAll,
   getByPlatform,

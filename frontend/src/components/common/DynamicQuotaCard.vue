@@ -16,6 +16,16 @@
       <div class="h-full rounded-full bg-primary-500" :style="{ width: `${percentage}%` }" />
     </div>
     <p v-if="quota.reserved_usd > 0" class="text-xs text-gray-500">{{ t('dynamicQuota.reserved') }} · {{ usd(quota.reserved_usd) }}</p>
+    <dl class="mt-3 space-y-2 border-t border-primary-100 pt-3 text-xs dark:border-primary-900" data-testid="dynamic-allocation-stage">
+      <div class="flex flex-wrap justify-between gap-x-3 gap-y-1">
+        <dt class="text-gray-500 dark:text-gray-400">{{ t(quota.last_change?.reason === 'initial' ? 'dynamicQuota.initialAllocatedAt' : 'dynamicQuota.allocatedAt') }}</dt>
+        <dd class="font-medium tabular-nums"><time v-if="allocationTime" :datetime="quota.last_allocation_at">{{ allocationTime }}</time><span v-else>{{ t('dynamicQuota.notAllocated') }}</span></dd>
+      </div>
+      <div class="flex flex-wrap justify-between gap-x-3 gap-y-1">
+        <dt class="text-gray-500 dark:text-gray-400">{{ t('dynamicQuota.nextStage') }}</dt>
+        <dd class="font-medium">{{ quota.next_adjustment_percent ? t('dynamicQuota.stageAt', { percent: quota.next_adjustment_percent }) : t('dynamicQuota.noNextStage') }}</dd>
+      </div>
+    </dl>
     <div class="my-3 border-t border-primary-100 pt-3 text-xs dark:border-primary-900" data-testid="dynamic-reset">
       <dl>
         <div class="flex flex-wrap justify-between gap-x-3 gap-y-1">
@@ -33,7 +43,6 @@
         <span>{{ t('dynamicQuota.cap') }} {{ usd(quota.max_limit_usd) }}</span>
         <span v-if="quota.floor_limit_usd != null" class="inline-flex items-center">{{ t('dynamicQuota.floor') }} {{ usd(quota.floor_limit_usd) }}<HelpTooltip trigger="click" :content="t('dynamicQuota.floorHint')"><template #trigger><button type="button" class="rounded px-1 focus-visible:ring-2 focus-visible:ring-primary-500" :aria-label="t('dynamicQuota.floorHelp')">ⓘ</button></template></HelpTooltip></span>
       </div>
-      <p v-if="quota.next_adjustment_percent" class="mb-2 text-xs text-gray-500">{{ t('dynamicQuota.nextAdjustment', { percent: quota.next_adjustment_percent }) }}</p>
       <p v-if="quota.status === 'learning'" class="mt-2 text-xs text-gray-600 dark:text-gray-300">{{ t('dynamicQuota.v2LearningHint') }}</p>
       <p v-if="quota.growth_frozen" class="mt-2 text-xs text-amber-800 dark:text-amber-200">{{ t('dynamicQuota.growthFrozen') }}</p>
       <details class="mt-3 text-xs text-gray-500 dark:text-gray-400">
@@ -46,7 +55,6 @@
         <dl class="space-y-1">
       <div class="flex flex-wrap justify-between gap-1"><dt>{{ t('dynamicQuota.started') }}</dt><dd>{{ date(quota.started_at) }}</dd></div>
       <div class="flex flex-wrap justify-between gap-1"><dt>{{ t('dynamicQuota.synced') }}</dt><dd>{{ date(quota.synced_at) }}</dd></div>
-      <div v-if="quota.last_allocation_at" class="flex flex-wrap justify-between gap-1"><dt>{{ t('dynamicQuota.allocatedAt') }}</dt><dd>{{ date(quota.last_allocation_at) }}</dd></div>
       <div class="flex flex-wrap justify-between gap-1"><dt>{{ t('dynamicQuota.confirmed') }}</dt><dd>{{ quota.confirmed_at ? date(quota.confirmed_at) : t('dynamicQuota.notReset') }}</dd></div>
         </dl>
         <p class="mt-2">{{ t('dynamicQuota.cycleHint') }}</p>
@@ -65,6 +73,7 @@ import HelpTooltip from '@/components/common/HelpTooltip.vue'
 const props = withDefaults(defineProps<{ quota: DynamicSubscriptionQuota; compact?: boolean }>(), { compact: false })
 const { t, locale } = useI18n()
 const resetTime = computed(() => formatDateTimeToMinute(props.quota.expected_reset_at, locale.value))
+const allocationTime = computed(() => formatDateTimeToMinute(props.quota.last_allocation_at, locale.value))
 const changeReason = computed(() => ['initial', 'bounds', 'upstream_node', 'reset'].includes(props.quota.last_change?.reason || '') ? props.quota.last_change!.reason : 'bounds')
 const statuses = ['active', 'learning', 'confirming', 'settling', 'reset_unconfirmed', 'identity_changed', 'quota_unavailable', 'invalid_billing_rate', 'upstream_reserve', 'disabled', 'activation_pending']
 const canSpend = computed(() => ['active', 'learning'].includes(props.quota.status))

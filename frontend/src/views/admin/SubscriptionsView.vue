@@ -174,6 +174,7 @@
         <DataTable
           :columns="columns"
           :data="subscriptions"
+          :card-style="row => ({ ...subscriptionBorderStyle(row), borderWidth: '2px' })"
           :loading="loading"
           :server-side-sort="true"
           default-sort-key="created_at"
@@ -217,7 +218,7 @@
           </template>
 
           <template #cell-usage="{ row }">
-            <div class="min-w-[280px] space-y-2">
+            <div class="min-w-[280px] space-y-2" :class="!row.dynamic_quota?.enabled ? 'rounded-xl border-2 p-3' : ''" :style="!row.dynamic_quota?.enabled ? subscriptionBorderStyle(row) : undefined" :data-testid="!row.dynamic_quota?.enabled ? 'subscription-card' : undefined">
               <!-- Daily Usage -->
               <div v-if="!row.dynamic_quota?.enabled && row.group?.daily_limit_usd" class="usage-row">
                 <div class="flex items-center gap-2">
@@ -256,7 +257,7 @@
               </div>
 
               <!-- Weekly Usage -->
-              <DynamicQuotaCard v-if="row.dynamic_quota?.enabled" :quota="row.dynamic_quota" compact />
+              <DynamicQuotaCard v-if="row.dynamic_quota?.enabled" :quota="row.dynamic_quota" compact class="border-2" :style="subscriptionBorderStyle(row)" data-testid="subscription-card" />
               <div v-else-if="row.group?.weekly_limit_usd" class="usage-row">
                 <div class="flex items-center gap-2">
                   <span class="usage-label">{{ t('admin.subscriptions.weekly') }}</span>
@@ -390,7 +391,8 @@
 
           <template #cell-actions="{ row }">
             <div class="flex items-center gap-1">
-              <button v-if="row.group?.platform === 'openai'" type="button" class="btn btn-secondary text-xs" @click="dynamicSubscription = row">{{ t('dynamicQuota.title') }}</button>
+              <span v-if="row.admin_debug" class="rounded-md bg-violet-50 px-2 py-1 text-xs font-medium text-violet-700 dark:bg-violet-900/20 dark:text-violet-300">{{ t('dynamicQuota.adminDebug') }}</span>
+              <RouterLink v-else-if="row.group?.platform === 'openai'" to="/admin/groups" class="btn btn-secondary text-xs">{{ t('dynamicQuota.groupSettings') }}</RouterLink>
               <button
                 v-if="row.status === 'active' || row.status === 'expired'"
                 @click="handleExtend(row)"
@@ -547,6 +549,13 @@
           <input v-model.number="assignForm.validity_days" type="number" min="1" class="input" />
           <p class="input-hint">{{ t('admin.subscriptions.validityHint') }}</p>
         </div>
+        <div class="rounded-xl border border-gray-200 p-3 dark:border-dark-600">
+          <label class="flex cursor-pointer items-center gap-3">
+            <input v-model="assignForm.admin_debug" type="checkbox" class="h-5 w-5 rounded" data-testid="admin-debug-subscription" />
+            <span class="font-medium">{{ t('dynamicQuota.adminDebug') }}</span>
+          </label>
+          <p class="mt-2 text-xs text-gray-500">{{ t('dynamicQuota.adminDebugHint') }}</p>
+        </div>
       </form>
       <template #footer>
         <div class="flex justify-end gap-3">
@@ -584,9 +593,6 @@
         </div>
       </template>
     </BaseDialog>
-
-    <DynamicQuotaDialog v-if="dynamicSubscription" :key="dynamicSubscription.id" :subscription="dynamicSubscription" @close="dynamicSubscription = null" @saved="loadSubscriptions" />
-
     <!-- Adjust Subscription Modal -->
     <BaseDialog
       :show="showExtendModal"
@@ -792,10 +798,10 @@ import GroupBadge from '@/components/common/GroupBadge.vue'
 import GroupOptionItem from '@/components/common/GroupOptionItem.vue'
 import Icon from '@/components/icons/Icon.vue'
 import DynamicQuotaCard from '@/components/common/DynamicQuotaCard.vue'
-import DynamicQuotaDialog from '@/components/admin/DynamicQuotaDialog.vue'
 import SubscriptionAbsorptionPanel from '@/components/admin/SubscriptionAbsorptionPanel.vue'
 import {
   getRemainingDurationParts,
+  subscriptionBorderStyle,
   getRemainingExpiryDuration,
   isOneTimeDailyQuota,
   type RemainingDurationParts
@@ -804,7 +810,6 @@ import { GROUP_PLATFORM_OPTIONS } from '@/constants/platforms'
 
 const { t } = useI18n()
 const appStore = useAppStore()
-const dynamicSubscription = ref<UserSubscription | null>(null)
 
 interface GroupOption {
   value: number
@@ -993,6 +998,7 @@ const revokingSubscription = ref<UserSubscription | null>(null)
 const restoringSubscription = ref<UserSubscription | null>(null)
 
 const assignForm = reactive({
+  admin_debug: false,
   user_id: null as number | null,
   group_id: null as number | null,
   validity_days: 30
@@ -1176,6 +1182,7 @@ const searchUsers = async () => {
 }
 
 const selectUser = (user: SimpleUser) => {
+  assignForm.admin_debug = false
   selectedUser.value = user
   userSearchKeyword.value = user.email
   showUserDropdown.value = false
@@ -1183,6 +1190,7 @@ const selectUser = (user: SimpleUser) => {
 }
 
 const clearUserSelection = () => {
+  assignForm.admin_debug = false
   selectedUser.value = null
   userSearchKeyword.value = ''
   userSearchResults.value = []
@@ -1212,6 +1220,7 @@ const closeAssignModal = () => {
   assignForm.user_id = null
   assignForm.group_id = null
   assignForm.validity_days = 30
+  assignForm.admin_debug = false
   // Clear user search state
   selectedUser.value = null
   userSearchKeyword.value = ''
@@ -1236,6 +1245,7 @@ const handleAssignSubscription = async () => {
   submitting.value = true
   try {
     await adminAPI.subscriptions.assign({
+      admin_debug: assignForm.admin_debug,
       user_id: assignForm.user_id,
       group_id: assignForm.group_id,
       validity_days: assignForm.validity_days
@@ -1244,7 +1254,7 @@ const handleAssignSubscription = async () => {
     closeAssignModal()
     loadSubscriptions()
   } catch (error: any) {
-    appStore.showError(error.response?.data?.detail || t('admin.subscriptions.failedToAssign'))
+    appStore.showError(error.reason === 'ADMIN_DEBUG_SUBSCRIPTION' ? t('dynamicQuota.adminDebugOnly') : (error.response?.data?.detail || t('admin.subscriptions.failedToAssign')))
     console.error('Error assigning subscription:', error)
   } finally {
     submitting.value = false

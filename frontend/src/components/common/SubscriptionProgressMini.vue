@@ -27,7 +27,7 @@
     <transition name="dropdown">
       <div
         v-if="tooltipOpen"
-        class="absolute right-0 z-50 mt-2 w-[340px] overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl dark:border-dark-700 dark:bg-dark-800"
+        class="absolute right-0 z-50 mt-2 w-[340px] max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl dark:border-dark-700 dark:bg-dark-800"
       >
         <div class="border-b border-gray-100 p-3 dark:border-dark-700">
           <h3 class="text-sm font-semibold text-gray-900 dark:text-white">
@@ -38,14 +38,16 @@
           </p>
         </div>
 
-        <div class="max-h-64 overflow-y-auto">
+        <div class="max-h-64 space-y-2 overflow-y-auto p-2">
           <div
             v-for="subscription in displaySubscriptions"
             :key="subscription.id"
-            class="border-b border-gray-50 p-3 last:border-b-0 dark:border-dark-700/50"
+            class="rounded-xl border-2 p-3"
+            :style="subscriptionBorderStyle(subscription)"
+            data-testid="subscription-card"
           >
-            <div class="mb-2 flex items-center justify-between">
-              <span class="text-sm font-medium text-gray-900 dark:text-white">
+            <div class="mb-2 flex flex-wrap items-center justify-between gap-1">
+              <span class="break-words text-sm font-medium text-gray-900 dark:text-white">
                 {{ subscription.group?.name || `Group #${subscription.group_id}` }}
               </span>
               <span
@@ -56,6 +58,8 @@
                 {{ formatDaysRemaining(subscription.expires_at) }}
               </span>
             </div>
+
+            <p v-if="subscription.admin_debug" class="mb-2 text-xs font-medium text-violet-700 dark:text-violet-300">{{ t('dynamicQuota.adminDebug') }}</p>
 
             <!-- Progress bars or Unlimited badge -->
             <div class="space-y-1.5">
@@ -185,6 +189,7 @@ import Icon from '@/components/icons/Icon.vue'
 import DynamicQuotaCard from '@/components/common/DynamicQuotaCard.vue'
 import { useSubscriptionStore } from '@/stores'
 import type { UserSubscription } from '@/types'
+import { subscriptionBorderStyle } from '@/utils/subscriptionQuota'
 
 const { t } = useI18n()
 

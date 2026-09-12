@@ -79,6 +79,20 @@ func (_c *UserSubscriptionCreate) SetGroupID(v int64) *UserSubscriptionCreate {
 	return _c
 }
 
+// SetAdminDebug sets the "admin_debug" field.
+func (_c *UserSubscriptionCreate) SetAdminDebug(v bool) *UserSubscriptionCreate {
+	_c.mutation.SetAdminDebug(v)
+	return _c
+}
+
+// SetNillableAdminDebug sets the "admin_debug" field if the given value is not nil.
+func (_c *UserSubscriptionCreate) SetNillableAdminDebug(v *bool) *UserSubscriptionCreate {
+	if v != nil {
+		_c.SetAdminDebug(*v)
+	}
+	return _c
+}
+
 // SetStartsAt sets the "starts_at" field.
 func (_c *UserSubscriptionCreate) SetStartsAt(v time.Time) *UserSubscriptionCreate {
 	_c.mutation.SetStartsAt(v)
@@ -326,6 +340,10 @@ func (_c *UserSubscriptionCreate) defaults() error {
 		v := usersubscription.DefaultUpdatedAt()
 		_c.mutation.SetUpdatedAt(v)
 	}
+	if _, ok := _c.mutation.AdminDebug(); !ok {
+		v := usersubscription.DefaultAdminDebug
+		_c.mutation.SetAdminDebug(v)
+	}
 	if _, ok := _c.mutation.Status(); !ok {
 		v := usersubscription.DefaultStatus
 		_c.mutation.SetStatus(v)
@@ -365,6 +383,9 @@ func (_c *UserSubscriptionCreate) check() error {
 	}
 	if _, ok := _c.mutation.GroupID(); !ok {
 		return &ValidationError{Name: "group_id", err: errors.New(`ent: missing required field "UserSubscription.group_id"`)}
+	}
+	if _, ok := _c.mutation.AdminDebug(); !ok {
+		return &ValidationError{Name: "admin_debug", err: errors.New(`ent: missing required field "UserSubscription.admin_debug"`)}
 	}
 	if _, ok := _c.mutation.StartsAt(); !ok {
 		return &ValidationError{Name: "starts_at", err: errors.New(`ent: missing required field "UserSubscription.starts_at"`)}
@@ -436,6 +457,10 @@ func (_c *UserSubscriptionCreate) createSpec() (*UserSubscription, *sqlgraph.Cre
 	if value, ok := _c.mutation.DeletedAt(); ok {
 		_spec.SetField(usersubscription.FieldDeletedAt, field.TypeTime, value)
 		_node.DeletedAt = &value
+	}
+	if value, ok := _c.mutation.AdminDebug(); ok {
+		_spec.SetField(usersubscription.FieldAdminDebug, field.TypeBool, value)
+		_node.AdminDebug = value
 	}
 	if value, ok := _c.mutation.StartsAt(); ok {
 		_spec.SetField(usersubscription.FieldStartsAt, field.TypeTime, value)
@@ -651,6 +676,18 @@ func (u *UserSubscriptionUpsert) SetGroupID(v int64) *UserSubscriptionUpsert {
 // UpdateGroupID sets the "group_id" field to the value that was provided on create.
 func (u *UserSubscriptionUpsert) UpdateGroupID() *UserSubscriptionUpsert {
 	u.SetExcluded(usersubscription.FieldGroupID)
+	return u
+}
+
+// SetAdminDebug sets the "admin_debug" field.
+func (u *UserSubscriptionUpsert) SetAdminDebug(v bool) *UserSubscriptionUpsert {
+	u.Set(usersubscription.FieldAdminDebug, v)
+	return u
+}
+
+// UpdateAdminDebug sets the "admin_debug" field to the value that was provided on create.
+func (u *UserSubscriptionUpsert) UpdateAdminDebug() *UserSubscriptionUpsert {
+	u.SetExcluded(usersubscription.FieldAdminDebug)
 	return u
 }
 
@@ -951,6 +988,20 @@ func (u *UserSubscriptionUpsertOne) SetGroupID(v int64) *UserSubscriptionUpsertO
 func (u *UserSubscriptionUpsertOne) UpdateGroupID() *UserSubscriptionUpsertOne {
 	return u.Update(func(s *UserSubscriptionUpsert) {
 		s.UpdateGroupID()
+	})
+}
+
+// SetAdminDebug sets the "admin_debug" field.
+func (u *UserSubscriptionUpsertOne) SetAdminDebug(v bool) *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.SetAdminDebug(v)
+	})
+}
+
+// UpdateAdminDebug sets the "admin_debug" field to the value that was provided on create.
+func (u *UserSubscriptionUpsertOne) UpdateAdminDebug() *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.UpdateAdminDebug()
 	})
 }
 
@@ -1449,6 +1500,20 @@ func (u *UserSubscriptionUpsertBulk) SetGroupID(v int64) *UserSubscriptionUpsert
 func (u *UserSubscriptionUpsertBulk) UpdateGroupID() *UserSubscriptionUpsertBulk {
 	return u.Update(func(s *UserSubscriptionUpsert) {
 		s.UpdateGroupID()
+	})
+}
+
+// SetAdminDebug sets the "admin_debug" field.
+func (u *UserSubscriptionUpsertBulk) SetAdminDebug(v bool) *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.SetAdminDebug(v)
+	})
+}
+
+// UpdateAdminDebug sets the "admin_debug" field to the value that was provided on create.
+func (u *UserSubscriptionUpsertBulk) UpdateAdminDebug() *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.UpdateAdminDebug()
 	})
 }
 

@@ -35,7 +35,8 @@ func expectDynamicWSAdmission(t *testing.T, mock sqlmock.Sqlmock, allow bool) {
 	mock.ExpectBegin()
 	mock.ExpectExec("INSERT INTO dynamic_quota_pools").WithArgs(int64(9951)).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery("SELECT state FROM dynamic_quota_pools").WithArgs(int64(9951)).WillReturnRows(sqlmock.NewRows([]string{"state"}).AddRow(raw))
-	mock.ExpectQuery("SELECT us.id,us.status").WithArgs(int64(1851)).WillReturnRows(sqlmock.NewRows([]string{"id", "active"}).AddRow(11, true))
+	mock.ExpectQuery("SELECT us.id,us.status").WithArgs(int64(1851)).WillReturnRows(sqlmock.NewRows([]string{"id", "active", "group_id", "debug"}).AddRow(11, true, 4301, false))
+	mock.ExpectQuery("SELECT account_id,enabled,weight.*FROM dynamic_group_policies").WithArgs(int64(4301)).WillReturnRows(sqlmock.NewRows([]string{"account_id", "enabled", "weight", "cap", "floor", "revision"}))
 	mock.ExpectQuery("SELECT account_id FROM dynamic_subscription_policies").WithArgs(int64(11)).WillReturnRows(sqlmock.NewRows([]string{"account_id"}).AddRow(9951))
 	mock.ExpectQuery("SELECT EXISTS").WithArgs(int64(9951)).WillReturnRows(sqlmock.NewRows([]string{"protected"}).AddRow(true))
 	mock.ExpectQuery("SELECT COALESCE\\(a.extra").WithArgs(int64(9951)).WillReturnRows(sqlmock.NewRows([]string{"extra", "settings"}).AddRow(`{"auto_pause_7d_threshold":0.98}`, `{}`))
@@ -140,10 +141,12 @@ func TestDynamicQuotaWSFirstFrameReconnectAndTurns(t *testing.T) {
 }
 
 func TestDynamicQuotaPublicProjectionAndOps(t *testing.T) {
-	sub := &service.UserSubscription{ID: 11, DynamicQuota: &service.DynamicSubscriptionQuota{Enabled: true, AccountID: 4, CapacityEstimateUSD: 12345, SampleCount: 3, LimitUSD: 200, UsedUSD: 20, RemainingUSD: 180,
+	sub := &service.UserSubscription{ID: 11, AdminDebug: true, Notes: "private-admin-notes", DynamicQuota: &service.DynamicSubscriptionQuota{Enabled: true, AccountID: 4, CapacityEstimateUSD: 12345, SampleCount: 3, LimitUSD: 200, UsedUSD: 20, RemainingUSD: 180,
 		GrowthFrozen: true, AllocationBudgetConflict: true}}
 	public, err := json.Marshal(dto.UserSubscriptionFromService(sub))
 	require.NoError(t, err)
+	require.Contains(t, string(public), `"admin_debug":true`)
+	require.NotContains(t, string(public), "private-admin-notes")
 	require.NotContains(t, string(public), "account_id")
 	require.NotContains(t, string(public), "capacity_estimate_usd")
 	require.NotContains(t, string(public), "sample_count")

@@ -85,6 +85,20 @@ func (_u *UserSubscriptionUpdate) SetNillableGroupID(v *int64) *UserSubscription
 	return _u
 }
 
+// SetAdminDebug sets the "admin_debug" field.
+func (_u *UserSubscriptionUpdate) SetAdminDebug(v bool) *UserSubscriptionUpdate {
+	_u.mutation.SetAdminDebug(v)
+	return _u
+}
+
+// SetNillableAdminDebug sets the "admin_debug" field if the given value is not nil.
+func (_u *UserSubscriptionUpdate) SetNillableAdminDebug(v *bool) *UserSubscriptionUpdate {
+	if v != nil {
+		_u.SetAdminDebug(*v)
+	}
+	return _u
+}
+
 // SetStartsAt sets the "starts_at" field.
 func (_u *UserSubscriptionUpdate) SetStartsAt(v time.Time) *UserSubscriptionUpdate {
 	_u.mutation.SetStartsAt(v)
@@ -471,6 +485,9 @@ func (_u *UserSubscriptionUpdate) sqlSave(ctx context.Context) (_node int, err e
 	if _u.mutation.DeletedAtCleared() {
 		_spec.ClearField(usersubscription.FieldDeletedAt, field.TypeTime)
 	}
+	if value, ok := _u.mutation.AdminDebug(); ok {
+		_spec.SetField(usersubscription.FieldAdminDebug, field.TypeBool, value)
+	}
 	if value, ok := _u.mutation.StartsAt(); ok {
 		_spec.SetField(usersubscription.FieldStartsAt, field.TypeTime, value)
 	}
@@ -727,6 +744,20 @@ func (_u *UserSubscriptionUpdateOne) SetGroupID(v int64) *UserSubscriptionUpdate
 func (_u *UserSubscriptionUpdateOne) SetNillableGroupID(v *int64) *UserSubscriptionUpdateOne {
 	if v != nil {
 		_u.SetGroupID(*v)
+	}
+	return _u
+}
+
+// SetAdminDebug sets the "admin_debug" field.
+func (_u *UserSubscriptionUpdateOne) SetAdminDebug(v bool) *UserSubscriptionUpdateOne {
+	_u.mutation.SetAdminDebug(v)
+	return _u
+}
+
+// SetNillableAdminDebug sets the "admin_debug" field if the given value is not nil.
+func (_u *UserSubscriptionUpdateOne) SetNillableAdminDebug(v *bool) *UserSubscriptionUpdateOne {
+	if v != nil {
+		_u.SetAdminDebug(*v)
 	}
 	return _u
 }
@@ -1146,6 +1177,9 @@ func (_u *UserSubscriptionUpdateOne) sqlSave(ctx context.Context) (_node *UserSu
 	}
 	if _u.mutation.DeletedAtCleared() {
 		_spec.ClearField(usersubscription.FieldDeletedAt, field.TypeTime)
+	}
+	if value, ok := _u.mutation.AdminDebug(); ok {
+		_spec.SetField(usersubscription.FieldAdminDebug, field.TypeBool, value)
 	}
 	if value, ok := _u.mutation.StartsAt(); ok {
 		_spec.SetField(usersubscription.FieldStartsAt, field.TypeTime, value)

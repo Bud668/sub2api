@@ -25,6 +25,7 @@ var (
 )
 
 type DynamicSubscriptionQuota struct {
+	GroupManaged                          bool                `json:"group_managed,omitempty"`
 	Enabled                               bool                `json:"enabled"`
 	Revision                              int64               `json:"revision"`
 	AccountID                             int64               `json:"account_id,omitempty"` // Removed from user-facing DTOs.
@@ -110,6 +111,7 @@ const dynamicEligibleMemberSQL = `EXISTS(SELECT 1 FROM user_subscriptions us
  JOIN users u ON u.id=us.user_id JOIN groups g ON g.id=us.group_id
  WHERE us.id=p.subscription_id AND us.deleted_at IS NULL AND us.status='active' AND us.expires_at>NOW()
  AND u.deleted_at IS NULL AND u.status='active' AND g.deleted_at IS NULL AND g.status='active'
+ AND NOT(us.admin_debug AND u.role='admin')
  AND g.platform='openai' AND g.subscription_type='subscription'
  AND EXISTS(SELECT 1 FROM account_groups ag WHERE ag.account_id=p.account_id AND ag.group_id=us.group_id))`
 
@@ -149,6 +151,12 @@ func (s *DynamicSubscriptionService) AdminStatus(ctx context.Context, id int64) 
 		q = &DynamicSubscriptionQuota{Weight: 1, MaxLimitUSD: ceiling.Float64, Status: "disabled"}
 	}
 	out := &DynamicQuotaAdminStatus{Policy: q, Sources: []DynamicQuotaSource{}}
+	out.Sources, err = s.groupSources(ctx, groupID)
+	return out, err
+}
+
+func (s *DynamicSubscriptionService) groupSources(ctx context.Context, groupID int64) ([]DynamicQuotaSource, error) {
+	out := []DynamicQuotaSource{}
 	rows, err := s.db.QueryContext(ctx, `SELECT a.id,a.name
  FROM accounts a JOIN account_groups ag ON ag.account_id=a.id
  WHERE ag.group_id=$1 AND a.deleted_at IS NULL AND a.platform='openai' AND a.type='oauth' ORDER BY a.id`, groupID)
@@ -166,7 +174,7 @@ func (s *DynamicSubscriptionService) AdminStatus(ctx context.Context, id int64) 
 			return nil, e
 		}
 		if !account.IsShadow() && !account.IsOpenAIAgentIdentity() && account.GetCredential("chatgpt_account_id") != "" {
-			out.Sources = append(out.Sources, source)
+			out = append(out, source)
 		}
 	}
 	return out, rows.Err()
@@ -180,7 +188,20 @@ func (s *DynamicSubscriptionService) Load(ctx context.Context, subscriptionID in
 	}
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	return loadDynamicSubscription(ctx, s.db, subscriptionID, time.Now().UTC())
+	managed, debug, err := s.ensureGroupSubscription(ctx, subscriptionID)
+	if err != nil {
+		return nil, ErrDynamicQuotaUnavailable.WithCause(err)
+	}
+	q, err := loadDynamicSubscription(ctx, s.db, subscriptionID, time.Now().UTC())
+	if q != nil {
+		q.GroupManaged = managed
+		if debug {
+			q.Enabled = false
+			q.RequestedEnabled = false
+			q.Status = "disabled"
+		}
+	}
+	return q, err
 }
 
 type dynamicQuotaQuerier interface {
@@ -340,32 +361,30 @@ func (s *DynamicSubscriptionService) Save(ctx context.Context, subscriptionID in
 	if s.disabled {
 		return infraerrors.BadRequest("DYNAMIC_QUOTA_SIMPLE_MODE", "Dynamic quota requires normal billing mode")
 	}
-	if in.FloorLimitUSD == nil || !validDynamicAmount(*in.FloorLimitUSD) || QuantizeUsageBillingAmount(*in.FloorLimitUSD) <= 0 || *in.FloorLimitUSD > in.MaxLimitUSD {
-		return infraerrors.BadRequest("INVALID_DYNAMIC_QUOTA_PROTECTION", "Set a positive downward protection amount no greater than the allocation cap")
+	if err := validateDynamicInput(&in); err != nil {
+		return err
 	}
-	if in.Revision < 0 || in.AccountID <= 0 || !validDynamicAmount(in.Weight) || in.Weight < 0.0001 || in.Weight > 1000 ||
-		!validDynamicAmount(in.MaxLimitUSD) || in.MaxLimitUSD <= 0 || in.MaxLimitUSD > 1e9 {
-		return infraerrors.BadRequest("INVALID_DYNAMIC_QUOTA", "Choose an upstream account, weight (0–1000) and positive allocation cap")
-	}
-	in.MaxLimitUSD = QuantizeUsageBillingAmount(in.MaxLimitUSD)
-	in.Weight = math.Round(in.Weight*1e4) / 1e4
-	floor := QuantizeUsageBillingAmount(*in.FloorLimitUSD)
-	in.FloorLimitUSD = &floor
 	// Validate before even creating a pool or querying upstream. Recheck under
 	// lock below; failed/stale forms must not mutate another subscriber's pool.
 	var err error
 	var eligible bool
 	var revisionBefore int64
 	var oldSource int64
+	var groupManaged bool
 	if err = s.db.QueryRowContext(ctx, `SELECT g.platform='openai' AND g.subscription_type='subscription'
+ AND NOT EXISTS(SELECT 1 FROM users u WHERE u.id=us.user_id AND u.role='admin' AND us.admin_debug)
  AND EXISTS(SELECT 1 FROM account_groups WHERE account_id=$2 AND group_id=g.id),
- COALESCE(p.revision,0),COALESCE(p.account_id,0) FROM user_subscriptions us JOIN groups g ON g.id=us.group_id
+ COALESCE(p.revision,0),COALESCE(p.account_id,0),EXISTS(SELECT 1 FROM dynamic_group_policies WHERE group_id=g.id)
+ FROM user_subscriptions us JOIN groups g ON g.id=us.group_id
  LEFT JOIN dynamic_subscription_policies p ON p.subscription_id=us.id
- WHERE us.id=$1 AND us.deleted_at IS NULL AND g.deleted_at IS NULL`, subscriptionID, in.AccountID).Scan(&eligible, &revisionBefore, &oldSource); err != nil {
+ WHERE us.id=$1 AND us.deleted_at IS NULL AND g.deleted_at IS NULL`, subscriptionID, in.AccountID).Scan(&eligible, &revisionBefore, &oldSource, &groupManaged); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrSubscriptionNotFound
 		}
 		return err
+	}
+	if groupManaged {
+		return infraerrors.Conflict("DYNAMIC_QUOTA_GROUP_MANAGED", "Configure dynamic quota on the subscription group")
 	}
 	if (in.Enabled && !eligible) || (oldSource != 0 && oldSource != in.AccountID) {
 		return ErrDynamicQuotaBinding
@@ -397,20 +416,42 @@ func (s *DynamicSubscriptionService) Save(ctx context.Context, subscriptionID in
 	if err != nil {
 		return err
 	}
+	var managed bool
+	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM dynamic_group_policies g JOIN user_subscriptions us ON us.group_id=g.group_id WHERE us.id=$1)`, subscriptionID).Scan(&managed); err != nil {
+		return err
+	}
+	if managed {
+		return infraerrors.Conflict("DYNAMIC_QUOTA_GROUP_MANAGED", "Configure dynamic quota on the subscription group")
+	}
+	if err = s.savePolicyTx(ctx, tx, pool, subscriptionID, in); err != nil {
+		return err
+	}
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	return s.invalidate(ctx, subscriptionID)
+}
+
+// The group and individual paths share the same accounting-preserving save.
+// The caller holds the source pool lock and owns commit/cache invalidation.
+func (s *DynamicSubscriptionService) savePolicyTx(ctx context.Context, tx *sql.Tx, pool *DynamicQuotaPoolState, subscriptionID int64, in DynamicSubscriptionInput) error {
+	var err error
 	var groupID int64
 	var used, rate float64
 	var weeklyStart sql.NullTime
 	var platform, kind, status string
 	var expires time.Time
 	var peak Group
+	var debug bool
 	err = tx.QueryRowContext(ctx, `SELECT us.group_id,us.weekly_usage_usd,us.weekly_window_start,
  COALESCE(r.rate_multiplier,g.rate_multiplier),g.platform,g.subscription_type,us.status,us.expires_at,
- g.peak_rate_enabled,g.peak_start,g.peak_end,g.peak_rate_multiplier
+ g.peak_rate_enabled,g.peak_start,g.peak_end,g.peak_rate_multiplier,
+ (us.admin_debug AND EXISTS(SELECT 1 FROM users WHERE id=us.user_id AND role='admin'))
  FROM user_subscriptions us JOIN groups g ON g.id=us.group_id
  LEFT JOIN user_group_rate_multipliers r ON r.user_id=us.user_id AND r.group_id=us.group_id
  WHERE us.id=$1 AND us.deleted_at IS NULL AND g.deleted_at IS NULL FOR UPDATE OF us`, subscriptionID).
 		Scan(&groupID, &used, &weeklyStart, &rate, &platform, &kind, &status, &expires,
-			&peak.PeakRateEnabled, &peak.PeakStart, &peak.PeakEnd, &peak.PeakRateMultiplier)
+			&peak.PeakRateEnabled, &peak.PeakStart, &peak.PeakEnd, &peak.PeakRateMultiplier, &debug)
 	if err != nil {
 		return err
 	}
@@ -419,6 +460,9 @@ func (s *DynamicSubscriptionService) Save(ctx context.Context, subscriptionID in
 	}
 	if in.Enabled && (status != SubscriptionStatusActive || !expires.After(time.Now())) {
 		return ErrSubscriptionExpired
+	}
+	if in.Enabled && debug {
+		return ErrDynamicQuotaBinding
 	}
 	var bound bool
 	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM account_groups WHERE account_id=$1 AND group_id=$2)`, in.AccountID, groupID).Scan(&bound); err != nil {
@@ -506,10 +550,7 @@ func (s *DynamicSubscriptionService) Save(ctx context.Context, subscriptionID in
 	if err = writeDynamicPool(ctx, tx, in.AccountID, pool); err != nil {
 		return err
 	}
-	if err = tx.Commit(); err != nil {
-		return err
-	}
-	return s.invalidate(ctx, subscriptionID)
+	return nil
 }
 
 func lockDynamicPool(ctx context.Context, tx *sql.Tx, accountID int64) (*DynamicQuotaPoolState, error) {
@@ -547,6 +588,9 @@ func dynamicPoolTotals(ctx context.Context, db dynamicQuotaQuerier, accountID in
 // Refresh performs one independent metadata fetch, then commits only if newer
 // than the locked snapshot. It never sends model requests or consumes reset cards.
 func (s *DynamicSubscriptionService) Refresh(ctx context.Context, accountID int64) error {
+	if err := s.syncGroupMembers(ctx, accountID); err != nil {
+		return err
+	}
 	attemptAt := time.Now().UTC()
 	if s.fetch == nil {
 		return ErrDynamicQuotaUnavailable
@@ -782,13 +826,37 @@ func (s *DynamicSubscriptionService) Begin(ctx context.Context, apiKeyID, accoun
 	var subID sql.NullInt64
 	var source sql.NullInt64
 	var subscriptionActive bool
-	err = tx.QueryRowContext(ctx, `SELECT us.id,us.status='active' AND us.expires_at>NOW() FROM api_keys k
+	var groupID int64
+	var debug bool
+	err = tx.QueryRowContext(ctx, `SELECT us.id,us.status='active' AND us.expires_at>NOW(),us.group_id,
+ (us.admin_debug AND EXISTS(SELECT 1 FROM users WHERE id=us.user_id AND role='admin')) FROM api_keys k
  JOIN user_subscriptions us ON us.user_id=k.user_id AND us.group_id=k.group_id AND us.deleted_at IS NULL
- WHERE k.id=$1 AND k.deleted_at IS NULL FOR SHARE OF us`, apiKeyID).Scan(&subID, &subscriptionActive)
+ WHERE k.id=$1 AND k.deleted_at IS NULL FOR SHARE OF us`, apiKeyID).Scan(&subID, &subscriptionActive, &groupID, &debug)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrDynamicQuotaUnavailable.WithCause(err)
 	}
 	if subID.Valid {
+		groupPolicy, err := loadDynamicGroup(ctx, tx, groupID)
+		if err != nil {
+			return nil, err
+		}
+		if groupPolicy != nil && subscriptionActive && !debug {
+			if groupPolicy.Enabled && groupPolicy.AccountID != accountID {
+				return nil, ErrDynamicQuotaBinding
+			}
+			// Recheck under the source lock: a subscription can be created while
+			// a group save is committing, after its member list was collected.
+			if groupPolicy.AccountID == accountID {
+				if untracked {
+					return nil, ErrDynamicQuotaUnavailable
+				}
+				if err = s.applyGroupPolicyTx(ctx, tx, p, groupPolicy, subID.Int64); err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
+	if subID.Valid && !debug {
 		err = tx.QueryRowContext(ctx, `SELECT account_id FROM dynamic_subscription_policies WHERE subscription_id=$1 AND enabled AND NOT activation_pending`, subID.Int64).Scan(&source)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return nil, err
@@ -1072,6 +1140,10 @@ func (s *DynamicSubscriptionService) Start() {
 			case <-ticker.C:
 				ctx, cancel := context.WithTimeout(context.Background(), 50*time.Second)
 				rows, err := s.db.QueryContext(ctx, `SELECT p.account_id FROM dynamic_subscription_policies p WHERE p.enabled AND `+dynamicEligibleMemberSQL+`
+ UNION SELECT g.account_id FROM dynamic_group_policies g WHERE g.enabled AND EXISTS(
+ SELECT 1 FROM user_subscriptions us JOIN users u ON u.id=us.user_id WHERE us.group_id=g.group_id
+ AND us.deleted_at IS NULL AND us.status='active' AND us.expires_at>NOW() AND u.deleted_at IS NULL AND u.status='active'
+ AND NOT(us.admin_debug AND u.role='admin'))
  UNION SELECT account_id FROM dynamic_quota_requests WHERE source_closed_at IS NULL AND status IN ('pending','uncertain') ORDER BY account_id`)
 				var ids []int64
 				if err == nil {

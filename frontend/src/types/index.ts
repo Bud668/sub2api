@@ -2043,6 +2043,7 @@ export interface ChangePasswordRequest {
 // ==================== User Subscription Types ====================
 
 export interface DynamicSubscriptionQuota {
+  group_managed?: boolean
   enabled: boolean
   revision: number
   account_id?: number
@@ -2085,7 +2086,20 @@ export interface DynamicQuotaAdminStatus {
   sources: { id: number; name: string }[]
 }
 
+export interface DynamicGroupPolicy extends DynamicQuotaInput {
+  group_id: number
+}
+
+export interface DynamicGroupQuotaStatus {
+  policy: DynamicGroupPolicy
+  sources: { id: number; name: string }[]
+  members: number
+  debug_members: number
+  legacy_members: number
+}
+
 export interface UserSubscription {
+  admin_debug?: boolean
   dynamic_quota?: DynamicSubscriptionQuota | null
   id: number
   user_id: number
@@ -2131,12 +2145,14 @@ export interface SubscriptionProgress {
 }
 
 export interface AssignSubscriptionRequest {
+  admin_debug?: boolean
   user_id: number
   group_id: number
   validity_days?: number
 }
 
 export interface BulkAssignSubscriptionRequest {
+  admin_debug?: boolean
   user_ids: number[]
   group_id: number
   validity_days?: number

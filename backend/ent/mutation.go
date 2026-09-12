@@ -55371,6 +55371,7 @@ type UserSubscriptionMutation struct {
 	created_at              *time.Time
 	updated_at              *time.Time
 	deleted_at              *time.Time
+	admin_debug             *bool
 	starts_at               *time.Time
 	expires_at              *time.Time
 	status                  *string
@@ -55689,6 +55690,42 @@ func (m *UserSubscriptionMutation) OldGroupID(ctx context.Context) (v int64, err
 // ResetGroupID resets all changes to the "group_id" field.
 func (m *UserSubscriptionMutation) ResetGroupID() {
 	m.group = nil
+}
+
+// SetAdminDebug sets the "admin_debug" field.
+func (m *UserSubscriptionMutation) SetAdminDebug(b bool) {
+	m.admin_debug = &b
+}
+
+// AdminDebug returns the value of the "admin_debug" field in the mutation.
+func (m *UserSubscriptionMutation) AdminDebug() (r bool, exists bool) {
+	v := m.admin_debug
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAdminDebug returns the old "admin_debug" field's value of the UserSubscription entity.
+// If the UserSubscription object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UserSubscriptionMutation) OldAdminDebug(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAdminDebug is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAdminDebug requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAdminDebug: %w", err)
+	}
+	return oldValue.AdminDebug, nil
+}
+
+// ResetAdminDebug resets all changes to the "admin_debug" field.
+func (m *UserSubscriptionMutation) ResetAdminDebug() {
+	m.admin_debug = nil
 }
 
 // SetStartsAt sets the "starts_at" field.
@@ -56430,7 +56467,7 @@ func (m *UserSubscriptionMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *UserSubscriptionMutation) Fields() []string {
-	fields := make([]string, 0, 17)
+	fields := make([]string, 0, 18)
 	if m.created_at != nil {
 		fields = append(fields, usersubscription.FieldCreatedAt)
 	}
@@ -56445,6 +56482,9 @@ func (m *UserSubscriptionMutation) Fields() []string {
 	}
 	if m.group != nil {
 		fields = append(fields, usersubscription.FieldGroupID)
+	}
+	if m.admin_debug != nil {
+		fields = append(fields, usersubscription.FieldAdminDebug)
 	}
 	if m.starts_at != nil {
 		fields = append(fields, usersubscription.FieldStartsAt)
@@ -56500,6 +56540,8 @@ func (m *UserSubscriptionMutation) Field(name string) (ent.Value, bool) {
 		return m.UserID()
 	case usersubscription.FieldGroupID:
 		return m.GroupID()
+	case usersubscription.FieldAdminDebug:
+		return m.AdminDebug()
 	case usersubscription.FieldStartsAt:
 		return m.StartsAt()
 	case usersubscription.FieldExpiresAt:
@@ -56543,6 +56585,8 @@ func (m *UserSubscriptionMutation) OldField(ctx context.Context, name string) (e
 		return m.OldUserID(ctx)
 	case usersubscription.FieldGroupID:
 		return m.OldGroupID(ctx)
+	case usersubscription.FieldAdminDebug:
+		return m.OldAdminDebug(ctx)
 	case usersubscription.FieldStartsAt:
 		return m.OldStartsAt(ctx)
 	case usersubscription.FieldExpiresAt:
@@ -56610,6 +56654,13 @@ func (m *UserSubscriptionMutation) SetField(name string, value ent.Value) error 
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetGroupID(v)
+		return nil
+	case usersubscription.FieldAdminDebug:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAdminDebug(v)
 		return nil
 	case usersubscription.FieldStartsAt:
 		v, ok := value.(time.Time)
@@ -56836,6 +56887,9 @@ func (m *UserSubscriptionMutation) ResetField(name string) error {
 		return nil
 	case usersubscription.FieldGroupID:
 		m.ResetGroupID()
+		return nil
+	case usersubscription.FieldAdminDebug:
+		m.ResetAdminDebug()
 		return nil
 	case usersubscription.FieldStartsAt:
 		m.ResetStartsAt()

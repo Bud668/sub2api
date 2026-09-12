@@ -53,6 +53,7 @@ const messages: Record<string, string> = {
 vi.mock('@/api/admin', () => ({
   adminAPI: {
     groups: {
+      getDynamicQuotas: vi.fn().mockResolvedValue([]),
       list: listGroups,
       getAll: getAllGroups,
       getModelAllowlistCandidates,

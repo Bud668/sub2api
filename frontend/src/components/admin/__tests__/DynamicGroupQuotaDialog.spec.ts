@@ -2,18 +2,19 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import zh from '@/i18n/locales/zh'
-import type { DynamicQuotaAdminStatus, UserSubscription } from '@/types'
-import DynamicQuotaDialog from '../DynamicQuotaDialog.vue'
+import type { DynamicGroupQuotaStatus, AdminGroup } from '@/types'
+import DynamicGroupQuotaDialog from '../DynamicGroupQuotaDialog.vue'
 
 const { get, save } = vi.hoisted(() => ({ get: vi.fn(), save: vi.fn() }))
-vi.mock('@/api/admin', () => ({ adminAPI: { subscriptions: { getDynamicQuota: get, saveDynamicQuota: save } } }))
-const initial = (): DynamicQuotaAdminStatus => ({
-  policy: { enabled: false, revision: 0, weight: 1, max_limit_usd: 700, floor_limit_usd: null, cycle: 0, status: 'disabled', used_usd: 0, limit_usd: 0, remaining_usd: 0, reserved_usd: 0, started_at: '', updated_at: '' },
+vi.mock('@/api/admin', () => ({ adminAPI: { groups: { getDynamicQuota: get, saveDynamicQuota: save } } }))
+const initial = (): DynamicGroupQuotaStatus => ({
+  policy: { group_id: 11, account_id: 0, enabled: false, revision: 0, weight: 1, max_limit_usd: 700, floor_limit_usd: null },
+  members: 2, debug_members: 1, legacy_members: 0,
   sources: [{ id: 4, name: 'Test source' }, { id: 5, name: 'Other source' }]
 })
-const subscription = { id: 11, user_id: 1, user: { email: 'admin@example.test' }, group: { name: 'Test group' } } as UserSubscription
-const mountDialog = () => mount(DynamicQuotaDialog, {
-  props: { subscription },
+const group = { id: 11, name: 'Test group' } as AdminGroup
+const mountDialog = () => mount(DynamicGroupQuotaDialog, {
+  props: { group },
   global: { plugins: [createI18n({ legacy: false, locale: 'zh', messages: { zh }, messageCompiler: message => () => String(message) })], stubs: { BaseDialog: { template: '<div><slot /><slot name="footer" /></div>' }, Icon: true } }
 })
 
@@ -34,9 +35,9 @@ describe('dynamic quota settings', () => {
     await wrapper.get('#dynamic-floor').setValue(200)
     await wrapper.get('input[type=checkbox]').setValue(true)
     const response = initial()
-    response.policy = { ...response.policy, enabled: true, account_id: 4, revision: 1, floor_limit_usd: 200, cycle: 1, status: 'learning', used_usd: 20, limit_usd: 500, remaining_usd: 480 }
-    let resolve!: (value: DynamicQuotaAdminStatus) => void
-    save.mockReturnValue(new Promise<DynamicQuotaAdminStatus>(done => { resolve = done }))
+    response.policy = { ...response.policy, enabled: true, account_id: 4, revision: 1, floor_limit_usd: 200 }
+    let resolve!: (value: DynamicGroupQuotaStatus) => void
+    save.mockReturnValue(new Promise<DynamicGroupQuotaStatus>(done => { resolve = done }))
     await wrapper.get('form').trigger('submit')
     expect(save).toHaveBeenCalledWith(11, { enabled: true, account_id: 4, revision: 0, weight: 1, max_limit_usd: 700, floor_limit_usd: 200 })
     expect(wrapper.get('[data-testid=dynamic-save]').attributes('disabled')).toBeDefined()
@@ -45,7 +46,7 @@ describe('dynamic quota settings', () => {
     expect(wrapper.emitted('close')).toBeUndefined()
     expect(wrapper.emitted('saved')).toHaveLength(1)
     expect(wrapper.text()).toContain('保存成功')
-    expect(wrapper.text()).toContain('$480.00')
+    expect((wrapper.get('#dynamic-cap').element as HTMLInputElement).value).toBe('700')
     expect(wrapper.get('#dynamic-source').element.tagName).toBe('OUTPUT')
     await wrapper.get('#dynamic-cap').setValue(600)
     expect(wrapper.text()).not.toContain('保存成功')
@@ -117,13 +118,13 @@ describe('dynamic quota settings', () => {
     }
   })
 
-  it('keeps the requested switch on while source activation is pending', async () => {
+  it('keeps the group switch and settings after saving', async () => {
     const result = initial()
-    result.policy = { ...result.policy, account_id: 4, revision: 1, requested_enabled: true, activation_pending: true, floor_limit_usd: 200 }
+    result.policy = { ...result.policy, account_id: 4, revision: 1, enabled: true, floor_limit_usd: 200 }
     get.mockResolvedValue(result)
     const wrapper = mountDialog(); await flushPromises()
     expect((wrapper.get('[data-testid=dynamic-enable]').element as HTMLInputElement).checked).toBe(true)
-    expect(wrapper.text()).toContain('生效前继续使用原规则')
+    expect(wrapper.text()).toContain('现有及新增普通订阅自动继承')
     save.mockResolvedValue({ ...result, policy: { ...result.policy, revision: 2 } })
     await wrapper.get('form').trigger('submit'); await flushPromises()
     expect(wrapper.emitted('saved')).toHaveLength(1)

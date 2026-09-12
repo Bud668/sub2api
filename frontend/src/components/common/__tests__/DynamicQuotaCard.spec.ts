@@ -61,6 +61,11 @@ describe('upstream cycle display', () => {
     expect(wrapper.text()).toContain('$600.00 → $100.00')
     expect(wrapper.text()).toContain('后重分配')
     expect(wrapper.text()).toContain('最近实际调额')
+    const stage = wrapper.get('[data-testid=dynamic-allocation-stage]')
+    expect(stage.element.closest('details')).toBeNull()
+    expect(stage.get('time').attributes('datetime')).toBe('2026-09-08T01:00:00Z')
+    expect(stage.text()).toContain('下次分配节点')
+    expect(stage.get('time').attributes('datetime')).not.toBe(quota.synced_at) // Data sync is not allocation time.
     expect(wrapper.text()).toContain('最近数据同步')
     expect(wrapper.text()).toContain('本周期起点')
     await wrapper.setProps({ quota: { ...quota, status: 'active', used_usd: 120, reserved_usd: 0, remaining_usd: 0 } })
@@ -70,5 +75,6 @@ describe('upstream cycle display', () => {
     await wrapper.setProps({ compact: true, quota: { ...quota, status: 'active', remaining_usd: 0 } })
     expect(wrapper.text()).toContain('额度正在处理中')
     expect(wrapper.find('details').exists()).toBe(false)
+    expect(wrapper.get('[data-testid=dynamic-allocation-stage]').text()).toContain('下次分配节点')
   })
 })

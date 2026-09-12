@@ -53,6 +53,7 @@
           'cursor-pointer': clickableRows,
           'border-primary-300 bg-primary-50/40 dark:border-primary-700 dark:bg-primary-900/10': selectable && isRowSelected(row, index)
         }"
+        :style="cardStyle?.(row)"
         @click="clickableRows && emit('rowClick', row)"
       >
         <div class="space-y-3">
@@ -272,7 +273,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { computed, ref, onMounted, onUnmounted, watch, nextTick, type CSSProperties } from 'vue'
 import { useVirtualizer, observeElementRect as observeElementRectDefault } from '@tanstack/vue-virtual'
 import { useI18n } from 'vue-i18n'
 import type { Column } from './types'
@@ -444,6 +445,7 @@ interface Props {
   loading?: boolean
   /** Reuse the mobile cards when a dense table cannot fit its container. */
   cardLayout?: boolean
+  cardStyle?: (row: any) => CSSProperties
   stickyFirstColumn?: boolean
   stickyActionsColumn?: boolean
   expandableActions?: boolean

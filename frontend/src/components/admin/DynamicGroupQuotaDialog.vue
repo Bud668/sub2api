@@ -1,14 +1,14 @@
 <template>
-  <BaseDialog :show="true" :title="t('dynamicQuota.title')" width="wide" :close-on-escape="!saving" :show-close-button="!saving" @close="close">
-    <p class="mb-4 break-all text-sm font-medium">{{ subscription.user?.email || `#${subscription.user_id}` }} · {{ subscription.group?.name }}</p>
+  <BaseDialog :show="true" :title="t('dynamicQuota.groupSettings')" width="wide" :close-on-escape="!saving" :show-close-button="!saving" @close="close">
+    <p class="mb-4 break-all text-sm font-medium">{{ group.name }}</p>
     <p v-if="loading" role="status">{{ t('common.loading') }}</p>
     <form v-else-if="status" id="dynamic-quota-form" class="space-y-4" @submit.prevent="save">
       <fieldset :disabled="saving" class="space-y-4">
         <label class="flex cursor-pointer items-center gap-3 rounded-xl border border-gray-200 p-3 dark:border-dark-600">
           <input v-model="form.enabled" type="checkbox" class="h-5 w-5 rounded" data-testid="dynamic-enable" @change="saved = false" />
-          <span class="font-semibold">{{ t('dynamicQuota.enable') }}</span>
+          <span class="font-semibold">{{ t('dynamicQuota.groupEnable') }}</span>
         </label>
-        <p class="text-xs leading-relaxed text-gray-500 dark:text-gray-400">{{ t('dynamicQuota.optInHint') }}</p>
+        <p class="text-xs leading-relaxed text-gray-500 dark:text-gray-400">{{ t('dynamicQuota.groupHint') }}</p>
         <div>
           <label for="dynamic-source" class="input-label">{{ t('dynamicQuota.source') }}</label>
           <select v-if="form.revision === 0" id="dynamic-source" v-model.number="form.account_id" class="input" required @change="saved = false">
@@ -34,14 +34,13 @@
         <p class="text-xs leading-relaxed text-gray-500 dark:text-gray-400">{{ t('dynamicQuota.v2AllocationHint') }}</p>
         <details class="rounded-lg bg-gray-50 p-3 text-xs leading-relaxed dark:bg-dark-800"><summary class="cursor-pointer font-medium">{{ t('dynamicQuota.rules') }}</summary><p class="mt-2">{{ t('dynamicQuota.nativeProtectionHint') }}</p></details>
       </fieldset>
-      <p v-if="status.policy.activation_pending" role="status" class="rounded-lg bg-primary-50 p-3 text-sm dark:bg-primary-900/20">{{ t('dynamicQuota.pendingActivation') }}</p>
-      <p v-if="status.policy.allocation_budget_conflict" class="rounded-lg bg-amber-50 p-3 text-sm dark:bg-amber-900/20">{{ t('dynamicQuota.budgetConflict') }}</p>
-      <DynamicQuotaCard v-if="status.policy.enabled" :quota="status.policy" />
+      <p class="rounded-lg bg-primary-50 p-3 text-sm dark:bg-primary-900/20">{{ t('dynamicQuota.groupMembers', { members: status.members, debug: status.debug_members }) }}</p>
+      <p v-if="status.legacy_members > 0" class="text-xs text-amber-700 dark:text-amber-300">{{ t('dynamicQuota.legacyMembers', { n: status.legacy_members }) }}</p>
       <p class="text-xs text-gray-500">{{ t('dynamicQuota.accountingIndependent') }}</p>
     </form>
     <div class="mt-4 min-h-10 text-sm" aria-live="polite" aria-atomic="true">
       <p v-if="error" role="alert" class="text-red-600 dark:text-red-400">{{ error }}</p>
-      <p v-else-if="saved" role="status" class="rounded-lg bg-green-50 p-3 font-medium text-green-700 dark:bg-green-900/20 dark:text-green-300">✓ {{ t(status?.policy.activation_pending ? 'dynamicQuota.pendingActivation' : 'dynamicQuota.saved') }}</p>
+      <p v-else-if="saved" role="status" class="rounded-lg bg-green-50 p-3 font-medium text-green-700 dark:bg-green-900/20 dark:text-green-300">✓ {{ t('dynamicQuota.saved') }}</p>
     </div>
     <template #footer>
       <div class="flex justify-end gap-3">
@@ -59,28 +58,27 @@
 import { onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { adminAPI } from '@/api/admin'
-import type { DynamicQuotaAdminStatus, DynamicQuotaInput, DynamicSubscriptionQuota, UserSubscription } from '@/types'
+import type { DynamicGroupQuotaStatus, DynamicQuotaInput, AdminGroup } from '@/types'
 import { extractApiErrorCode } from '@/utils/apiError'
 import BaseDialog from '@/components/common/BaseDialog.vue'
-import DynamicQuotaCard from '@/components/common/DynamicQuotaCard.vue'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
 import Icon from '@/components/icons/Icon.vue'
 
-const props = defineProps<{ subscription: UserSubscription }>()
+const props = defineProps<{ group: AdminGroup }>()
 const emit = defineEmits<{ close: []; saved: [] }>()
 const { t } = useI18n()
 const loading = ref(true)
 const saving = ref(false)
 const saved = ref(false)
 const error = ref('')
-const status = ref<DynamicQuotaAdminStatus>()
+const status = ref<DynamicGroupQuotaStatus>()
 const floorError = ref(false)
 const form = reactive<DynamicQuotaInput>({ enabled: false, revision: 0, account_id: 0, weight: 1, max_limit_usd: 0, floor_limit_usd: null })
-const policyInput = (p: DynamicSubscriptionQuota): DynamicQuotaInput => ({
-  enabled: p.requested_enabled ?? p.enabled, revision: p.revision, account_id: p.account_id || 0,
+const policyInput = (p: DynamicQuotaInput): DynamicQuotaInput => ({
+  enabled: p.enabled, revision: p.revision, account_id: p.account_id || 0,
   weight: p.weight, max_limit_usd: p.max_limit_usd, floor_limit_usd: p.floor_limit_usd ?? null
 })
-const apply = (result: DynamicQuotaAdminStatus) => {
+const apply = (result: DynamicGroupQuotaStatus) => {
   status.value = result
   Object.assign(form, policyInput(result.policy))
 }
@@ -94,7 +92,7 @@ const errorMessage = (err: unknown) => {
 }
 const close = () => { if (!saving.value) emit('close') }
 onMounted(async () => {
-  try { apply(await adminAPI.subscriptions.getDynamicQuota(props.subscription.id)) }
+  try { apply(await adminAPI.groups.getDynamicQuota(props.group.id)) }
   catch (err) { error.value = errorMessage(err) }
   finally { loading.value = false }
 })
@@ -104,7 +102,7 @@ const save = async () => {
   if (floorError.value) return
   saving.value = true; saved.value = false; error.value = ''
   try {
-    apply(await adminAPI.subscriptions.saveDynamicQuota(props.subscription.id, { ...form }))
+    apply(await adminAPI.groups.saveDynamicQuota(props.group.id, { ...form }))
     saved.value = true
     emit('saved') // Keep the dialog and server-returned revision visible for review.
   } catch (err) {
@@ -113,7 +111,7 @@ const save = async () => {
     if (!code || (httpStatus != null && httpStatus >= 500) || ['0', 'ECONNABORTED', 'ETIMEDOUT', 'ERR_NETWORK'].includes(code)) {
       error.value = t('dynamicQuota.saveUnconfirmed')
       try {
-        const result = await adminAPI.subscriptions.getDynamicQuota(props.subscription.id)
+        const result = await adminAPI.groups.getDynamicQuota(props.group.id)
         const actual = policyInput(result.policy)
         if (actual.revision === form.revision + 1 && (Object.keys(form) as (keyof DynamicQuotaInput)[]).every(key => key === 'revision' || actual[key] === form[key])) {
           apply(result); saved.value = true; error.value = ''; emit('saved')
@@ -127,7 +125,7 @@ const refreshStatus = async () => {
   if (saving.value) return
   saving.value = true; saved.value = false; error.value = ''
   try {
-    const result = await adminAPI.subscriptions.getDynamicQuota(props.subscription.id)
+    const result = await adminAPI.groups.getDynamicQuota(props.group.id)
     if (!status.value) apply(result)
     else status.value = result // Refresh status without replacing unsaved inputs/revision.
   }

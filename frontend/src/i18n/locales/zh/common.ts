@@ -1,5 +1,13 @@
 export default {
   dynamicQuota: {
+    groupEnable: '此分组统一使用动态额度', groupSettings: '分组动态额度',
+    groupHint: '在分组统一设置，现有及新增普通订阅自动继承。每人的分配上限、下调保护和权重相同；生效后替代日／周／月额度，保留已用和在途。仅管理员调试订阅不参与分配。',
+    groupMembers: '参与分配 {members} 人 · 管理员调试 {debug} 人',
+    legacyMembers: '现有 {n} 条独立配置。保存分组后统一应用本页参数，保留已用量与周期；来源不一致时整批不保存。',
+    adminDebug: '管理员调试订阅', adminDebugHint: '仅适用于管理员账号。开启后不参与动态分配、不占份额；实际消耗仍影响上游余量。有效期、原分组额度、模型和安全限制继续生效。',
+    adminDebugOnly: '调试订阅仅能分配给管理员账号，请关闭此开关或选择管理员。',
+    initialAllocatedAt: '首次分配时间', notAllocated: '尚未自动分配', nextStage: '下次分配节点',
+    stageAt: '上游用量达到 {percent}%', noNextStage: '本周期暂无下一节点',
     started: '本周期起点',
     changes: { initial: '首次按分配上限', bounds: '管理员调整边界', upstream_node: '上游达到 {percent}% 后重分配', reset: '上游确认重置后重新起步' },
     absorption: {

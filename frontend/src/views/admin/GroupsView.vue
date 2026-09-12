@@ -50,7 +50,7 @@
             class="flex w-full flex-shrink-0 flex-wrap items-center justify-end gap-3 lg:w-auto"
           >
             <button
-              @click="loadGroups"
+              @click="loadGroups(); loadDynamicPolicies()"
               :disabled="loading"
               class="btn btn-secondary"
               :title="t('common.refresh')"
@@ -182,8 +182,11 @@
                 }}
               </span>
               <!-- Subscription Limits - compact single line -->
+              <div v-if="dynamicPolicies.get(row.id)?.enabled" class="text-xs text-primary-700 dark:text-primary-300">
+                {{ t('dynamicQuota.groupSettings') }} · {{ t('dynamicQuota.cap') }} {{ formatUsd(dynamicPolicies.get(row.id)!.max_limit_usd) }}
+              </div>
               <div
-                v-if="row.subscription_type === 'subscription'"
+                v-else-if="row.subscription_type === 'subscription'"
                 class="space-y-0.5 text-xs text-gray-500 dark:text-gray-400"
               >
                 <div
@@ -379,6 +382,7 @@
 
           <template #cell-actions="{ row }">
             <div class="flex items-center gap-1">
+              <button v-if="!authStore.isSimpleMode && (dynamicPolicies.has(row.id) || (row.platform === 'openai' && row.subscription_type === 'subscription'))" type="button" class="btn btn-secondary text-xs" @click="dynamicGroup = row">{{ t('dynamicQuota.groupSettings') }}</button>
               <button
                 @click="handleEdit(row)"
                 class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-primary-600 dark:hover:bg-dark-700 dark:hover:text-primary-400"
@@ -2114,7 +2118,7 @@
 
     <!-- Edit Group Modal -->
     <BaseDialog
-      :show="showEditModal"
+      :show="showEditModal && !dynamicGroup"
       :title="t('admin.groups.editGroup')"
       width="wide"
       @close="closeEditModal"
@@ -2361,8 +2365,12 @@
           </div>
 
           <!-- Subscription limits (only show when subscription type is selected) -->
+          <div v-if="!authStore.isSimpleMode && editingGroup && (dynamicPolicies.has(editingGroup.id) || (editingGroup.platform === 'openai' && editingGroup.subscription_type === 'subscription'))" class="my-3 rounded-lg bg-primary-50 p-3 dark:bg-primary-900/20">
+            <p class="mb-2 text-xs text-gray-600 dark:text-gray-300">{{ t('dynamicQuota.groupHint') }}</p>
+            <button type="button" class="btn btn-primary" @click="dynamicGroup = editingGroup">{{ t('dynamicQuota.groupSettings') }}</button>
+          </div>
           <div
-            v-if="editForm.subscription_type === 'subscription'"
+            v-if="editForm.subscription_type === 'subscription' && !dynamicPolicies.get(editingGroup?.id || 0)?.enabled"
             class="space-y-4 border-l-2 border-primary-200 pl-4 dark:border-primary-800"
           >
             <div>
@@ -4259,6 +4267,7 @@
       @close="showRPMOverridesModal = false"
       @success="loadGroups"
     />
+    <DynamicGroupQuotaDialog v-if="dynamicGroup" :key="dynamicGroup.id" :group="dynamicGroup" @close="dynamicGroup = null" @saved="loadDynamicPolicies" />
   </AppLayout>
 </template>
 
@@ -4272,6 +4281,7 @@ import { adminAPI } from "@/api/admin";
 import { getMyModelPolicy } from "@/api/modelPolicy";
 import type {
   AdminGroup,
+  DynamicGroupPolicy,
   CodexModelsManifestConfig,
   CompositeModelRoute,
   CompositeModelRouteInput,
@@ -4292,6 +4302,7 @@ import DataTable from "@/components/common/DataTable.vue";
 import Pagination from "@/components/common/Pagination.vue";
 import Toggle from "@/components/common/Toggle.vue";
 import BaseDialog from "@/components/common/BaseDialog.vue";
+import DynamicGroupQuotaDialog from "@/components/admin/DynamicGroupQuotaDialog.vue";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import EmptyState from "@/components/common/EmptyState.vue";
 import Select from "@/components/common/Select.vue";
@@ -4826,6 +4837,15 @@ const showSortModal = ref(false);
 const submitting = ref(false);
 const sortSubmitting = ref(false);
 const editingGroup = ref<AdminGroup | null>(null);
+const dynamicGroup = ref<AdminGroup | null>(null);
+const dynamicPolicies = ref(new Map<number, DynamicGroupPolicy>());
+const loadDynamicPolicies = async () => {
+  if (authStore.isSimpleMode) return;
+  try {
+    const policies = await adminAPI.groups.getDynamicQuotas();
+    dynamicPolicies.value = new Map(policies.map(p => [p.group_id, p]));
+  } catch { appStore.showError(t('dynamicQuota.failed')); }
+};
 const deletingGroup = ref<AdminGroup | null>(null);
 const duplicatingGroupIds = reactive(new Set<number>());
 const showRateMultipliersModal = ref(false);
@@ -6844,6 +6864,7 @@ const saveSortOrder = async () => {
 };
 
 onMounted(() => {
+  void loadDynamicPolicies();
   void getMyModelPolicy().then(p => { userModelPolicyEnabled.value = p.enabled }).catch(() => { /* gateway remains authoritative */ });
   loadGroups();
   if (!authStore.isSimpleMode) {
