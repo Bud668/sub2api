@@ -1753,6 +1753,9 @@ func TestProxyResponsesWebSocketFromClientForGrokUsesXAIHTTPBridgeAndPreservesMa
 }
 
 func TestOpenAIWSHTTPBridgeAcceptsFirstFrameAboveLegacy16MiB(t *testing.T) {
+	// This checks the frame-size boundary, not throughput. Race-instrumented
+	// JSON processing of 17 MiB can exceed 10s on a shared two-core CI runner.
+	const largeFrameTimeout = 45 * time.Second
 	gin.SetMode(gin.TestMode)
 
 	sseBody := strings.Join([]string{
@@ -1853,7 +1856,7 @@ func TestOpenAIWSHTTPBridgeAcceptsFirstFrameAboveLegacy16MiB(t *testing.T) {
 		req.Header.Set("User-Agent", "codex_cli_rs/0.135.0")
 		ginCtx.Request = req
 
-		proxyCtx, cancelProxy := context.WithTimeout(r.Context(), 20*time.Second)
+		proxyCtx, cancelProxy := context.WithTimeout(r.Context(), largeFrameTimeout)
 		defer cancelProxy()
 		errCh <- svc.ProxyResponsesWebSocketFromClient(proxyCtx, ginCtx, conn, account, "sk-test", firstMessage, hooks)
 	}))
@@ -1872,7 +1875,7 @@ func TestOpenAIWSHTTPBridgeAcceptsFirstFrameAboveLegacy16MiB(t *testing.T) {
 
 	var eventTypes []string
 	for {
-		readCtx, cancelRead := context.WithTimeout(context.Background(), 10*time.Second)
+		readCtx, cancelRead := context.WithTimeout(context.Background(), largeFrameTimeout)
 		msgType, event, readErr := clientConn.Read(readCtx)
 		cancelRead()
 		require.NoError(t, readErr)
