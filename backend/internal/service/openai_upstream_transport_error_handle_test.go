@@ -129,6 +129,28 @@ func TestHandleOpenAIUpstreamTransportError_TransientFailsOverWithoutEviction(t 
 	require.Equal(t, 0, rec.Body.Len())
 }
 
+func TestHandleOpenAIUpstreamTransportError_LoopbackProxyRefusalDoesNotEvictAccount(t *testing.T) {
+	repo := &openaiTransportAccountRepoStub{}
+	svc := &OpenAIGatewayService{accountRepo: repo}
+	proxyID := int64(2)
+	account := &Account{
+		ID:       5,
+		Name:     "shared-egress",
+		Platform: PlatformOpenAI,
+		ProxyID:  &proxyID,
+		Proxy:    &Proxy{ID: proxyID, Protocol: "socks5h", Host: "127.0.0.1", Port: 1080},
+	}
+	c, _ := newOpenAITransportErrTestContext()
+
+	err := svc.handleOpenAIUpstreamTransportError(context.Background(), c, account,
+		errors.New(`Post "https://chatgpt.com/backend-api/codex/responses": socks connect tcp 127.0.0.1:1080->chatgpt.com:443: dial tcp 127.0.0.1:1080: connect: connection refused`), false)
+
+	var fo *UpstreamFailoverError
+	require.True(t, errors.As(err, &fo))
+	require.Empty(t, repo.tempUnschedCalls)
+	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
+}
+
 // context.Canceled means the client disconnected — do NOT fail over to another
 // account and do NOT temporarily evict this one.
 func TestHandleOpenAIUpstreamTransportError_ContextCanceled_NoFailoverNoEviction(t *testing.T) {

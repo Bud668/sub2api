@@ -50,7 +50,7 @@ var persistentUpstreamTransportErrorMarkers = []string{
 }
 
 // classifyUpstreamTransportError decides whether a transport-level upstream error
-// is durable (Persistent — evict the account + alert) or a transient blip
+// is durable for the selected account (Persistent — evict + alert) or a transient blip
 // (fail over to a healthy account but keep this one schedulable).
 //
 // Motivating incident: a SOCKS5 proxy whose subscription lapsed returned
@@ -65,9 +65,20 @@ var persistentUpstreamTransportErrorMarkers = []string{
 //     The network-layer string markers ("connection refused", "no route to host",
 //     "network is unreachable", "no such host") are kept as a cross-platform safety
 //     net even though the typed checks should cover them on modern Go+Linux.
-func classifyUpstreamTransportError(err error) upstreamTransportErrorClass {
+func classifyUpstreamTransportError(account *Account, err error) upstreamTransportErrorClass {
 	if err == nil {
 		return upstreamTransportErrorClass{}
+	}
+
+	msg := strings.ToLower(err.Error())
+	// A loopback proxy is shared local infrastructure; its listener restarting is
+	// not evidence that the selected upstream account is broken.
+	if (errors.Is(err, syscall.ECONNREFUSED) || strings.Contains(msg, "connection refused")) && account != nil && account.Proxy != nil {
+		host := strings.Trim(strings.TrimSpace(account.Proxy.Host), "[]")
+		ip := net.ParseIP(host)
+		if strings.EqualFold(host, "localhost") || (ip != nil && ip.IsLoopback()) {
+			return upstreamTransportErrorClass{}
+		}
 	}
 
 	// — Typed checks (preferred) ——————————————————————————————————————————————
@@ -82,7 +93,6 @@ func classifyUpstreamTransportError(err error) upstreamTransportErrorClass {
 	}
 
 	// — String-marker fallback ————————————————————————————————————————————————
-	msg := strings.ToLower(err.Error())
 	for _, marker := range persistentUpstreamTransportErrorMarkers {
 		if strings.Contains(msg, marker) {
 			return upstreamTransportErrorClass{Persistent: true}
@@ -137,7 +147,7 @@ func (s *OpenAIGatewayService) handleOpenAIUpstreamTransportError(ctx context.Co
 		return err
 	}
 
-	if classifyUpstreamTransportError(err).Persistent {
+	if classifyUpstreamTransportError(account, err).Persistent {
 		s.tempUnscheduleOpenAITransportError(ctx, account, safeErr)
 	}
 

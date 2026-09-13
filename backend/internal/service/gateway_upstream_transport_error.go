@@ -59,7 +59,7 @@ func (s *GatewayService) handleUpstreamTransportError(ctx context.Context, c *gi
 	// Transport attempt left local validation; count Ollama Cloud activity.
 	scheduleOllamaCloudUsageActivity(s.deferredService, account)
 
-	if classifyUpstreamTransportError(err).Persistent {
+	if classifyUpstreamTransportError(account, err).Persistent {
 		s.tempUnscheduleTransportError(ctx, account, safeErr)
 	}
 
