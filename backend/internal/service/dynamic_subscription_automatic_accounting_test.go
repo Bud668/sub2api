@@ -94,3 +94,70 @@ func TestDynamicQuotaAutomaticPolicyDoesNotExpireLiveShutdownWork(t *testing.T) 
 	require.NoError(t, db.QueryRow(`SELECT status FROM dynamic_quota_requests WHERE id=$1`, r.ID).Scan(&status))
 	require.Equal(t, "pending", status, "draining a live request must continue its lease")
 }
+
+func TestDynamicQuotaAutomaticPolicyNeverAbsorbsKnownMetering(t *testing.T) {
+	s, db := dynamicAccountingTestStore(t)
+	ctx := context.Background()
+	price := 3.0
+	c := dynamicAccountingException(t, s, 101, 11, &price)
+	raw, err := json.Marshal(c)
+	require.NoError(t, err)
+	dynamicExec(t, db, `UPDATE dynamic_quota_requests SET billing_receipt=NULL,
+ evidence='{"usage":{"input_tokens":100,"output_tokens":20}}',
+ request_context=jsonb_set(request_context,'{settlement_policy}',to_jsonb($2::text)) WHERE id=$1`, c.DynamicQuotaReservationID, automaticSettlementPolicy)
+	for i := 0; i < 2; i++ {
+		require.NoError(t, s.absorbExpiredEvidence(ctx))
+	}
+	var absorbed, reviewed bool
+	var outcome string
+	require.NoError(t, db.QueryRow(`SELECT operator_absorbed_at IS NOT NULL,review_required_at IS NOT NULL,outcome FROM dynamic_quota_requests WHERE id=$1`, c.DynamicQuotaReservationID).Scan(&absorbed, &reviewed, &outcome))
+	require.False(t, absorbed, "real tokens must not become a write-off because pricing was delayed")
+	require.False(t, reviewed, "do not block automatic settlement when the valid receipt arrives")
+	require.Equal(t, "metered_without_receipt", outcome)
+	var events int
+	require.NoError(t, db.QueryRow(`SELECT count(*) FROM dynamic_quota_events WHERE kind='accounting_classified'`).Scan(&events))
+	require.Equal(t, 1, events)
+	dynamicExec(t, db, `UPDATE dynamic_quota_requests SET billing_receipt=$2::jsonb,billing_retry_at=NOW() WHERE id=$1`, c.DynamicQuotaReservationID, string(raw))
+	calls := 0
+	s.replay = func(ctx context.Context, cmd *UsageBillingCommand) error {
+		calls++
+		require.Equal(t, 6.0, cmd.SubscriptionCost, "use the frozen customer price, never the 999-dollar hold")
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		if err = SettleDynamicQuota(ctx, tx, cmd); err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, `UPDATE user_subscriptions SET weekly_usage_usd=weekly_usage_usd+$2 WHERE id=$1`, *cmd.SubscriptionID, cmd.SubscriptionCost); err != nil {
+			return err
+		}
+		return tx.Commit()
+	}
+	for i := 0; i < 2; i++ {
+		require.NoError(t, s.recoverAccounting(ctx))
+	}
+	require.Equal(t, 1, calls)
+	var used float64
+	require.NoError(t, db.QueryRow(`SELECT weekly_usage_usd FROM user_subscriptions WHERE id=11`).Scan(&used))
+	require.Equal(t, 26.0, used, "the real bill is recovered once")
+}
+
+func TestDynamicQuotaAutomaticPolicyPreservesNonTokenMetering(t *testing.T) {
+	s, db := dynamicAccountingTestStore(t)
+	ctx := context.Background()
+	r, err := s.Begin(ctx, 101, 4)
+	require.NoError(t, err)
+	require.NoError(t, r.MarkDispatched())
+	r.Finish(&OpenAIForwardResult{SearchCount: 1}, nil, false)
+	dynamicExec(t, db, `UPDATE dynamic_quota_requests SET finished_at=NOW()-INTERVAL '6 minutes' WHERE id=$1`, r.ID)
+	require.NoError(t, s.absorbExpiredEvidence(ctx))
+	var observed, absorbed bool
+	var outcome string
+	require.NoError(t, db.QueryRow(`SELECT (evidence->>'has_billable_usage')::boolean,
+ operator_absorbed_at IS NOT NULL,outcome FROM dynamic_quota_requests WHERE id=$1`, r.ID).Scan(&observed, &absorbed, &outcome))
+	require.True(t, observed)
+	require.False(t, absorbed, "non-token billing units are still real metering")
+	require.Equal(t, "metered_without_receipt", outcome)
+}

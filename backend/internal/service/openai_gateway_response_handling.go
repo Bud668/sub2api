@@ -260,6 +260,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	failureDelivered := false
 	suppressCurrentEvent := false
 	var bareErrorPayload []byte
+	var requestRejection *UpstreamFailoverError
 	bareErrorAccountSideEffectsPending := false
 	pendingSSEEventType := ""
 	eventInProgress := false
@@ -368,6 +369,9 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		lastDownstreamWriteAt = time.Now()
 	}
 	finalizeStream := func() (*openaiStreamingResult, error) {
+		if requestRejection != nil && !openAIStreamClientOutputStarted(c, clientOutputStarted) {
+			return resultWithUsage(), requestRejection
+		}
 		if stageFirstOutput && eventInProgress {
 			// EOF dispatches the final SSE event even without a trailing blank line.
 			completeGuardedEvent(true)
@@ -413,6 +417,10 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	handleScanErr := func(scanErr error) (*openaiStreamingResult, error, bool) {
 		if scanErr == nil {
 			return nil, nil, false
+		}
+		if requestRejection != nil && !openAIStreamClientOutputStarted(c, clientOutputStarted) {
+			result, err := finalizeStream()
+			return result, err, true
 		}
 		if errors.Is(scanErr, errOpenAIFirstOutputScannerLimit) && !firstOutputProgressObserved {
 			logger.LegacyPrintf("service.openai_gateway", "SSE token exceeded guarded first-output limit: account=%d limit=%d error=%v", account.ID, openAIFirstOutputStageMaxBytes+openAIFirstOutputScannerFramingAllowance, scanErr)
@@ -490,6 +498,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				terminalFailurePending = false
 				suppressCurrentEvent = false
 				bareErrorPayload = nil
+				requestRejection = nil
 				bareErrorAccountSideEffectsPending = false
 				failedMessage = ""
 			}
@@ -518,6 +527,9 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			}
 			cyberHit := false
 			if eventType == "response.failed" || eventType == "error" {
+				if eventType == "response.failed" {
+					requestRejection = nil
+				}
 				if codexFailureTerminal && eventType == "error" {
 					sawBareError = true
 					bareErrorPayload = append(bareErrorPayload[:0], dataBytes...)
@@ -534,6 +546,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				// 而漏记真实用量。对齐 WS V2 / Chat 流式路径（均先解析 usage 再 Mark）。
 				s.parseSSEUsageBytesWithType(dataBytes, eventType, usage)
 				if hit, code, msg := detectOpenAICyberPolicy(dataBytes); hit {
+					requestRejection = nil
 					cyberHit = true
 					MarkOpsCyberPolicy(c, CyberPolicyMark{
 						Code:           code,
@@ -545,6 +558,17 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 					})
 				}
 				outputStarted := openAIStreamClientOutputStarted(c, clientOutputStarted)
+				if !outputStarted && !cyberHit && openAIRequestRejection(dataBytes) {
+					requestRejection = s.newOpenAIRequestRejection(c, account, dataBytes, upstreamRequestID)
+					sawFailedEvent = true
+					if eventType == "response.failed" {
+						streamEarlyErr = requestRejection
+					}
+					// Bare errors may be followed by authoritative failed-event usage.
+					// Keep reading it without committing error frames as model output.
+					suppressCurrentEvent = true
+					return
+				}
 				if !outputStarted && !cyberHit {
 					if compactErr := newOpenAICompactFallbackSignal(c, dataBytes, failedMessage); compactErr != nil {
 						sawFailedEvent = true
@@ -1694,6 +1718,13 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 			return nil, compactErr
 		}
 		if failoverErr := s.nonStreamingTerminalFailureFailover(c, resp, account, false, terminalType, terminalPayload, msg, mappedModel); failoverErr != nil {
+			if failoverErr.IsOpenAIRequestRejection() && openAIRejectedSSEHasOutput(bodyText) {
+				failoverErr.SafeToFailoverAfterWrite = false
+			}
+			usage := s.parseSSEUsageFromBody(bodyText)
+			if openAIUsageHasTokens(usage) {
+				return &openaiNonStreamingResult{OpenAIUsage: usage, usage: usage, responseID: extractOpenAIResponseIDFromJSONBytes(terminalPayload)}, failoverErr
+			}
 			return nil, failoverErr
 		}
 		return nil, s.writeOpenAINonStreamingProtocolError(resp, c, msg)

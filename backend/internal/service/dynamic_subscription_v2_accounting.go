@@ -41,7 +41,7 @@ func classifyDynamicV2Accounting(ctx context.Context, tx *sql.Tx, accountID, cyc
 		return err
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT d.id,d.billing_receipt,COALESCE(d.api_key_id,0),d.owner_user_id,d.owner_subscription_id,
- COALESCE(d.request_context->>'settlement_policy','')
+ COALESCE(d.request_context->>'settlement_policy',''),d.evidence
  FROM dynamic_quota_requests d WHERE d.account_id=$1 AND (d.cycle=$2 OR ($2=1 AND d.cycle=0))
  AND d.source_closed_at IS NULL AND d.operator_absorbed_at IS NULL AND d.review_required_at IS NULL
  AND d.status IN ('pending','uncertain') AND d.worker_id IS NOT NULL AND d.owner_user_id IS NOT NULL
@@ -55,11 +55,12 @@ func classifyDynamicV2Accounting(ctx context.Context, tx *sql.Tx, accountID, cyc
 		raw              []byte
 		key, user, owner int64
 		policy           string
+		evidence         []byte
 	}
 	var requests []request
 	for rows.Next() {
 		var r request
-		if err = rows.Scan(&r.id, &r.raw, &r.key, &r.user, &r.owner, &r.policy); err != nil {
+		if err = rows.Scan(&r.id, &r.raw, &r.key, &r.user, &r.owner, &r.policy, &r.evidence); err != nil {
 			rows.Close()
 			return err
 		}
@@ -73,6 +74,31 @@ func classifyDynamicV2Accounting(ctx context.Context, tx *sql.Tx, accountID, cyc
 		var known *float64
 		reason := "missing_evidence"
 		c := dynamicAbsorptionReceipt(r.raw, r.id, accountID, r.key, r.user)
+		// Known metering is not an unmetered write-off just because pricing or
+		// receipt persistence failed. Keep its claim for evidence-based recovery.
+		var observed struct {
+			Usage            OpenAIUsage `json:"usage"`
+			ImageCount       int         `json:"image_count"`
+			VideoCount       int         `json:"video_count"`
+			HasBillableUsage bool        `json:"has_billable_usage"`
+		}
+		if c == nil && json.Unmarshal(r.evidence, &observed) == nil &&
+			(observed.HasBillableUsage || openAIUsageHasTokens(&observed.Usage) || observed.ImageCount > 0 || observed.VideoCount > 0) {
+			marked, markErr := tx.ExecContext(ctx, `UPDATE dynamic_quota_requests SET outcome='metered_without_receipt'
+ WHERE id=$1 AND outcome IS DISTINCT FROM 'metered_without_receipt'`, r.id)
+			if markErr != nil {
+				return markErr
+			}
+			n, markErr := marked.RowsAffected()
+			if markErr != nil {
+				return markErr
+			}
+			if n > 0 {
+				review++
+				alert++
+			}
+			continue
+		}
 		if c != nil {
 			var billed bool
 			if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM usage_billing_dedup WHERE request_id=$1 AND api_key_id=$2

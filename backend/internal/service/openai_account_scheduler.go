@@ -2450,6 +2450,10 @@ func (s *OpenAIGatewayService) ReportOpenAIAccountScheduleResult(account *Accoun
 // ObserveOpenAIAccountHealthFailure records failures that cannot reach the
 // scheduler-result path, for example after semantic response bytes were sent.
 func (s *OpenAIGatewayService) ObserveOpenAIAccountHealthFailure(ctx context.Context, account *Account, observedErr error) bool {
+	var rejected *UpstreamFailoverError
+	if errors.As(observedErr, &rejected) && rejected.IsOpenAIRequestRejection() {
+		return false
+	}
 	if isDynamicQuotaError(observedErr) {
 		return false
 	}

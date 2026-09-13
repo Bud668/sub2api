@@ -1203,9 +1203,10 @@ func (s *OpenAIGatewayService) forwardDynamicQuotaChecked(ctx context.Context, c
 		imageCount := 0
 		searchCount := 0
 		var imageOutputSizes []string
+		var forwardErr error
 		if reqStream {
 			streamResult, err := s.handleStreamingResponseWithReasoning(ctx, resp, c, account, startTime, originalModel, upstreamModel, reasoningEffortValue)
-			if err != nil {
+			if err != nil && (streamResult == nil || (!openAIUsageHasTokens(streamResult.usage) && streamResult.imageCount == 0 && streamResult.searchCount == 0)) {
 				if signal, ok := asOpenAICompactFallbackSignal(err); ok {
 					if retryBody, fallbackModel, retry := s.prepareOpenAICompactFallbackRetry(
 						c, account, requestedModel, body, http.StatusBadRequest, signal.message, signal.payload, compactModelFallbackRetried,
@@ -1244,6 +1245,7 @@ func (s *OpenAIGatewayService) forwardDynamicQuotaChecked(ctx context.Context, c
 				}
 				return nil, err
 			}
+			forwardErr = err
 			usage = streamResult.usage
 			firstTokenMs = streamResult.firstTokenMs
 			responseID = strings.TrimSpace(streamResult.responseID)
@@ -1252,7 +1254,7 @@ func (s *OpenAIGatewayService) forwardDynamicQuotaChecked(ctx context.Context, c
 			searchCount = streamResult.searchCount
 		} else {
 			nonStreamResult, err := s.handleNonStreamingResponse(ctx, resp, c, account, originalModel, upstreamModel)
-			if err != nil {
+			if err != nil && (nonStreamResult == nil || (!openAIUsageHasTokens(nonStreamResult.usage) && nonStreamResult.imageCount == 0 && nonStreamResult.searchCount == 0)) {
 				if signal, ok := asOpenAICompactFallbackSignal(err); ok {
 					if retryBody, fallbackModel, retry := s.prepareOpenAICompactFallbackRetry(
 						c, account, requestedModel, body, http.StatusBadRequest, signal.message, signal.payload, compactModelFallbackRetried,
@@ -1268,6 +1270,7 @@ func (s *OpenAIGatewayService) forwardDynamicQuotaChecked(ctx context.Context, c
 				}
 				return nil, err
 			}
+			forwardErr = err
 			usage = nonStreamResult.usage
 			responseID = strings.TrimSpace(nonStreamResult.responseID)
 			imageCount = nonStreamResult.imageCount
@@ -1321,7 +1324,7 @@ func (s *OpenAIGatewayService) forwardDynamicQuotaChecked(ctx context.Context, c
 		if searchCount > 0 && account != nil && account.IsGrok() {
 			forwardResult.SearchCount = searchCount
 		}
-		return forwardResult, nil
+		return forwardResult, forwardErr
 	}
 }
 

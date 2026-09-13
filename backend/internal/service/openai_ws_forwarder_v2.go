@@ -412,6 +412,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 			markClientDisconnected("request_context_canceled")
 		}
 	}
+	var requestRejection *UpstreamFailoverError
 	resultWithUsage := func() *OpenAIForwardResult {
 		return &OpenAIForwardResult{
 			RequestID:                     responseID,
@@ -574,6 +575,10 @@ readLoop:
 			return nil, errors.New("upstream websocket returned malformed Responses event JSON after downstream output")
 		}
 		if readErr != nil {
+			if requestRejection != nil && !wroteDownstream {
+				lease.MarkBroken()
+				return resultWithUsage(), requestRejection
+			}
 			lease.MarkBroken()
 			closeStatus, closeReason := summarizeOpenAIWSReadCloseError(readErr)
 			logOpenAIWSModeInfo(
@@ -666,7 +671,24 @@ readLoop:
 		imageCounter.AddSSEData(message)
 
 		if eventType == "error" || eventType == "response.failed" {
-			markOpenAICyberPolicyEvent(c, message, http.StatusOK, usage)
+			if eventType == "response.failed" {
+				requestRejection = nil
+			}
+			if markOpenAICyberPolicyEvent(c, message, http.StatusOK, usage) {
+				requestRejection = nil
+			}
+			if !wroteDownstream && openAIRequestRejection(message) {
+				requestRejection = s.newOpenAIRequestRejection(c, account, message, responseID)
+				if eventType == "response.failed" {
+					lease.MarkBroken()
+					upstreamTerminalEvent = eventType
+					return resultWithUsage(), requestRejection
+				}
+				continue
+			}
+		}
+		if eventType == "response.completed" || eventType == "response.done" {
+			requestRejection = nil
 		}
 
 		if eventType == "error" {

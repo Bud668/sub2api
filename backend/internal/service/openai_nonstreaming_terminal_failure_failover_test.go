@@ -140,6 +140,13 @@ func TestNonStreamingSSEToJSON_NonRetryableFailedEventStillWritesProtocolError(t
 			require.Nil(t, result)
 			require.Error(t, err)
 			var failoverErr *UpstreamFailoverError
+			if tc.name == "content_policy" {
+				require.ErrorAs(t, err, &failoverErr)
+				require.True(t, failoverErr.IsOpenAIRequestRejection())
+				require.False(t, failoverErr.ShouldRetryNextAccount())
+				require.False(t, c.Writer.Written(), "handler renders the request rejection as 400")
+				return
+			}
 			require.False(t, errors.As(err, &failoverErr), "不可重试的上游错误不得换号")
 			require.Equal(t, http.StatusBadGateway, rec.Code)
 			require.Contains(t, rec.Body.String(), tc.wantMsg)
@@ -223,7 +230,7 @@ func TestNonStreamingSSEToJSON_MatchesStreamingClassifierVerdict(t *testing.T) {
 				newNonStreamingFailoverAccount(), sseTerminalBody("response.failed", data), "model", "model")
 
 			var failoverErr *UpstreamFailoverError
-			require.Equal(t, want, errors.As(err, &failoverErr),
+			require.Equal(t, want, errors.As(err, &failoverErr) && failoverErr.ShouldRetryNextAccount(),
 				"非流式裁决与流式分类器不一致：%s", data)
 		})
 	}

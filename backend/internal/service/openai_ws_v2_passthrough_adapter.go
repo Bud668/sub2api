@@ -1175,6 +1175,8 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		firstTurnStartedAt = hooks.InitialTurnStartedAt
 	}
 	failureAccountSideEffectsApplied := false
+	var requestRejection atomic.Pointer[UpstreamFailoverError]
+	var requestOutputStarted atomic.Bool
 	relayResult, relayExit := openaiwsv2.RunEntry(openaiwsv2.EntryInput{
 		Ctx:                ctx,
 		ClientConn:         policyClientConn,
@@ -1250,8 +1252,15 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 					turnResult.Usage.CacheReadInputTokens,
 				)
 				if hooks != nil && hooks.AfterTurn != nil {
-					hooks.AfterTurn(turnNo, turnResult, nil)
+					var turnErr error
+					if rejected := requestRejection.Swap(nil); rejected != nil &&
+						(turn.TerminalEventType == "error" || turn.TerminalEventType == "response.failed") {
+						turnErr = rejected
+					}
+					hooks.AfterTurn(turnNo, turnResult, turnErr)
 				}
+				requestRejection.Store(nil)
+				requestOutputStarted.Store(false)
 			},
 			BeforeClientWrite: func(msgType coderws.MessageType, payload []byte) {
 				if msgType == coderws.MessageText && openAIWSPassthroughIsTerminalOutput(payload) {
@@ -1291,7 +1300,21 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 					failureAccountSideEffectsApplied = false
 				}
 				if (eventType == "error" || eventType == "response.failed") && markOpenAIWSV2PassthroughCyberPolicy(c, payload) {
+					requestRejection.Store(nil)
 					return nil
+				}
+				if eventType == "error" || eventType == "response.failed" {
+					if eventType == "response.failed" {
+						requestRejection.Store(nil)
+					}
+					if !requestOutputStarted.Load() && openAIRequestRejection(payload) {
+						requestRejection.Store(s.newOpenAIRequestRejection(c, account, payload, ""))
+						// The relay drains a following failed event for authoritative usage.
+						return nil
+					}
+				} else if !openAIStreamEventTypeIsTerminal(eventType) && openAIStreamDataStartsClientOutput(string(payload), eventType) {
+					requestOutputStarted.Store(true)
+					requestRejection.Store(nil)
 				}
 				errCodeRaw, errTypeRaw, errMsgRaw := parseOpenAIWSErrorEventFields(payload)
 				isPreOutputRateLimit := eventType == "error" && !wroteDownstream && isOpenAIWSRateLimitError(errCodeRaw, errTypeRaw, errMsgRaw)

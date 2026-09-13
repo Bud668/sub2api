@@ -833,6 +833,14 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			})
 		}
 		if err != nil {
+			var rejected *service.UpstreamFailoverError
+			if errors.As(err, &rejected) && rejected.IsOpenAIRequestRejection() {
+				h.handleFailoverExhausted(c, rejected, streamStarted || c.Writer.Written())
+				if result.HasBillableUsage() {
+					submitResponsesUsage(result)
+				}
+				return
+			}
 			if result != nil && result.ClientDisconnect {
 				reqLog.Info("openai.client_disconnected",
 					zap.Int64("account_id", account.ID),
@@ -1415,6 +1423,14 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			})
 		}
 		if err != nil {
+			var rejected *service.UpstreamFailoverError
+			if errors.As(err, &rejected) && rejected.IsOpenAIRequestRejection() {
+				h.handleAnthropicFailoverExhausted(c, rejected, streamStarted || c.Writer.Written())
+				if result.HasBillableUsage() {
+					submitMessagesUsage(result)
+				}
+				return
+			}
 			if result != nil && result.ImageCount > 0 {
 				reqLog.Warn("openai_messages.forward_partial_error_with_image_result",
 					zap.Int64("account_id", account.ID),
@@ -1577,6 +1593,10 @@ func (h *OpenAIGatewayHandler) anthropicStreamingAwareError(c *gin.Context, stat
 
 // handleAnthropicFailoverExhausted maps upstream failover errors to Anthropic format.
 func (h *OpenAIGatewayHandler) handleAnthropicFailoverExhausted(c *gin.Context, failoverErr *service.UpstreamFailoverError, streamStarted bool) {
+	if failoverErr.IsOpenAIRequestRejection() {
+		h.anthropicStreamingAwareError(c, http.StatusBadRequest, "invalid_request_error", failoverErr.ClientMessage, streamStarted)
+		return
+	}
 	if failoverErr != nil {
 		copyFailoverRetryAfter(c, failoverErr.ResponseHeaders)
 	}
@@ -3027,7 +3047,10 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				if scheduleModel == "" {
 					scheduleModel = turnRequestedModel
 				}
-				h.gatewayService.ReportOpenAIAccountScheduleResult(account, scheduleModel, openAIForwardSucceededForScheduling(result), result.FirstTokenMs)
+				var rejected *service.UpstreamFailoverError
+				if !errors.As(turnErr, &rejected) || !rejected.IsOpenAIRequestRejection() {
+					h.gatewayService.ReportOpenAIAccountScheduleResult(account, scheduleModel, openAIForwardSucceededForScheduling(result), result.FirstTokenMs)
+				}
 				inboundEndpoint := GetInboundEndpoint(c)
 				upstreamEndpoint := resolveOpenAIUpstreamEndpoint(c, account, result)
 				quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
@@ -3465,6 +3488,14 @@ func (h *OpenAIGatewayHandler) handleFailoverExhausted(c *gin.Context, failoverE
 	}
 	statusCode := failoverErr.StatusCode
 	responseBody := failoverErr.ResponseBody
+	if failoverErr.IsOpenAIRequestRejection() {
+		if !streamStarted && !c.Writer.Written() {
+			service.WriteOpenAIUpstreamClientError(c, http.StatusBadRequest, responseBody, failoverErr.ClientMessage)
+		} else {
+			h.handleStreamingAwareError(c, http.StatusBadRequest, "invalid_request_error", failoverErr.ClientMessage, true)
+		}
+		return
+	}
 	if statusCode == http.StatusBadRequest && service.IsOpenAICompatibleModelNotFound400(responseBody) && !streamStarted {
 		upstreamMsg := service.SanitizeUpstreamErrorMessage(service.ExtractUpstreamErrorMessage(responseBody))
 		service.SetOpsUpstreamError(c, statusCode, upstreamMsg, "")
@@ -3882,7 +3913,12 @@ func closeOpenAIWSFailoverExhausted(c *gin.Context, conn *coderws.Conn, failover
 		if reason := strings.TrimSpace(string(failoverErr.Reason)); reason != "" {
 			errorCode = reason
 		}
-		if failoverErr.Stage == service.GatewayFailureStageAccountAuth {
+		if failoverErr.IsOpenAIRequestRejection() {
+			intendedStatus = http.StatusBadRequest
+			errorType = "invalid_request_error"
+			message = failoverErr.ClientMessage
+			closeStatus = coderws.StatusPolicyViolation
+		} else if failoverErr.Stage == service.GatewayFailureStageAccountAuth {
 			intendedStatus = http.StatusServiceUnavailable
 			errorType = "api_error"
 			message = service.GrokCredentialUnavailableClientMessage

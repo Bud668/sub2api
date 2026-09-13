@@ -874,6 +874,8 @@ type DynamicQuotaReservation struct {
 	AccountID, Cycle int64
 	service          *DynamicSubscriptionService
 	dispatched       atomic.Bool
+	dispatchAttempts atomic.Int64
+	unsentAttempts   atomic.Int64
 }
 
 func (r *DynamicQuotaReservation) MarkDispatched() error {
@@ -894,6 +896,7 @@ func (r *DynamicQuotaReservation) MarkDispatched() error {
 		return ErrDynamicQuotaUnavailable
 	}
 	r.dispatched.Store(true)
+	r.dispatchAttempts.Add(1)
 	return nil
 }
 
@@ -1096,7 +1099,8 @@ func (r *DynamicQuotaReservation) Finish(result *OpenAIForwardResult, err error,
 		return
 	}
 	defer r.service.active.Delete(r.ID)
-	if result == nil && !r.dispatched.Load() && !wroteOutput {
+	provenUnsent := r.dispatchAttempts.Load() > 0 && r.dispatchAttempts.Load() == r.unsentAttempts.Load()
+	if ((result == nil && !r.dispatched.Load()) || (provenUnsent && !result.HasBillableUsage())) && !wroteOutput {
 		r.RejectBeforeForward()
 		return
 	}
@@ -1107,7 +1111,7 @@ func (r *DynamicQuotaReservation) Finish(result *OpenAIForwardResult, err error,
 	outcome := "missing_usage"
 	if result.HasBillableUsage() {
 		status, outcome = "pending", "usage_received"
-	} else if dynamicQuotaKnownRejection(err) && !wroteOutput {
+	} else if dynamicQuotaKnownRejection(err) && (!wroteOutput || openAIRequestRejectionBeforeOutput(err)) {
 		status = "rejected"
 		outcome = "upstream_rejected"
 		if result != nil {
@@ -1123,6 +1127,7 @@ func (r *DynamicQuotaReservation) Finish(result *OpenAIForwardResult, err error,
 		evidence["request_id"], evidence["model"] = result.RequestID, result.Model
 		evidence["usage"], evidence["terminal_event"] = result.Usage, result.UpstreamTerminalEvent
 		evidence["image_count"], evidence["video_count"] = result.ImageCount, result.VideoCount
+		evidence["has_billable_usage"] = result.HasBillableUsage()
 	}
 	raw, _ := json.Marshal(evidence)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -1150,6 +1155,9 @@ func dynamicQuotaKnownRejection(err error) bool {
 	if !errors.As(err, &rejected) {
 		return false
 	}
+	if rejected.IsOpenAIRequestRejection() {
+		return rejected.SafeToFailoverAfterWrite
+	}
 	// 5xx and transport-generated 502 do not prove that upstream did no work.
 	switch rejected.StatusCode {
 	case 400, 401, 403, 404, 405, 413, 422, 429:
@@ -1157,6 +1165,11 @@ func dynamicQuotaKnownRejection(err error) bool {
 	default:
 		return false
 	}
+}
+
+func openAIRequestRejectionBeforeOutput(err error) bool {
+	var rejected *UpstreamFailoverError
+	return errors.As(err, &rejected) && rejected.IsOpenAIRequestRejection() && rejected.SafeToFailoverAfterWrite
 }
 
 func (r *DynamicQuotaReservation) RejectBeforeForward() {

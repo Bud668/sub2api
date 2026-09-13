@@ -996,6 +996,8 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		replayCollector := &openAIWSToolCallReplayCollector{}
 		firstEventType := ""
 		lastEventType := ""
+		var requestRejection *UpstreamFailoverError
+		requestOutputStarted := false
 		needModelReplace := false
 		clientDisconnected := false
 		mappedModel := ""
@@ -1035,6 +1037,9 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			upstreamMessage, readErr := lease.ReadMessageWithContextTimeout(ctx, s.openAIWSReadTimeout())
 			if readErr != nil {
 				lease.MarkBroken()
+				if requestRejection != nil && !requestOutputStarted {
+					return nil, requestRejection
+				}
 				return nil, wrapOpenAIWSIngressTurnError(
 					"read_upstream",
 					fmt.Errorf("read upstream websocket event: %w", readErr),
@@ -1061,7 +1066,25 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				parseOpenAIWSResponseUsageFromCompletedEvent(upstreamMessage, &usage)
 			}
 			if eventType == "error" || eventType == "response.failed" {
-				markOpenAICyberPolicyEvent(c, upstreamMessage, http.StatusOK, &usage)
+				if eventType == "response.failed" {
+					requestRejection = nil
+				}
+				if markOpenAICyberPolicyEvent(c, upstreamMessage, http.StatusOK, &usage) {
+					requestRejection = nil
+				}
+				if !requestOutputStarted && openAIRequestRejection(upstreamMessage) {
+					requestRejection = s.newOpenAIRequestRejection(c, account, upstreamMessage, responseID)
+					if eventType == "response.failed" {
+						lease.MarkBroken()
+						return nil, requestRejection
+					}
+					continue
+				}
+			} else {
+				requestOutputStarted = requestOutputStarted || openAIStreamDataStartsClientOutput(string(upstreamMessage), eventType)
+				if eventType == "response.completed" || eventType == "response.done" {
+					requestRejection = nil
+				}
 			}
 			if eventType == "error" {
 				s.handleOpenAIWSErrorEventTransientFailure(ctx, account, mappedModel, lease.HandshakeHeaders(), upstreamMessage)

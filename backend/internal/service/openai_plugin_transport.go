@@ -1,6 +1,10 @@
 package service
 
-import "net/http"
+import (
+	"net/http"
+	"net/http/httptrace"
+	"sync/atomic"
+)
 
 func (s *OpenAIGatewayService) SetPluginManager(manager *PluginManager) {
 	s.pluginManager = manager
@@ -18,7 +22,24 @@ func (s *OpenAIGatewayService) doOpenAIUpstream(request *http.Request, proxyURL 
 			return response, err
 		}
 	}
-	return s.httpUpstream.Do(request, proxyURL, account.ID, account.Concurrency)
+	r, _ := request.Context().Value(dynamicQuotaRequestContextKey{}).(*DynamicQuotaReservation)
+	if r == nil {
+		return s.httpUpstream.Do(request, proxyURL, account.ID, account.Concurrency)
+	}
+	// GetConn precedes dialing; GotConn only follows a usable connection/TLS.
+	// Any connected attempt (including internal retries/redirects) makes the
+	// entire call uncertain. Transports that do not emit traces stay conservative.
+	var acquiring, connected atomic.Bool
+	trace := &httptrace.ClientTrace{
+		GetConn: func(string) { acquiring.Store(true) },
+		GotConn: func(httptrace.GotConnInfo) { connected.Store(true) },
+	}
+	request = request.WithContext(httptrace.WithClientTrace(request.Context(), trace))
+	response, err := s.httpUpstream.Do(request, proxyURL, account.ID, account.Concurrency)
+	if err != nil && response == nil && acquiring.Load() && !connected.Load() {
+		r.unsentAttempts.Add(1)
+	}
+	return response, err
 }
 
 // doOpenAIAccountTestUpstream 让 OpenAI OAuth 账号测试与真实转发使用同一插件路径。

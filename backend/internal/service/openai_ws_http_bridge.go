@@ -638,6 +638,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 	bareErrorPending := false
 	var bareErrorPayload []byte
 	bareErrorMessage := ""
+	var requestRejection *UpstreamFailoverError
 	failureAccountSideEffectsApplied := false
 	mappedModel := actualModel
 	needModelReplace := false
@@ -778,7 +779,12 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 			parseOpenAIWSResponseUsageFromCompletedEvent(upstreamMessage, &usage)
 		}
 		if eventType == "error" || eventType == "response.failed" {
-			markOpenAICyberPolicyEvent(c, upstreamMessage, http.StatusOK, &usage)
+			if eventType == "response.failed" {
+				requestRejection = nil
+			}
+			if markOpenAICyberPolicyEvent(c, upstreamMessage, http.StatusOK, &usage) {
+				requestRejection = nil
+			}
 		}
 		imageCounter.AddSSEData(upstreamMessage)
 
@@ -793,6 +799,9 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 		replayCollector.AddEvent(eventType, upstreamMessage)
 
 		var upstreamEventErr error
+		if eventType == "response.completed" || eventType == "response.done" {
+			requestRejection = nil
+		}
 		if officialOpenAIResponses && bareErrorPending && (eventType == "response.completed" || eventType == "response.done") {
 			// Some upstreams emit a recoverable bare error before the authoritative
 			// successful terminal. Do not replace that terminal with a synthetic
@@ -804,6 +813,14 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 		suppressClientMessage := officialOpenAIResponses && bareErrorPending && eventType != "response.failed"
 		if eventType == "error" || eventType == "response.failed" {
 			errMessage := extractOpenAISSEErrorMessage(upstreamMessage)
+			if !wroteDownstream && openAIRequestRejection(upstreamMessage) {
+				requestRejection = s.newOpenAIRequestRejection(c, account, upstreamMessage, resp.Header.Get("x-request-id"))
+				if eventType == "response.failed" {
+					upstreamTerminalEvent = eventType
+					return resultWithUsage(), requestRejection
+				}
+				continue
+			}
 			if errMessage == "" {
 				errMessage = "upstream error event"
 			}
@@ -953,6 +970,10 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 			)
 			return resultWithUsage(), nil
 		}
+	}
+	if requestRejection != nil && !wroteDownstream {
+		upstreamTerminalEvent = "error"
+		return resultWithUsage(), requestRejection
 	}
 	if bareErrorPending {
 		if finalizeErr := finalizeBareError(); finalizeErr != nil {
