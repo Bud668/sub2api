@@ -1643,14 +1643,29 @@ func normalizeCodexDelegationBootstrap(body []byte) ([]byte, bool) {
 	// 已有任务通过 send_message_to_thread 唤醒时会携带 previous_response_id；
 	// 完整历史回放还会带有已配对的调用项。delegation 仍是客户端注入的用户输入，
 	// 不属于这些历史调用的结果，因此允许它与可明确配对的历史上下文共存。
-	return normalizeCodexCallOutputBootstrap(body, isCodexDelegationCandidate, true)
+	return normalizeCodexCallOutputBootstrap(body, isCodexDelegationCandidate, true,
+		`input.#(name=="create_thread").name`, `input.#(name=="send_message_to_thread").name`)
 }
 
 func normalizeCodexAutomationBootstrap(body []byte) ([]byte, bool) {
-	return normalizeCodexCallOutputBootstrap(body, isCodexAutomationCandidate, false)
+	return normalizeCodexCallOutputBootstrap(body, isCodexAutomationCandidate, false,
+		`input.#(name=="automation_update").name`)
 }
 
-func normalizeCodexCallOutputBootstrap(body []byte, isCandidate func(map[string]any) bool, allowHistoricalContext bool) ([]byte, bool) {
+func normalizeCodexCallOutputBootstrap(body []byte, isCandidate func(map[string]any) bool, allowHistoricalContext bool, candidatePaths ...string) ([]byte, bool) {
+	// Ordinary long histories need no rewrite. Query only the tool name (not the
+	// large input/output body), with JSON escape handling. A match is only a hint:
+	// every existing duplicate-key, envelope and context check still runs below.
+	possibleCandidate := false
+	for _, path := range candidatePaths {
+		if gjson.GetBytes(body, path).Exists() {
+			possibleCandidate = true
+			break
+		}
+	}
+	if !possibleCandidate {
+		return body, false
+	}
 	if !hasUniqueJSONMembers(body) {
 		return body, false
 	}
