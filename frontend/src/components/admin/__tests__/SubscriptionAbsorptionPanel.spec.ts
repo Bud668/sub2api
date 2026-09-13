@@ -5,8 +5,8 @@ import Panel from '../SubscriptionAbsorptionPanel.vue'
 import messages from '@/i18n/locales/zh/common'
 import type { AbsorbedUsageReport } from '@/api/admin/subscriptions'
 
-const { query } = vi.hoisted(() => ({ query: vi.fn() }))
-vi.mock('@/api/admin/subscriptions', () => ({ getAbsorbedUsage: query }))
+const { query, clear } = vi.hoisted(() => ({ query: vi.fn(), clear: vi.fn() }))
+vi.mock('@/api/admin/subscriptions', () => ({ getAbsorbedUsage: query, clearAbsorbedUsage: clear }))
 const report = (n = 14, amount = 12.5, unknown = 3): AbsorbedUsageReport => ({
   summary: { requests: n, known_requests: n - unknown, known_standard_usd: amount, unknown_requests: unknown },
   items: [], page: 1, page_size: 20, pages: 1
@@ -18,7 +18,7 @@ const render = () => mount(Panel, {
 })
 
 describe('subscription toolbar site-covered usage', () => {
-  beforeEach(() => { query.mockReset(); query.mockResolvedValue(report()) })
+  beforeEach(() => { query.mockReset(); clear.mockReset(); query.mockResolvedValue(report()) })
   it('loads counts and a verified subtotal without opening the details', async () => {
     const w = render(); await flushPromises()
     const b = w.get('[data-testid="absorption-summary"]')
@@ -69,7 +69,7 @@ describe('subscription toolbar site-covered usage', () => {
     expect(w.text()).toContain('无需手工核销，不再追加扣款')
     expect(w.get('[data-testid="absorption-summary"]').text()).not.toContain('999')
     await w.get('select').setValue('history'); await flushPromises()
-    expect(query).toHaveBeenLastCalledWith({ scope: 'history', page: 1, page_size: 20 }, expect.any(AbortSignal))
+    expect(query).toHaveBeenLastCalledWith({ scope: 'history', visibility: 'uncleared', page: 1, page_size: 20 }, expect.any(AbortSignal))
     expect(query.mock.calls.every(([params]) => !('execute' in params))).toBe(true)
     w.unmount()
   })
@@ -88,6 +88,55 @@ describe('subscription toolbar site-covered usage', () => {
     expect(query.mock.calls.every(([params]) => !('category' in params))).toBe(true)
     expect(w.find('[data-testid=absorption-details] details').text()).toContain('999')
     expect(w.find('.min-w-\\[760px\\]').exists()).toBe(false)
+    w.unmount()
+  })
+
+  it('clears selected records from counts, retains audit view and leaves new arrivals visible', async () => {
+    const rows = [1, 2].map(n => ({ id: `00000000-0000-4000-8000-00000000000${n}`, user_id: 7, email: `reader${n}@example.invalid`, subscription_id: 1, group_id: 4, group_name: 'Synthetic group', account_id: 5, account_name: 'Synthetic source', cycle: 1, model: 'synthetic', reason: 'automatic_unmetered', known_standard_usd: null, reference_hold_usd: 999, started_at: '2026-09-10T00:00:00Z', absorbed_at: '2026-09-10T00:06:00Z', closed_at: null, display_cleared_at: null as string | null }))
+    query.mockImplementation(async (params) => {
+      const items = rows.filter(row => params.visibility === 'all' || (params.visibility === 'cleared' ? row.display_cleared_at : !row.display_cleared_at))
+      return { ...report(items.length, 0, items.length), items: params.summary_only ? [] : items }
+    })
+    clear.mockImplementation(async (ids: string[]) => {
+      for (const row of rows) if (ids.includes(row.id)) row.display_cleared_at = '2026-09-13T00:00:00Z'
+      return { cleared: ids.length }
+    })
+    const w = render(); await flushPromises()
+    await w.get('[data-testid=absorption-summary]').trigger('click'); await flushPromises()
+    await w.findAll('[data-testid=absorption-select-row]')[0].setValue(true)
+    await w.get('[data-testid=absorption-clear]').trigger('click'); await flushPromises()
+    expect(clear).toHaveBeenCalledWith([rows[0].id])
+    expect(w.get('[data-testid=absorption-summary]').text()).toContain('1 条')
+    expect(w.get('[data-testid=absorption-clear-feedback]').text()).toContain('已清理 1 条')
+    expect(w.findAll('[data-testid=absorption-select-row]')).toHaveLength(1)
+    await w.get('[data-testid=absorption-visibility]').setValue('cleared'); await flushPromises()
+    expect(w.get('[data-testid=absorption-details]').text()).toContain('reader1@example.invalid')
+    expect(w.findAll('[data-testid=absorption-select-row]')).toHaveLength(0)
+    await w.get('[data-testid=absorption-visibility]').setValue('uncleared'); await flushPromises()
+    await w.get('[data-testid=absorption-select-all]').setValue(true)
+    // A later arrival was never selected and must not be swept into the POST.
+    rows.push({ ...rows[1], id: '00000000-0000-4000-8000-000000000003' })
+    await w.get('[data-testid=absorption-clear]').trigger('click'); await flushPromises()
+    expect(clear).toHaveBeenLastCalledWith([rows[1].id])
+    expect(w.get('[data-testid=absorption-summary]').text()).toContain('1 条')
+    w.unmount()
+  })
+
+  it('selects only the current page and preserves selection on an unconfirmed clear', async () => {
+    const details = report(40, 0, 40)
+    details.pages = 2
+    details.items = [1, 2].map(n => ({ id: `request-${n}`, user_id: 7, email: 'reader@example.invalid', subscription_id: 1, group_id: 4, group_name: 'Synthetic group', account_id: 5, account_name: 'Synthetic source', cycle: 1, model: 'synthetic', reason: 'missing_evidence', known_standard_usd: null, reference_hold_usd: 99, started_at: '2026-09-10T00:00:00Z', absorbed_at: '2026-09-10T00:06:00Z', closed_at: null }))
+    query.mockResolvedValue(details)
+    clear.mockRejectedValue(new Error('timeout'))
+    const w = render(); await flushPromises()
+    await w.get('[data-testid=absorption-summary]').trigger('click'); await flushPromises()
+    await w.get('[data-testid=absorption-select-all]').setValue(true)
+    await w.get('[data-testid=absorption-clear]').trigger('click'); await flushPromises()
+    expect(clear).toHaveBeenCalledWith(['request-1', 'request-2'])
+    expect(w.get('[data-testid=absorption-clear-feedback]').attributes('role')).toBe('alert')
+    expect(w.get('[data-testid=absorption-clear]').text()).toContain('（2）')
+    await w.setProps({ filters: { user_id: 8 } }); await flushPromises()
+    expect(w.get('[data-testid=absorption-clear]').attributes('disabled')).toBeDefined()
     w.unmount()
   })
 })

@@ -66,19 +66,20 @@ func TestDynamicQuotaV2BoundsAndBudget(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestDynamicQuotaV2NodesAndIndependentSamples(t *testing.T) {
+func TestDynamicQuotaV2NodesUseCumulativeWindow(t *testing.T) {
 	now := time.Now().UTC().Add(-5 * time.Minute)
 	o := dynamicTestObservation(4, 19, now.Add(6*24*time.Hour), now)
 	p := DynamicQuotaPoolState{}
 	require.False(t, p.Observe(o, now))
 	p.startV2()
-	require.Equal(t, 1, p.V2.LastNode)
+	require.Equal(t, 15, p.V2.LastNode)
 	o.FetchedAt = now.Add(time.Minute)
 	o.UsedPercent, o.LocalStandardTotal = 19.96, 9.6
 	require.False(t, p.Observe(o, o.FetchedAt))
 	require.False(t, p.v2AllocationDue(o.FetchedAt))
 	o.FetchedAt = now.Add(2 * time.Minute)
 	o.UsedPercent, o.LocalStandardTotal = 32, 130
+	o.WindowCostUSD, o.WindowStandardUSD = 320, 320
 	require.False(t, p.Observe(o, o.FetchedAt))
 	require.InDelta(t, 1000, p.CapacityUSD, 1e-8)
 	require.True(t, p.v2AllocationDue(o.FetchedAt))
@@ -92,7 +93,7 @@ func TestDynamicQuotaV2NodesAndIndependentSamples(t *testing.T) {
 	require.NoError(t, err)
 	var restored DynamicQuotaPoolState
 	require.NoError(t, json.Unmarshal(raw, &restored))
-	require.Equal(t, 3, restored.V2.LastNode)
+	require.Equal(t, 30, restored.V2.LastNode)
 	require.False(t, restored.v2AllocationDue(o.FetchedAt))
 	other := DynamicQuotaPoolState{}
 	require.Nil(t, other.V2, "a different source stays independent")
@@ -107,6 +108,7 @@ func TestDynamicQuotaV2SpikeKeepsLastCapacity(t *testing.T) {
 	p.CapacityUSD, p.Status = 1000, "active"
 	o.FetchedAt = now.Add(time.Minute)
 	o.UsedPercent, o.LocalStandardTotal = 20, 1000
+	o.WindowCostUSD, o.WindowStandardUSD = 1800, 1800
 	p.Observe(o, o.FetchedAt)
 	require.Equal(t, 1000.0, p.CapacityUSD)
 	require.Equal(t, 1, p.V2.CandidateSamples)
@@ -135,6 +137,7 @@ func TestDynamicQuotaV2UnreservedAllocationStillExcludesNativeThreshold(t *testi
 	p := DynamicQuotaPoolState{ceilingPercent: 99}
 	p.Observe(o, now)
 	o.FetchedAt, o.UsedPercent, o.LocalStandardTotal = now.Add(time.Minute), 10, 150
+	o.WindowCostUSD, o.WindowStandardUSD = 150, 150
 	p.Observe(o, o.FetchedAt)
 	require.InDelta(t, 1500, p.CapacityUSD, 1e-8, "no additional ten-percent reserve")
 	members := []dynamicQuotaV2Member{{ID: 1, Weight: 1, Used: 75, Floor: 100, Cap: 1000}, {ID: 2, Weight: 1, Used: 75, Floor: 100, Cap: 1000}}

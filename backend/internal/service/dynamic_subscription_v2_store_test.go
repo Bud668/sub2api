@@ -37,14 +37,14 @@ func TestDynamicQuotaV2PassedNodeShowsPendingReasonWithoutGranting(t *testing.T)
 	require.NoError(t, json.Unmarshal(raw, &pool))
 	pool.Snapshot.UsedPercent, pool.Snapshot.FetchedAt = 46, now
 	pool.Status, pool.CapacityUSD = "active", 1209.4021872
-	pool.V2.SampleAt, pool.V2.BudgetConflict = now, true
+	pool.V2.BudgetConflict = true
 	raw, err := json.Marshal(pool)
 	require.NoError(t, err)
 	dynamicExec(t, db, `UPDATE dynamic_quota_pools SET state=$1::jsonb WHERE account_id=4`, string(raw))
 	for range 2 {
 		q, err := s.Load(ctx, 11)
 		require.NoError(t, err)
-		require.Equal(t, 40, q.PendingAdjustmentPercent)
+		require.Equal(t, 45, q.PendingAdjustmentPercent)
 		require.Equal(t, "budget_conflict", q.PendingAdjustmentReason)
 		require.Equal(t, 50, q.NextAdjustmentPercent)
 		require.Equal(t, 600.0, q.LimitUSD)
@@ -56,7 +56,7 @@ func TestDynamicQuotaV2PassedNodeShowsPendingReasonWithoutGranting(t *testing.T)
 	require.NoError(t, db.QueryRow(`SELECT state FROM dynamic_quota_pools WHERE account_id=4`).Scan(&after))
 	require.JSONEq(t, string(raw), string(after), "viewing a passed milestone never marks it allocated")
 	pool.V2.BudgetConflict = false
-	pool.V2.SampleAt = time.Time{}
+	pool.CapacityUSD = 0
 	raw, err = json.Marshal(pool)
 	require.NoError(t, err)
 	dynamicExec(t, db, `UPDATE dynamic_quota_pools SET state=$1::jsonb WHERE account_id=4`, string(raw))
@@ -77,7 +77,6 @@ func TestDynamicQuotaV2ExistingEvidenceLosesReserveExactlyOnce(t *testing.T) {
 	require.NoError(t, s.Refresh(ctx, 4))
 	updateDynamicGuardPool(t, db, 4, func(p *DynamicQuotaPoolState) {
 		p.CapacityUSD, p.Status = 1350, "active"
-		p.Samples = []float64{1350, 1440}
 		p.V2.UnreservedCapacity = false // Persisted by a release using the old 0.9 factor.
 		p.V2.CandidateUSD, p.V2.CandidateSamples = 2700, 1
 	})
@@ -89,7 +88,6 @@ func TestDynamicQuotaV2ExistingEvidenceLosesReserveExactlyOnce(t *testing.T) {
 		require.NoError(t, err)
 		require.InDelta(t, 1500, q.CapacityEstimateUSD, 1e-8)
 		require.InDelta(t, 3000, q.pool.V2.CandidateUSD, 1e-8)
-		require.Equal(t, []float64{1500, 1600}, q.pool.Samples)
 		require.Equal(t, 1, q.pool.V2.CandidateSamples, "conversion does not approve an anomalous estimate")
 		require.True(t, q.GrowthFrozen)
 		require.Equal(t, 600.0, q.LimitUSD)
@@ -141,7 +139,7 @@ func TestDynamicQuotaV2SaveDoesNotWaitForNetworkOrOldRequests(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, q.Enabled)
 	require.False(t, q.ActivationPending)
-	require.Equal(t, 70, q.NextAdjustmentPercent)
+	require.Equal(t, 65, q.NextAdjustmentPercent)
 	require.Equal(t, 600.0, q.LimitUSD, "initial allocation is the actual cap, not 80%")
 	require.Equal(t, 0.01, q.ReservedUSD, "the pre-activation request remains reserved")
 	dynamicTestSettle(t, db, old, 101, 11, 1, 1)
@@ -214,7 +212,8 @@ func TestDynamicQuotaV2NodePublishesOnceAndResetIsSourceScoped(t *testing.T) {
 	}
 	require.NoError(t, s.Refresh(ctx, 4))
 	require.NoError(t, s.Refresh(ctx, 5))
-	dynamicExec(t, db, `UPDATE dynamic_quota_pools SET standard_total_usd=100 WHERE account_id=4`)
+	dynamicExec(t, db, `UPDATE dynamic_quota_pools SET standard_total_usd=100 WHERE account_id=4;
+ INSERT INTO usage_logs(account_id,total_cost) VALUES(4,300)`)
 	s.fetch = func(_ context.Context, id int64) (DynamicQuotaObservation, error) {
 		return dynamicTestObservation(id, 30, reset, now.Add(-time.Minute)), nil
 	}
@@ -224,7 +223,7 @@ func TestDynamicQuotaV2NodePublishesOnceAndResetIsSourceScoped(t *testing.T) {
 		require.NoError(t, err)
 		require.InDelta(t, 370, q.LimitUSD, 1e-7)
 		require.Equal(t, 20.0, q.UsedUSD)
-		require.Equal(t, 40, q.NextAdjustmentPercent)
+		require.Equal(t, 35, q.NextAdjustmentPercent)
 		require.Equal(t, "upstream_node", q.LastChange.Reason)
 		require.Equal(t, 30, q.LastChange.Node)
 		require.Equal(t, 600.0, q.LastChange.PreviousUSD)
@@ -439,11 +438,12 @@ func TestDynamicQuotaV2SpikeCannotRefillAnExhaustedUser(t *testing.T) {
 	dynamicExec(t, db, `UPDATE dynamic_subscription_policies SET applied_limit_usd=20,allocated_standard_usd=20 WHERE subscription_id=11;
  UPDATE dynamic_subscription_policies SET applied_limit_usd=100,allocated_standard_usd=100 WHERE subscription_id=12;
  UPDATE dynamic_quota_pools SET standard_total_usd=1000 WHERE account_id=4`)
+	dynamicExec(t, db, `INSERT INTO usage_logs(account_id,total_cost) VALUES(4,2000)`)
 	now := time.Now().UTC()
 	reset := now.Add(6 * 24 * time.Hour)
 	updateDynamicGuardPool(t, db, 4, func(p *DynamicQuotaPoolState) {
 		o := dynamicTestObservation(4, 10, reset, now.Add(-3*time.Minute))
-		p.Snapshot, p.SampleAnchor = &o, &o
+		p.Snapshot = &o
 		p.startV2()
 		p.CapacityUSD, p.Status = 1000, "active"
 	})

@@ -43,10 +43,37 @@ func TestDynamicQuotaAbsorptionRejectsInvalidQueries(t *testing.T) {
 	h := NewSubscriptionHandler(nil)
 	router := gin.New()
 	router.GET("/", h.GetAbsorbedUsage)
-	for _, q := range []string{"user_id=-1", "group_id=abc", "page=0", "page_size=101", "scope=all", "category=all", "summary_only=invalid", "page=99999999999999999999999"} {
+	for _, q := range []string{"user_id=-1", "group_id=abc", "page=0", "page_size=101", "scope=all", "category=all", "visibility=invalid", "summary_only=invalid", "page=99999999999999999999999"} {
 		r := httptest.NewRecorder()
 		router.ServeHTTP(r, httptest.NewRequest(http.MethodGet, "/?"+q, nil))
 		require.Equal(t, 400, r.Code, q)
+		require.Equal(t, "no-store", r.Header().Get("Cache-Control"))
+	}
+}
+
+func TestDynamicQuotaAbsorptionClearRejectsUntrustedInput(t *testing.T) {
+	h := NewSubscriptionHandler(nil)
+	for _, tc := range []struct {
+		actor int64
+		body  string
+		code  int
+	}{
+		{0, `{"ids":["a"],"actor_id":1}`, 401},
+		{1, `{}`, 400}, {1, `{"ids":[]}`, 400},
+		{1, `{"ids":["a"],"all":true}`, 400},
+		{1, `{"ids":["a"]} {}`, 400},
+		{1, `{"ids":["a"]}`, 503},
+	} {
+		router := gin.New()
+		router.POST("/", func(c *gin.Context) {
+			if tc.actor > 0 {
+				c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: tc.actor})
+			}
+			h.ClearAbsorbedUsage(c)
+		})
+		r := httptest.NewRecorder()
+		router.ServeHTTP(r, httptest.NewRequest(http.MethodPost, "/", strings.NewReader(tc.body)))
+		require.Equal(t, tc.code, r.Code)
 		require.Equal(t, "no-store", r.Header().Get("Cache-Control"))
 	}
 }

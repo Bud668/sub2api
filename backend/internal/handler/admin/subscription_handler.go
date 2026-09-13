@@ -44,7 +44,7 @@ func NewSubscriptionHandler(subscriptionService *service.SubscriptionService) *S
 // GET only: viewing the toolbar/details never settles, waives or resets money.
 func (h *SubscriptionHandler) GetAbsorbedUsage(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
-	f := service.DynamicAbsorptionFilter{Scope: c.DefaultQuery("scope", "current"), Category: c.DefaultQuery("category", "covered"), Status: c.Query("status"), Platform: c.Query("platform"), Page: 1, PageSize: 20}
+	f := service.DynamicAbsorptionFilter{Scope: c.DefaultQuery("scope", "current"), Category: c.DefaultQuery("category", "covered"), Visibility: c.DefaultQuery("visibility", "uncleared"), Status: c.Query("status"), Platform: c.Query("platform"), Page: 1, PageSize: 20}
 	for name, target := range map[string]*int64{"user_id": &f.UserID, "group_id": &f.GroupID} {
 		if raw, exists := c.GetQuery(name); exists {
 			id, err := strconv.ParseInt(raw, 10, 64)
@@ -73,7 +73,7 @@ func (h *SubscriptionHandler) GetAbsorbedUsage(c *gin.Context) {
 		}
 		f.SummaryOnly = v
 	}
-	if f.Scope != "current" && f.Scope != "history" || len(f.Platform) > 32 || len(f.Status) > 32 || (f.Category != "covered" && f.Category != "review") {
+	if f.Scope != "current" && f.Scope != "history" || len(f.Platform) > 32 || len(f.Status) > 32 || (f.Category != "covered" && f.Category != "review") || (f.Visibility != "uncleared" && f.Visibility != "cleared" && f.Visibility != "all") {
 		response.BadRequest(c, "Invalid accounting filters")
 		return
 	}
@@ -87,6 +87,35 @@ func (h *SubscriptionHandler) GetAbsorbedUsage(c *gin.Context) {
 		return
 	}
 	response.Success(c, out)
+}
+
+func (h *SubscriptionHandler) ClearAbsorbedUsage(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	middleware2.SetAuditAction(c, "admin.subscription.absorbed_usage.clear_display")
+	actor := getAdminIDFromContext(c)
+	if actor <= 0 {
+		response.Unauthorized(c, "Unauthorized")
+		return
+	}
+	var in struct {
+		IDs []string `json:"ids"`
+	}
+	decoder := json.NewDecoder(http.MaxBytesReader(c.Writer, c.Request.Body, 8192))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&in) != nil || len(in.IDs) == 0 || len(in.IDs) > 100 || decoder.Decode(&struct{}{}) != io.EOF {
+		response.BadRequest(c, "Select 1 to 100 records")
+		return
+	}
+	if h.subscriptionService == nil || h.subscriptionService.DynamicQuotas == nil {
+		response.ErrorFrom(c, service.ErrDynamicQuotaUnavailable)
+		return
+	}
+	n, err := h.subscriptionService.DynamicQuotas.ClearAbsorbedUsage(c.Request.Context(), in.IDs, actor)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, gin.H{"cleared": n})
 }
 
 // Admin middleware owns authentication; no user endpoint can change a binding.

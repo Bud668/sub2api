@@ -4,11 +4,12 @@ import "time"
 
 // WindowStats 窗口期统计，与账号用量和监控快照共用费用口径。
 type WindowStats struct {
-	Requests     int64   `json:"requests"`
-	Tokens       int64   `json:"tokens"`
-	Cost         float64 `json:"cost"`          // total_cost * account_rate_multiplier
-	StandardCost float64 `json:"standard_cost"` // total_cost，不含倍率
-	UserCost     float64 `json:"user_cost"`     // actual_cost，受分组倍率影响
+	EstimatedTotalCost *float64 `json:"estimated_total_cost,omitempty"`
+	Requests           int64    `json:"requests"`
+	Tokens             int64    `json:"tokens"`
+	Cost               float64  `json:"cost"`          // total_cost * account_rate_multiplier
+	StandardCost       float64  `json:"standard_cost"` // total_cost，不含倍率
+	UserCost           float64  `json:"user_cost"`     // actual_cost，受分组倍率影响
 }
 
 // 渠道监控「配额模式」的归一化配额快照类型。

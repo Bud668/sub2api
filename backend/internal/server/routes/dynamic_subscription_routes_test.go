@@ -30,6 +30,7 @@ func TestDynamicQuotaAccountingRequiresAdminRoute(t *testing.T) {
 			{http.MethodGet, "/api/v1/admin/groups/dynamic-quotas"},
 			{http.MethodGet, "/api/v1/admin/groups/7/dynamic-quota"},
 			{http.MethodPut, "/api/v1/admin/groups/7/dynamic-quota"},
+			{http.MethodPost, "/api/v1/admin/subscriptions/absorbed-usage/clear"},
 		} {
 			req := httptest.NewRequest(target.method, target.path, nil)
 			req.Header.Set("Authorization", token)

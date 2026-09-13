@@ -13,6 +13,7 @@ import (
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
 	"github.com/google/uuid"
 )
 
@@ -22,13 +23,6 @@ var (
 	ErrDynamicQuotaBinding     = infraerrors.Conflict("DYNAMIC_QUOTA_BINDING_CONFLICT", "The subscription's upstream quota binding does not match this request")
 	ErrDynamicQuotaChanged     = infraerrors.Conflict("DYNAMIC_QUOTA_CHANGED", "Dynamic quota settings changed; reload before saving")
 )
-
-// Public progress only; raw capacity samples and account diagnostics stay private.
-type DynamicQuotaLearningCheck struct {
-	Samples        int  `json:"samples"`
-	Required       int  `json:"required"`
-	CapacityChange bool `json:"capacity_change,omitempty"`
-}
 
 type DynamicSubscriptionQuota struct {
 	GroupManaged                          bool                `json:"group_managed,omitempty"`
@@ -60,13 +54,10 @@ type DynamicSubscriptionQuota struct {
 	ExpectedResetAt                       *time.Time          `json:"expected_reset_at,omitempty"`
 	UpdatedAt                             time.Time           `json:"updated_at"`
 	CapacityEstimateUSD                   float64             `json:"capacity_estimate_usd,omitempty"` // Admin-only diagnostic.
-	SampleCount                           int                 `json:"sample_count,omitempty"`
 	GrowthFrozen                          bool                `json:"growth_frozen,omitempty"`
 	usedStandard, allocatedStandard, rate float64
 	userID, groupID                       int64
 	pool                                  DynamicQuotaPoolState
-
-	LearningCheck *DynamicQuotaLearningCheck `json:"learning_check,omitempty"`
 }
 
 func (q *DynamicSubscriptionQuota) Public() *DynamicSubscriptionQuota {
@@ -76,7 +67,6 @@ func (q *DynamicSubscriptionQuota) Public() *DynamicSubscriptionQuota {
 	cp := *q
 	cp.AccountID = 0
 	cp.CapacityEstimateUSD = 0
-	cp.SampleCount = 0
 	cp.AllocationBudgetConflict = false
 	if cp.PendingAdjustmentReason == "budget_conflict" {
 		cp.PendingAdjustmentReason = "protection"
@@ -268,7 +258,7 @@ func loadDynamicSubscription(ctx context.Context, db dynamicQuotaQuerier, subscr
  pool.state,p.updated_at,COALESCE(p.cycle_started_at,us.weekly_window_start),
  COALESCE((SELECT sum(hold_standard_usd) FROM dynamic_quota_requests d WHERE
  (d.subscription_id=us.id OR (d.owner_subscription_id=us.id AND d.account_id=p.account_id))
- AND d.status IN ('pending','uncertain') AND d.operator_absorbed_at IS NULL AND d.review_required_at IS NULL AND d.source_closed_at IS NULL),0),
+ AND `+dynamicClaimSQL+`),0),
  p.applied_limit_usd,p.floor_limit_usd,p.activation_pending,p.last_change,
  (SELECT count(*) FROM dynamic_quota_seats d WHERE d.account_id=p.account_id AND d.group_id=us.group_id
  AND d.cycle=GREATEST(1,COALESCE((pool.state->>'cycle')::bigint,0))),
@@ -312,36 +302,24 @@ func loadDynamicSubscription(ctx context.Context, db dynamicQuotaQuerier, subscr
 	if nativeStart.Valid {
 		q.StartedAt = nativeStart.Time
 	}
-	q.CapacityEstimateUSD, q.SampleCount = q.pool.CapacityUSD, len(q.pool.Samples)
+	q.CapacityEstimateUSD = q.pool.CapacityUSD
 	if q.pool.V2 != nil {
 		q.AllocationBudgetConflict = q.pool.V2.BudgetConflict
-		observedNode := q.pool.V2.LastNode
-		if snapshot := q.pool.Snapshot; snapshot != nil && snapshot.Valid(snapshot.FetchedAt) {
-			observedNode = max(observedNode, dynamicQuotaNode(snapshot.UsedPercent))
+		lastNode := q.pool.V2.LastNode
+		if !q.pool.V2.FixedSeats && !q.pool.V2.CumulativeEstimate {
+			lastNode *= 10 // Read old persisted node indices without rewriting the ledger.
 		}
-		q.NextAdjustmentPercent = (observedNode + 1) * 10
+		percent := 0.0
+		if snapshot := q.pool.Snapshot; snapshot != nil {
+			percent = snapshot.UsedPercent
+		}
+		observedNode := max(lastNode, dynamicQuotaNode(percent))
+		q.NextAdjustmentPercent = observedNode + dynamicQuotaStep(float64(observedNode))
+		if observedNode > lastNode {
+			q.PendingAdjustmentPercent = observedNode
+		}
 		if float64(q.NextAdjustmentPercent) >= q.pool.stopPercent() {
 			q.NextAdjustmentPercent = 0
-		}
-		if observedNode > q.pool.V2.LastNode {
-			q.PendingAdjustmentPercent = observedNode * 10
-		}
-		if q.pool.V2.FixedSeats {
-			q.LearningCheck = q.pool.fixedSeatLearningCheck()
-			percent := 0.0
-			if snapshot := q.pool.Snapshot; snapshot != nil {
-				percent = snapshot.UsedPercent
-			}
-			observedNode = max(q.pool.V2.LastNode, q.pool.fixedSeatNode(percent))
-			step := q.pool.fixedSeatStep(percent)
-			q.NextAdjustmentPercent = (observedNode/step + 1) * step
-			q.PendingAdjustmentPercent = 0
-			if observedNode > q.pool.V2.LastNode {
-				q.PendingAdjustmentPercent = observedNode
-			}
-			if float64(q.NextAdjustmentPercent) >= q.pool.stopPercent() {
-				q.NextAdjustmentPercent = 0
-			}
 		}
 	}
 	if len(change) > 0 {
@@ -391,7 +369,7 @@ func loadDynamicSubscription(ctx context.Context, db dynamicQuotaQuerier, subscr
 			q.PendingAdjustmentReason = "guard"
 		case q.AllocationBudgetConflict:
 			q.PendingAdjustmentReason = "budget_conflict"
-		case q.CapacityEstimateUSD <= 0 || !q.pool.V2.SampleAt.After(q.pool.LastAllocationAt):
+		case q.CapacityEstimateUSD <= 0 || q.pool.Snapshot == nil || !q.pool.Snapshot.hasWindowEstimate():
 			q.PendingAdjustmentReason = "learning"
 		default:
 			q.PendingAdjustmentReason = "awaiting_allocation"
@@ -668,14 +646,18 @@ func writeDynamicPool(ctx context.Context, tx *sql.Tx, accountID int64, p *Dynam
 	return err
 }
 
+// A closed customer liability is not a running request. Retain only open claims
+// (including metered bills awaiting settlement), or a genuinely live turn across
+// a confirmed reset. One row counts once; canonical settlement releases it atomically.
+const dynamicClaimSQL = `d.status IN ('pending','uncertain') AND
+ ((d.source_closed_at IS NULL AND d.operator_absorbed_at IS NULL) OR
+ (d.finished_at IS NULL AND d.lease_until>NOW()))`
+
 func dynamicPoolTotals(ctx context.Context, db dynamicQuotaQuerier, accountID int64) (total, held, maxCost float64, pending int, err error) {
-	// Archived debt never carries forward. A genuinely executing cross-boundary
-	// turn still needs a physical hold until it finishes or its process lease dies.
 	err = db.QueryRowContext(ctx, `SELECT p.standard_total_usd,COALESCE(h.held,0),p.max_request_usd,COALESCE(h.pending,0)
  FROM dynamic_quota_pools p LEFT JOIN LATERAL
- (SELECT sum(COALESCE(operator_absorbed_standard_usd,review_standard_usd,hold_standard_usd)) AS held,count(*) AS pending FROM dynamic_quota_requests
-  WHERE account_id=p.account_id AND status IN ('pending','uncertain')
-  AND (source_closed_at IS NULL OR (finished_at IS NULL AND lease_until>NOW()))) h ON true WHERE p.account_id=$1`, accountID).Scan(&total, &held, &maxCost, &pending)
+ (SELECT sum(d.hold_standard_usd) AS held,count(*) AS pending FROM dynamic_quota_requests d
+  WHERE d.account_id=p.account_id AND `+dynamicClaimSQL+`) h ON true WHERE p.account_id=$1`, accountID).Scan(&total, &held, &maxCost, &pending)
 	return
 }
 
@@ -690,12 +672,6 @@ func (s *DynamicSubscriptionService) Refresh(ctx context.Context, accountID int6
 		return ErrDynamicQuotaUnavailable
 	}
 	if err := s.recoverBillingReceipts(ctx, accountID); err != nil {
-		return err
-	}
-	// Consumption settling while the network query is in flight may not yet be
-	// included upstream. Keep it outside this snapshot's local watermark.
-	var totalBefore float64
-	if err := s.db.QueryRowContext(ctx, `SELECT standard_total_usd FROM dynamic_quota_pools WHERE account_id=$1`, accountID).Scan(&totalBefore); err != nil {
 		return err
 	}
 	o, err := s.fetch(ctx, accountID)
@@ -717,7 +693,19 @@ func (s *DynamicSubscriptionService) Refresh(ctx context.Context, accountID int6
 	if err != nil {
 		return err
 	}
-	o.LocalStandardTotal = totalBefore
+	// Same cumulative window and formula as account management. The source lock
+	// makes its billing watermark and local cost a single accounting snapshot.
+	// No extra upstream request, and no previous-cycle capacity/sample history.
+	var stats usagestats.AccountStats
+	if err = tx.QueryRowContext(ctx, usagestats.AccountWindowStatsSQL, accountID,
+		o.ResetAt.Add(-time.Duration(o.WindowSeconds)*time.Second)).Scan(
+		&stats.Requests, &stats.Tokens, &stats.Cost, &stats.StandardCost, &stats.UserCost); err != nil {
+		return err
+	}
+	if err = tx.QueryRowContext(ctx, `SELECT standard_total_usd FROM dynamic_quota_pools WHERE account_id=$1`, accountID).Scan(&o.LocalStandardTotal); err != nil {
+		return err
+	}
+	o.WindowCostUSD, o.WindowStandardUSD = stats.Cost, stats.StandardCost
 	now := time.Now().UTC()
 	confirmed := p.Observe(o, now)
 	var resetIDs []int64
@@ -837,7 +825,7 @@ func recordDynamicGuardEvent(ctx context.Context, tx *sql.Tx, accountID int64, p
 	details := map[string]any{"trusted_capacity_usd": p.CapacityUSD, "failures": p.Health.Failures}
 	if p.V2 != nil && p.V2.CandidateSamples > 0 {
 		details["proposed_capacity_usd"] = p.V2.CandidateUSD
-		details["independent_intervals"] = p.V2.CandidateSamples
+		details["estimate_confirmations"] = p.V2.CandidateSamples
 	}
 	raw, err := json.Marshal(details)
 	if err != nil {

@@ -680,6 +680,7 @@ func registerSubscriptionRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	{
 		subscriptions.GET("", h.Admin.Subscription.List)
 		subscriptions.GET("/absorbed-usage", h.Admin.Subscription.GetAbsorbedUsage)
+		subscriptions.POST("/absorbed-usage/clear", h.Admin.Subscription.ClearAbsorbedUsage)
 		subscriptions.GET("/:id", h.Admin.Subscription.GetByID)
 		subscriptions.GET("/:id/progress", h.Admin.Subscription.GetProgress)
 		subscriptions.GET("/:id/dynamic-quota", h.Admin.Subscription.GetDynamicQuota)

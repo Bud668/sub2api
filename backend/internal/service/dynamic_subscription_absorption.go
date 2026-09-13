@@ -6,6 +6,9 @@ import (
 	"encoding/json"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/lib/pq"
 )
 
 // A receipt is the only source of a monetary total; holds are never prices.
@@ -26,7 +29,7 @@ func dynamicAbsorptionReceipt(raw []byte, id string, accountID, keyID, userID in
 }
 
 // Caller holds the source lock, just like settlement and reset. Short recovery
-// failure closes personal liability, not physical source capacity. A VERIFIED
+// failure closes personal liability and the temporary hold, not an actual bill. A VERIFIED
 // reset archives the old cycle. Healthy cross-boundary turns retain only their
 // live execution hold until Finish/lease expiry; no old customer bill is replayed.
 func absorbDynamicRequests(ctx context.Context, tx *sql.Tx, accountID, cycle int64, closing bool) error {
@@ -146,6 +149,7 @@ type DynamicAbsorptionFilter struct {
 	Page, PageSize          int
 	SummaryOnly             bool
 	Category                string
+	Visibility              string
 }
 
 type DynamicAbsorptionSummary struct {
@@ -172,6 +176,7 @@ type DynamicAbsorptionRecord struct {
 	StartedAt        time.Time  `json:"started_at"`
 	AbsorbedAt       time.Time  `json:"absorbed_at"`
 	ClosedAt         *time.Time `json:"closed_at"`
+	DisplayClearedAt *time.Time `json:"display_cleared_at"`
 	NeedsReview      bool       `json:"needs_review"`
 	CanCharge        bool       `json:"can_charge"`
 	ChargeUSD        *float64   `json:"charge_usd"`
@@ -207,7 +212,7 @@ const dynamicAbsorptionFromSQL = ` FROM dynamic_quota_requests d
 // Read-only and metadata-only. Totals and the selected page share one snapshot;
 // a concurrent upstream reset cannot mix current totals with historical rows.
 func (s *DynamicSubscriptionService) AbsorptionReport(ctx context.Context, f DynamicAbsorptionFilter) (*DynamicAbsorptionReport, error) {
-	if f.Scope != "current" && f.Scope != "history" || f.Page < 1 || f.PageSize < 1 || f.PageSize > 100 || f.UserID < 0 || f.GroupID < 0 || (f.Category != "" && f.Category != "covered" && f.Category != "review") {
+	if f.Scope != "current" && f.Scope != "history" || f.Page < 1 || f.PageSize < 1 || f.PageSize > 100 || f.UserID < 0 || f.GroupID < 0 || (f.Category != "" && f.Category != "covered" && f.Category != "review") || (f.Visibility != "" && f.Visibility != "uncleared" && f.Visibility != "cleared" && f.Visibility != "all") {
 		return nil, ErrDynamicQuotaBinding
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -224,6 +229,12 @@ func (s *DynamicSubscriptionService) AbsorptionReport(ctx context.Context, f Dyn
 		from = strings.Replace(from, "WHERE d.operator_absorbed_at IS NOT NULL", "WHERE d.operator_absorbed_at IS NULL AND d.review_required_at IS NOT NULL AND d.status IN ('pending','uncertain')", 1)
 		amount, reason, processed = "d.review_standard_usd", "COALESCE(d.review_reason,'missing_evidence')", "d.review_required_at"
 	}
+	switch f.Visibility {
+	case "", "uncleared":
+		from += " AND d.display_cleared_at IS NULL"
+	case "cleared":
+		from += " AND d.display_cleared_at IS NOT NULL"
+	}
 	out := &DynamicAbsorptionReport{Items: []DynamicAbsorptionRecord{}, Page: f.Page, PageSize: f.PageSize}
 	err = tx.QueryRowContext(ctx, `SELECT count(*),count(`+amount+`),COALESCE(sum(`+amount+`),0),count(*) FILTER(WHERE `+amount+` IS NULL)`+from, args...).
 		Scan(&out.Summary.Requests, &out.Summary.KnownRequests, &out.Summary.KnownStandardUSD, &out.Summary.UnknownRequests)
@@ -235,7 +246,7 @@ func (s *DynamicSubscriptionService) AbsorptionReport(ctx context.Context, f Dyn
 		args = append(args, f.PageSize, (int64(f.Page)-1)*int64(f.PageSize))
 		rows, err := tx.QueryContext(ctx, `SELECT d.id,COALESCE(d.owner_user_id,us.user_id),COALESCE(u.email,''),us.id,us.group_id,g.name,
  d.account_id,a.name,d.cycle,COALESCE(d.request_context->>'model',d.billing_receipt->>'Model',d.evidence->>'model',d.late_billing_receipt->>'Model',d.late_evidence->>'model',''),
- `+reason+`,`+amount+`,d.hold_standard_usd,d.started_at,`+processed+`,d.source_closed_at,d.billing_receipt,COALESCE(d.api_key_id,0)`+from+` ORDER BY `+processed+` DESC,d.id LIMIT $6 OFFSET $7`, args...)
+ `+reason+`,`+amount+`,d.hold_standard_usd,d.started_at,`+processed+`,d.source_closed_at,d.display_cleared_at,d.billing_receipt,COALESCE(d.api_key_id,0)`+from+` ORDER BY `+processed+` DESC,d.id LIMIT $6 OFFSET $7`, args...)
 		if err != nil {
 			return nil, err
 		}
@@ -243,7 +254,7 @@ func (s *DynamicSubscriptionService) AbsorptionReport(ctx context.Context, f Dyn
 			var r DynamicAbsorptionRecord
 			var receipt []byte
 			var key int64
-			if err = rows.Scan(&r.ID, &r.UserID, &r.Email, &r.SubscriptionID, &r.GroupID, &r.GroupName, &r.AccountID, &r.AccountName, &r.Cycle, &r.Model, &r.Reason, &r.KnownStandardUSD, &r.ReferenceHoldUSD, &r.StartedAt, &r.AbsorbedAt, &r.ClosedAt, &receipt, &key); err != nil {
+			if err = rows.Scan(&r.ID, &r.UserID, &r.Email, &r.SubscriptionID, &r.GroupID, &r.GroupName, &r.AccountID, &r.AccountName, &r.Cycle, &r.Model, &r.Reason, &r.KnownStandardUSD, &r.ReferenceHoldUSD, &r.StartedAt, &r.AbsorbedAt, &r.ClosedAt, &r.DisplayClearedAt, &receipt, &key); err != nil {
 				rows.Close()
 				return nil, err
 			}
@@ -267,4 +278,46 @@ func (s *DynamicSubscriptionService) AbsorptionReport(ctx context.Context, f Dyn
 		return nil, err
 	}
 	return out, nil
+}
+
+// Clear only the explicit records the administrator selected. New arrivals are
+// never swept up by a filter or a timestamp cutoff. Repeating a request is safe.
+func (s *DynamicSubscriptionService) ClearAbsorbedUsage(ctx context.Context, ids []string, actor int64) (int64, error) {
+	if actor <= 0 || len(ids) == 0 || len(ids) > 100 {
+		return 0, ErrDynamicQuotaBinding
+	}
+	seen := make(map[uuid.UUID]bool, len(ids))
+	canonical := make([]string, 0, len(ids))
+	for _, id := range ids {
+		u, err := uuid.Parse(id)
+		if err != nil || u == uuid.Nil || seen[u] {
+			return 0, ErrDynamicQuotaBinding
+		}
+		seen[u] = true
+		canonical = append(canonical, u.String())
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	var admin int64
+	if err = tx.QueryRowContext(ctx, `SELECT id FROM users WHERE id=$1 AND role='admin' AND status='active' AND deleted_at IS NULL FOR SHARE`, actor).Scan(&admin); err != nil {
+		return 0, ErrDynamicQuotaBinding
+	}
+	result, err := tx.ExecContext(ctx, `WITH selected AS (
+ SELECT id FROM dynamic_quota_requests WHERE id=ANY($1::uuid[])
+ AND operator_absorbed_at IS NOT NULL AND display_cleared_at IS NULL ORDER BY id FOR UPDATE
+ ) UPDATE dynamic_quota_requests d SET display_cleared_at=NOW(),display_cleared_by=$2
+ FROM selected s WHERE d.id=s.id`, pq.Array(canonical), admin)
+	if err != nil {
+		return 0, err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return n, tx.Commit()
 }

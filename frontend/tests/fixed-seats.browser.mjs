@@ -50,14 +50,15 @@ async function checkCard(page, card, dark) {
   await page.keyboard.press('Escape')
   assert.equal(await badge.getAttribute('aria-expanded'), 'false')
 }
-async function checkLearning(page, card, locale, learning) {
+async function checkMilestone(page, card, locale, percent) {
   const badge = card.getByTestId('dynamic-next-adjustment')
-  assert.equal(await badge.innerText(), learning ? (locale === 'zh' ? '学习校验 · 18%' : 'Learning check · 18%') : (locale === 'zh' ? '下次调额 · 20%' : 'Next adjustment · 20%'))
+  assert.equal(await badge.innerText(), locale === 'zh' ? `下次调额 · ${percent}%` : `Next adjustment · ${percent}%`)
   await badge.focus()
   await page.keyboard.press('Enter')
   const tip = page.locator('[role=tooltip]:visible')
   await tip.waitFor()
-  assert.equal((await tip.innerText()).includes('2/3'), learning)
+  assert((await tip.innerText()).includes(locale === 'zh' ? '阈值保护' : 'threshold reserve'))
+  assert(!(await tip.innerText()).includes('2/3'))
   const rect = await tip.boundingBox(), viewport = page.viewportSize()
   assert(rect.x >= 0 && rect.y >= 0 && rect.x + rect.width <= viewport.width + 1 && rect.y + rect.height <= viewport.height + 1)
   await page.keyboard.press('Escape')
@@ -96,7 +97,7 @@ try {
     const errors = []
     page.on('pageerror', e => errors.push(e.message))
     let policy = { group_id: 7, account_id: 4, revision: 1, enabled: true, weight: 1, max_limit_usd: 600, fixed_slots: 4, floor_limit_usd: null }
-    const rows = groups.map((group, i) => ({ id: i + 11, user_id: 999, group_id: group.id, group, user, status: 'active', starts_at: stamp, expires_at: new Date(Date.parse(stamp) + [23, 7, 3][i] * 86400_000).toISOString(), weekly_usage_usd: 50, admin_debug: i === 2, dynamic_quota: i === 2 ? null : { ...base, ...(i === 1 ? { next_adjustment_percent: 18, learning_check: { samples: 2, required: 3 } } : {}) }, admin_debug_quota: i === 2 ? { weekly_limit_usd: 120, remaining_usd: 68, reserved_usd: 2, revision: 1, follow_reset: true, reset_pending: false, expected_reset_at: '2026-09-19T05:00:00Z' } : null }))
+    const rows = groups.map((group, i) => ({ id: i + 11, user_id: 999, group_id: group.id, group, user, status: 'active', starts_at: stamp, expires_at: new Date(Date.parse(stamp) + [23, 7, 3][i] * 86400_000).toISOString(), weekly_usage_usd: 50, admin_debug: i === 2, dynamic_quota: i === 2 ? null : { ...base, ...(i === 1 ? { next_adjustment_percent: 40, pending_adjustment_percent: 35, pending_adjustment_reason: 'guard', growth_frozen: true } : {}) }, admin_debug_quota: i === 2 ? { weekly_limit_usd: 120, remaining_usd: 68, reserved_usd: 2, revision: 1, follow_reset: true, reset_pending: false, expected_reset_at: '2026-09-19T05:00:00Z' } : null }))
     await page.addInitScript(({ user, locale, dark }) => {
       localStorage.setItem('auth_token', 'synthetic-local-preview')
       localStorage.setItem('auth_user', JSON.stringify(user))
@@ -160,9 +161,9 @@ try {
     await card.waitFor()
     await checkCard(page, card, dark)
     await card.screenshot({ path: join(output, `${prefix}-admin.png`) })
-    const learningCard = page.locator('[data-table-card]').nth(1)
-    await checkLearning(page, learningCard, locale, true)
-    await learningCard.screenshot({ path: join(output, `${prefix}-learning.png`) })
+    const pendingCard = page.locator('[data-table-card]').nth(1)
+    await checkMilestone(page, pendingCard, locale, 40)
+    await pendingCard.screenshot({ path: join(output, `${prefix}-pending.png`) })
     const debugCard = page.locator('[data-table-card]').nth(2)
     await checkDebug(page, debugCard, locale, dark, 120)
     await debugCard.screenshot({ path: join(output, `${prefix}-admin-debug.png`) })
@@ -207,7 +208,7 @@ try {
     await checkCard(page, card, dark)
     await checkExpiry()
     await card.screenshot({ path: join(output, `${prefix}-user.png`) })
-    await checkLearning(page, page.getByTestId('subscription-card').nth(1), locale, true)
+    await checkMilestone(page, page.getByTestId('subscription-card').nth(1), locale, 40)
     await checkDebug(page, page.getByTestId('subscription-card').nth(2), locale, dark, 250)
     await page.getByTestId('subscription-card').nth(2).screenshot({ path: join(output, `${prefix}-debug.png`) })
     await page.getByTitle(locale === 'zh' ? '查看订阅详情' : 'View subscription details', { exact: true }).click()
@@ -215,21 +216,22 @@ try {
     const cards = page.getByTestId('subscription-card')
     assert.equal(await page.getByTestId('fixed-seat-badge').count(), 4)
     for (const item of await cards.all()) await fits(item)
-    await checkLearning(page, cards.filter({ hasText: 'Preview Pro 8' }).first(), locale, true)
+    await checkMilestone(page, cards.filter({ hasText: 'Preview Pro 8' }).first(), locale, 40)
     const headerDebug = cards.filter({ has: page.getByTestId('admin-debug-usage') }).first()
     await checkDebug(page, headerDebug, locale, dark, 250)
     await headerDebug.screenshot({ path: join(output, `${prefix}-header-debug.png`) })
-    delete rows[1].dynamic_quota.learning_check
-    rows[1].dynamic_quota.next_adjustment_percent = 20
+    delete rows[1].dynamic_quota.pending_adjustment_percent
+    rows[1].dynamic_quota.growth_frozen = false
+    rows[1].dynamic_quota.next_adjustment_percent = 45
     await page.goto(origin + '/subscriptions')
-    await checkLearning(page, page.getByTestId('subscription-card').nth(1), locale, false)
+    await checkMilestone(page, page.getByTestId('subscription-card').nth(1), locale, 45)
     assert.equal(rows[1].dynamic_quota.used_usd, 50)
     assert.equal(rows[1].dynamic_quota.status, 'active')
     await page.clock.fastForward(20 * 86400_000 + 60_000)
     await page.waitForFunction(() => [...document.querySelectorAll('[data-testid=subscription-expiry-badge]')].every(el => el.classList.contains('bg-red-100')))
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1), false)
     assert.deepEqual(errors, [])
-    console.log(`PASS ${prefix}: settings/error/save, admin/user/header badges, learning/stable tooltips, debug available/order/editing, expiry colors/time updates, bold metrics, light/dark switching and no overflow`)
+    console.log(`PASS ${prefix}: settings/error/save, admin/user/header badges, fixed-node/guard tooltips, debug available/order/editing, expiry colors/time updates, bold metrics, light/dark switching and no overflow`)
     await context.close()
   }
 } finally {

@@ -18,7 +18,7 @@
                   :aria-label="stageHint"
                   :aria-expanded="open"
                   :aria-describedby="tooltipId"
-                >{{ quota.next_adjustment_percent ? t(quota.learning_check ? 'dynamicQuota.learningStageShort' : 'dynamicQuota.stageShort', { percent: quota.next_adjustment_percent }) : t('dynamicQuota.noNextStageShort') }}</button>
+                >{{ quota.next_adjustment_percent ? t('dynamicQuota.stageShort', { percent: quota.next_adjustment_percent }) : t('dynamicQuota.noNextStageShort') }}</button>
               </template>
             </HelpTooltip>
           </dt>
@@ -98,10 +98,7 @@ const { t, locale } = useI18n()
 const stageHint = computed(() => {
   const q = props.quota
   if (!q.next_adjustment_percent) return t('dynamicQuota.noNextStage')
-  if (!q.learning_check) return t('dynamicQuota.stageAt', { percent: q.next_adjustment_percent })
-  return t(q.learning_check.capacity_change ? 'dynamicQuota.capacityCheckHint' : 'dynamicQuota.learningCheckHint', {
-    percent: q.next_adjustment_percent, samples: q.learning_check.samples, required: q.learning_check.required
-  })
+  return t('dynamicQuota.stageAt', { percent: q.next_adjustment_percent })
 })
 const resetTime = computed(() => formatDateTimeToMinute(props.quota.expected_reset_at, locale.value))
 const allocationTime = computed(() => formatDate(props.quota.last_allocation_at, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }, locale.value))

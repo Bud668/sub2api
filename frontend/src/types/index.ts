@@ -1305,6 +1305,7 @@ export interface AccountSchedulerGroupScore {
 
 // Account Usage types
 export interface WindowStats {
+  estimated_total_cost?: number
   requests: number
   tokens: number
   cost: number // Account cost (account multiplier)
@@ -2055,7 +2056,6 @@ export interface DynamicSubscriptionQuota {
   requested_enabled?: boolean
   activation_pending?: boolean
   next_adjustment_percent?: number
-  learning_check?: { samples: number; required: number; capacity_change?: boolean }
   pending_adjustment_percent?: number
   pending_adjustment_reason?: 'budget_conflict' | 'protection' | 'learning' | 'guard' | 'awaiting_allocation'
   allocation_budget_conflict?: boolean
@@ -2073,7 +2073,6 @@ export interface DynamicSubscriptionQuota {
   expected_reset_at?: string
   updated_at: string
   capacity_estimate_usd?: number
-  sample_count?: number
   growth_frozen?: boolean
 }
 

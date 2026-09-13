@@ -41,7 +41,7 @@ func TestDynamicQuotaAutomaticSettlementKeepsReceiptsAndClosesUnmetered(t *testi
 	require.NoError(t, db.QueryRow(`SELECT weekly_usage_usd FROM user_subscriptions WHERE id=11`).Scan(&used))
 	require.Equal(t, 20.0, used, "no customer charge or refund without a receipt")
 	require.NoError(t, db.QueryRow(`SELECT hold_standard_usd FROM dynamic_quota_requests WHERE id=$1 AND source_closed_at IS NULL`, unknown.DynamicQuotaReservationID).Scan(&held))
-	require.Equal(t, 999.0, held, "personal closure must not release physical source capacity")
+	require.Equal(t, 999.0, held, "the original estimate is retained for audit, not billed")
 }
 
 func TestDynamicQuotaAutomaticClosureFencesLateBillsAndInvalidReceipts(t *testing.T) {

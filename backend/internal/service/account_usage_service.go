@@ -776,6 +776,7 @@ func (s *AccountUsageService) fillOpenAIWindowStats(ctx context.Context, account
 			usage.FiveHour = &UsageProgress{Utilization: 0}
 		}
 		usage.FiveHour.WindowStats = windowStatsFromAccountStats(stats)
+		usage.FiveHour.WindowStats.EstimatedTotalCost = usagestats.EstimateWindowTotalCost(usage.FiveHour.WindowStats.Cost, usage.FiveHour.Utilization)
 	}
 
 	stats, sevenDayErr := s.usageLogRepo.GetAccountWindowStats(ctx, accountID, codexWindowStatsStart(usage.SevenDay, 7*24*time.Hour, now))
@@ -784,6 +785,7 @@ func (s *AccountUsageService) fillOpenAIWindowStats(ctx context.Context, account
 			usage.SevenDay = &UsageProgress{Utilization: 0}
 		}
 		usage.SevenDay.WindowStats = windowStatsFromAccountStats(stats)
+		usage.SevenDay.WindowStats.EstimatedTotalCost = usagestats.EstimateWindowTotalCost(usage.SevenDay.WindowStats.Cost, usage.SevenDay.Utilization)
 	}
 
 	return errors.Join(fiveHourErr, sevenDayErr)

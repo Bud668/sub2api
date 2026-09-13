@@ -51,6 +51,7 @@ export interface AbsorbedUsageRecord {
   started_at: string
   absorbed_at: string
   closed_at: string | null
+  display_cleared_at?: string | null
 }
 export interface AbsorbedUsageReport {
   summary: AbsorbedUsageSummary
@@ -60,10 +61,15 @@ export interface AbsorbedUsageReport {
   pages: number
 }
 export async function getAbsorbedUsage(
-  params: AbsorbedUsageFilters & { scope: 'current' | 'history'; summary_only?: boolean; page?: number; page_size?: number },
+  params: AbsorbedUsageFilters & { scope: 'current' | 'history'; visibility?: 'uncleared' | 'cleared' | 'all'; summary_only?: boolean; page?: number; page_size?: number },
   signal?: AbortSignal
 ): Promise<AbsorbedUsageReport> {
   const { data } = await apiClient.get<AbsorbedUsageReport>('/admin/subscriptions/absorbed-usage', { params, signal })
+  return data
+}
+
+export async function clearAbsorbedUsage(ids: string[]): Promise<{ cleared: number }> {
+  const { data } = await apiClient.post<{ cleared: number }>('/admin/subscriptions/absorbed-usage/clear', { ids })
   return data
 }
 

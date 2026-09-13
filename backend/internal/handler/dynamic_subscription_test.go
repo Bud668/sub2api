@@ -223,8 +223,8 @@ func TestDynamicQuotaWSShutdownWaitsForUsagePersistence(t *testing.T) {
 }
 
 func TestDynamicQuotaPublicProjectionAndOps(t *testing.T) {
-	sub := &service.UserSubscription{ID: 11, AdminDebug: true, Notes: "private-admin-notes", DynamicQuota: &service.DynamicSubscriptionQuota{Enabled: true, AccountID: 4, CapacityEstimateUSD: 12345, SampleCount: 3, LimitUSD: 200, UsedUSD: 20, RemainingUSD: 180,
-		GrowthFrozen: true, AllocationBudgetConflict: true, LearningCheck: &service.DynamicQuotaLearningCheck{Samples: 2, Required: 3}}}
+	sub := &service.UserSubscription{ID: 11, AdminDebug: true, Notes: "private-admin-notes", DynamicQuota: &service.DynamicSubscriptionQuota{Enabled: true, AccountID: 4, CapacityEstimateUSD: 12345, LimitUSD: 200, UsedUSD: 20, RemainingUSD: 180,
+		GrowthFrozen: true, AllocationBudgetConflict: true}}
 	public, err := json.Marshal(dto.UserSubscriptionFromService(sub))
 	require.NoError(t, err)
 	require.Contains(t, string(public), `"admin_debug":true`)
@@ -232,7 +232,7 @@ func TestDynamicQuotaPublicProjectionAndOps(t *testing.T) {
 	require.NotContains(t, string(public), "account_id")
 	require.NotContains(t, string(public), "capacity_estimate_usd")
 	require.NotContains(t, string(public), "sample_count")
-	require.Contains(t, string(public), `"learning_check":{"samples":2,"required":3}`)
+	require.NotContains(t, string(public), "learning_check")
 	require.NotContains(t, string(public), "pool_settings")
 	require.NotContains(t, string(public), "capacity_review")
 	require.NotContains(t, string(public), "capacity_approval_ready")

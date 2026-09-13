@@ -125,7 +125,7 @@ func classifyDynamicV2Accounting(ctx context.Context, tx *sql.Tx, accountID, cyc
 		if r.policy == automaticSettlementPolicy {
 			if reason != "already_billed" {
 				// No verified customer bill: close personal liability without
-				// inventing a price or releasing physical source capacity. Late
+				// inventing a price. Finished closed claims leave admission holds. Late
 				// evidence remains audit-only through the existing settlement fence.
 				known = nil
 				switch {

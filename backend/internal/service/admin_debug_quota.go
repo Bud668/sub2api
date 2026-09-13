@@ -43,7 +43,7 @@ func loadAdminDebugQuota(ctx context.Context, db dynamicQuotaQuerier, id int64, 
  COALESCE(pool.state,'{}'::jsonb),us.weekly_usage_usd,COALESCE(r.rate_multiplier,g.rate_multiplier),
  g.peak_rate_enabled,g.peak_start,g.peak_end,g.peak_rate_multiplier,
  COALESCE((SELECT sum(d.hold_standard_usd) FROM dynamic_quota_requests d WHERE d.owner_subscription_id=us.id
- AND d.status IN ('pending','uncertain') AND d.operator_absorbed_at IS NULL AND d.review_required_at IS NULL AND d.source_closed_at IS NULL),0)
+ AND `+dynamicClaimSQL+`),0)
  FROM admin_debug_quotas q JOIN user_subscriptions us ON us.id=q.subscription_id JOIN users u ON u.id=us.user_id
  JOIN groups g ON g.id=us.group_id LEFT JOIN dynamic_quota_pools pool ON pool.account_id=q.reset_account_id
  LEFT JOIN user_group_rate_multipliers r ON r.user_id=us.user_id AND r.group_id=us.group_id

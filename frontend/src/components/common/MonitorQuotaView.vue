@@ -21,7 +21,7 @@
         :resets-at="row.tier.reset_at ?? null"
         :window-stats="row.tier.window_stats"
         :estimated-total-cost="provider === 'openai' && (row.tier.window === '5h' || row.tier.window === '7d')
-          ? estimateUsageWindowTotalCost(row.tier.window_stats?.cost, row.tier.used_percent)
+          ? (row.tier.window_stats?.estimated_total_cost ?? estimateUsageWindowTotalCost(row.tier.window_stats?.cost, row.tier.used_percent))
           : null"
         :show-now-when-idle="provider === 'openai'"
       />

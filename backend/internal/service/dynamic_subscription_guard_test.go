@@ -33,7 +33,7 @@ func TestDynamicQuotaFrozenTrustedBudgetAdmission(t *testing.T) {
 	updateDynamicGuardPool(t, db, 4, func(p *DynamicQuotaPoolState) {
 		o := dynamicTestObservation(4, 40, now.Add(6*24*time.Hour), now.Add(-time.Hour))
 		*p = DynamicQuotaPoolState{Cycle: 1, StartedAt: now.Add(-24 * time.Hour), Status: "active", CapacityUSD: 2000,
-			Snapshot: &o, SampleAnchor: &o, Health: dynamicQuotaHealth{Failures: 8},
+			Snapshot: &o, Health: dynamicQuotaHealth{Failures: 8},
 			V2: &DynamicQuotaV2State{UnreservedCapacity: true, CandidateUSD: 9000, CandidateSamples: 1}}
 	})
 	q, err := s.Load(ctx, 11)
@@ -81,7 +81,7 @@ func TestDynamicQuotaFrozenTrustedBudgetAdmission(t *testing.T) {
 	require.Equal(t, q.StartedAt, after.StartedAt)
 }
 
-func TestDynamicQuotaInitialEstimateNeverAutoApproves(t *testing.T) {
+func TestDynamicQuotaInitialEstimateUsesCumulativeWindow(t *testing.T) {
 	s, db := dynamicTestStore(t)
 	ctx := context.Background()
 	dynamicExec(t, db, `INSERT INTO dynamic_quota_pools(account_id) VALUES(4);
@@ -98,8 +98,8 @@ func TestDynamicQuotaInitialEstimateNeverAutoApproves(t *testing.T) {
 		require.NoError(t, s.Refresh(ctx, 4))
 	}
 	updateDynamicGuardPool(t, db, 4, func(p *DynamicQuotaPoolState) {
-		require.Zero(t, p.CapacityUSD)
-		require.Zero(t, p.V2.CandidateSamples, "repeated same-percent polls cannot create learning evidence")
+		require.InDelta(t, 2000, p.CapacityUSD, 1e-8)
+		require.Zero(t, p.V2.CandidateSamples, "a cumulative estimate needs no independent learning intervals")
 	})
 }
 
@@ -137,7 +137,7 @@ func TestDynamicQuotaStaleRecoveryAndNotificationSurviveRestart(t *testing.T) {
 	reset := now.Add(6 * 24 * time.Hour)
 	updateDynamicGuardPool(t, db, 4, func(p *DynamicQuotaPoolState) {
 		o := dynamicTestObservation(4, 50, reset, now.Add(-13*time.Minute))
-		p.Snapshot, p.SampleAnchor = &o, &o
+		p.Snapshot = &o
 		p.Health = dynamicQuotaHealth{Failures: 1, LastAttemptAt: o.FetchedAt}
 		p.GuardSignal = "warning"
 	})
@@ -192,7 +192,7 @@ func TestDynamicQuotaFailureFreezeAndRecoveryKeepsBilling(t *testing.T) {
 	reset := now.Add(6 * 24 * time.Hour)
 	updateDynamicGuardPool(t, db, 4, func(p *DynamicQuotaPoolState) {
 		o := dynamicTestObservation(4, 50, reset, now.Add(-5*time.Minute))
-		p.Snapshot, p.SampleAnchor, p.Health = &o, &o, dynamicQuotaHealth{}
+		p.Snapshot, p.Health = &o, dynamicQuotaHealth{}
 	})
 	before, err := s.Load(ctx, 11)
 	require.NoError(t, err)
@@ -216,7 +216,7 @@ func TestDynamicQuotaFailureFreezeAndRecoveryKeepsBilling(t *testing.T) {
 		require.NoError(t, s.Refresh(ctx, 4))
 		q, err = s.Load(ctx, 11)
 		require.NoError(t, err)
-		require.Equal(t, "learning", q.Status)
+		require.Equal(t, "active", q.Status, "one valid cumulative window is sufficient")
 		require.Equal(t, i < 2, q.GrowthFrozen)
 	}
 	require.Equal(t, before.UsedUSD+1, q.UsedUSD)

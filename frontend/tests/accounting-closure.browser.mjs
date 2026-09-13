@@ -21,7 +21,6 @@ await new Promise(done => server.listen(0, '127.0.0.1', done))
 const origin = `http://127.0.0.1:${server.address().port}`
 const browser = await chromium.launch({ headless: true })
 const user = { id: 999, email: 'preview@example.invalid', role: 'admin', status: 'active', balance: 0 }
-const summary = { requests: 3, known_requests: 1, known_standard_usd: 1.25, unknown_requests: 2 }
 const items = ['automatic_unmetered', 'operator_decision', 'already_billed'].map((reason, i) => ({
   id: `synthetic-request-${i}`, user_id: 999, subscription_id: 1, group_id: 7,
   email: 'long.synthetic.customer.identity@example.invalid', group_name: 'Synthetic Pro 20x', account_id: 4, account_name: 'Synthetic source', cycle: 3,
@@ -34,7 +33,8 @@ try {
     const page = await context.newPage()
     page.setDefaultTimeout(10_000)
     const errors = []
-    let failDetails = false, writes = 0
+    let failDetails = false, failClear = false, clearWrites = 0, writes = 0
+    const cleared = new Set()
     page.on('pageerror', error => errors.push(error.message))
     await page.addInitScript(({ user, dark }) => {
       localStorage.setItem('auth_token', 'synthetic-local-preview')
@@ -47,6 +47,16 @@ try {
       const req = route.request(), url = new URL(req.url()), path = url.pathname
       if (url.origin !== origin) return route.abort()
       if (!path.startsWith('/api/') && path !== '/setup/status') return route.continue()
+      if (path.endsWith('/absorbed-usage/clear') && req.method() === 'POST') {
+        clearWrites++
+        if (failClear) return route.fulfill({ status: 503, json: { code: 503, message: 'synthetic clear failure' } })
+        const body = req.postDataJSON()
+        assert.deepEqual(Object.keys(body), ['ids'])
+        assert(body.ids.every(id => items.some(row => row.id === id)))
+        let n = 0
+        for (const id of body.ids) if (!cleared.has(id)) { cleared.add(id); n++ }
+        return route.fulfill({ json: { code: 0, data: { cleared: n } } })
+      }
       if (req.method() !== 'GET') { writes++; return route.abort() }
       let data = { items: [], total: 0, pages: 1, page: 1, page_size: 20 }
       if (path === '/setup/status') data = { needs_setup: false }
@@ -56,7 +66,11 @@ try {
         assert.equal(url.searchParams.has('category'), false, 'no manual review query')
         const summaryOnly = url.searchParams.get('summary_only') === 'true'
         if (!summaryOnly && failDetails) return route.fulfill({ status: 503, json: { code: 503, message: 'synthetic failure' } })
-        data = { ...data, summary, items: summaryOnly ? [] : items.map(row => ({ ...row, closed_at: url.searchParams.get('scope') === 'history' ? '2026-09-13T00:00:00Z' : null })) }
+        const visibility = url.searchParams.get('visibility') || 'uncleared'
+        const visible = items.filter(row => visibility === 'all' || (visibility === 'cleared' ? cleared.has(row.id) : !cleared.has(row.id)))
+        const known = visible.filter(row => row.known_standard_usd !== null)
+        const totals = { requests: visible.length, known_requests: known.length, known_standard_usd: known.reduce((sum, row) => sum + row.known_standard_usd, 0), unknown_requests: visible.length - known.length }
+        data = { ...data, summary: totals, items: summaryOnly ? [] : visible.map(row => ({ ...row, display_cleared_at: cleared.has(row.id) ? '2026-09-13T00:00:00Z' : null, closed_at: url.searchParams.get('scope') === 'history' ? '2026-09-13T00:00:00Z' : null })) }
       }
       return route.fulfill({ json: { code: 0, data } })
     })
@@ -96,10 +110,30 @@ try {
     failDetails = false
     await panel.getByRole('button', { name: '刷新', exact: true }).click()
     await page.getByTestId('absorption-status').first().waitFor()
+    failClear = true
+    await page.getByTestId('absorption-select-row').first().check()
+    await page.getByTestId('absorption-clear').click()
+    await page.getByTestId('absorption-clear-feedback').filter({ hasText: /清理结果未确认/ }).waitFor()
+    assert.equal(await page.getByTestId('absorption-select-row').first().isChecked(), true)
+    await fits()
+    await panel.screenshot({ path: join(output, `${width}-${dark}-clear-error.png`), animations: 'disabled' })
+    failClear = false
+    await page.getByTestId('absorption-select-all').check()
+    await page.getByTestId('absorption-clear').click()
+    await page.getByTestId('absorption-clear-feedback').filter({ hasText: /已清理 3 条/ }).waitFor()
+    await button.filter({ hasText: /0 条/ }).waitFor({ state: 'attached' })
+    await panel.screenshot({ path: join(output, `${width}-${dark}-clear-success.png`), animations: 'disabled' })
+    await page.getByTestId('absorption-visibility').selectOption('cleared')
+    await page.getByTestId('absorption-status').first().waitFor()
+    assert.equal(await page.getByTestId('absorption-select-row').count(), 0)
+    assert.equal(await page.getByTestId('absorption-clear').isDisabled(), true)
+    await fits()
+    await panel.screenshot({ path: join(output, `${width}-${dark}-cleared.png`), animations: 'disabled' })
     await page.keyboard.press('Escape')
     await modal.waitFor({ state: 'detached' })
     assert.equal(await button.getAttribute('aria-expanded'), 'false')
     assert.equal(writes, 0)
+    assert.equal(clearWrites, 2)
     assert.deepEqual(errors, [])
     await context.close()
     console.log('PASS', width, dark ? 'dark' : 'light')

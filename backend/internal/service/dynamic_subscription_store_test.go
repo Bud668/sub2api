@@ -59,7 +59,9 @@ func dynamicTestStore(t *testing.T) (*DynamicSubscriptionService, *sql.DB) {
  weekly_window_start TIMESTAMPTZ DEFAULT NOW()-INTERVAL '1 day',updated_at TIMESTAMPTZ DEFAULT NOW(),deleted_at TIMESTAMPTZ);
  CREATE TABLE user_group_rate_multipliers(user_id BIGINT,group_id BIGINT,rate_multiplier NUMERIC,PRIMARY KEY(user_id,group_id));
  CREATE TABLE api_keys(id BIGINT PRIMARY KEY,user_id BIGINT,group_id BIGINT,deleted_at TIMESTAMPTZ);
- CREATE TABLE usage_logs(id BIGSERIAL PRIMARY KEY,account_id BIGINT,subscription_id BIGINT,total_cost NUMERIC DEFAULT 0,created_at TIMESTAMPTZ DEFAULT NOW());
+ CREATE TABLE usage_logs(id BIGSERIAL PRIMARY KEY,account_id BIGINT,subscription_id BIGINT,total_cost NUMERIC DEFAULT 0,created_at TIMESTAMPTZ DEFAULT NOW(),
+ input_tokens BIGINT DEFAULT 0,output_tokens BIGINT DEFAULT 0,cache_creation_tokens BIGINT DEFAULT 0,cache_read_tokens BIGINT DEFAULT 0,
+ account_stats_cost NUMERIC,account_rate_multiplier NUMERIC,actual_cost NUMERIC DEFAULT 0);
  INSERT INTO users(id,role) VALUES(1,'admin'),(2,'user'),(3,'user');
  INSERT INTO groups(id) VALUES(7),(8);
  INSERT INTO accounts(id,credentials) VALUES(4,'{"chatgpt_account_id":"4"}'),(5,'{"chatgpt_account_id":"5"}');
@@ -90,6 +92,10 @@ func dynamicTestStore(t *testing.T) (*DynamicSubscriptionService, *sql.DB) {
 	require.NoError(t, err)
 	dynamicExec(t, db, string(debugMigration))
 	dynamicExec(t, db, string(debugMigration))
+	clearMigration, err := os.ReadFile("../../migrations/244_dynamic_absorption_display_clear.sql")
+	require.NoError(t, err)
+	dynamicExec(t, db, string(clearMigration))
+	dynamicExec(t, db, string(clearMigration))
 	s := NewDynamicSubscriptionService(db, dynamicTestAccounts{}, nil, nil)
 	s.fetch = func(_ context.Context, id int64) (DynamicQuotaObservation, error) {
 		return dynamicTestObservation(id, 50, time.Now().UTC().Add(6*24*time.Hour), time.Now().UTC()), nil

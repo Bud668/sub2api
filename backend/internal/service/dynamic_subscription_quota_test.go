@@ -119,9 +119,10 @@ func TestDynamicQuotaEstimateAndReserve(t *testing.T) {
 	o.FetchedAt = now.Add(time.Minute)
 	o.UsedPercent = 50
 	o.LocalStandardTotal = 200
+	o.WindowCostUSD, o.WindowStandardUSD = 500, 500
 	p.Observe(o, o.FetchedAt)
 	if math.Abs(p.CapacityUSD-1000) > 1e-8 {
-		t.Fatalf("independent V2 interval should establish capacity: %+v", p)
+		t.Fatalf("cumulative usage-window estimate should establish capacity: %+v", p)
 	}
 	if got := p.Available(o.FetchedAt, 220, 3); math.Abs(got-477) > 1e-8 {
 		t.Fatalf("unreported/in-flight costs not reserved: %v", got)

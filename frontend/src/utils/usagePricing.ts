@@ -12,7 +12,7 @@ function isFiniteNumber(value: unknown): value is number {
 
 /** Account-cost estimate using the upstream's unrounded utilization percentage. */
 export function estimateUsageWindowTotalCost(cost?: number, utilization?: number): number | null {
-  if (!isFiniteNumber(cost) || !isFiniteNumber(utilization) || cost <= 0 || utilization <= 0) {
+  if (!isFiniteNumber(cost) || !isFiniteNumber(utilization) || cost <= 0 || utilization <= 0 || utilization > 100) {
     return null
   }
   const estimate = (cost * 100) / utilization

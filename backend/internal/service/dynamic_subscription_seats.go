@@ -57,34 +57,9 @@ func (p *DynamicQuotaPoolState) enableFixedSeats() {
 		return
 	}
 	p.V2.FixedSeats = true
-	p.V2.LastNode *= 10 // Old metadata stored a ten-percent node index.
-}
-
-// One schedule for learning, allocation and the next-node card. A new mid-cycle
-// source or an unconfirmed anomaly keeps dense checks until evidence is stable.
-func (p *DynamicQuotaPoolState) fixedSeatLearningCheck() *DynamicQuotaLearningCheck {
-	if p.V2 != nil && p.V2.CandidateSamples > 0 {
-		return &DynamicQuotaLearningCheck{Samples: min(p.V2.CandidateSamples, dynamicQuotaGuardChecks), Required: dynamicQuotaGuardChecks, CapacityChange: true}
+	if !p.V2.CumulativeEstimate {
+		p.V2.LastNode *= 10 // Old metadata stored a ten-percent node index.
 	}
-	if len(p.Samples) < dynamicQuotaGuardChecks {
-		return &DynamicQuotaLearningCheck{Samples: len(p.Samples), Required: dynamicQuotaGuardChecks}
-	}
-	return nil
-}
-
-func (p *DynamicQuotaPoolState) fixedSeatStep(percent float64) int {
-	if percent < 10 || p.fixedSeatLearningCheck() != nil {
-		return 2
-	}
-	if percent < 30 {
-		return 5
-	}
-	return 10
-}
-
-func (p *DynamicQuotaPoolState) fixedSeatNode(percent float64) int {
-	step := p.fixedSeatStep(percent)
-	return int(math.Floor(percent/float64(step))) * step
 }
 
 // A finite learning allowance, not a claim about unknown upstream capacity.
@@ -125,7 +100,7 @@ func resizeFixedSeats(ctx context.Context, tx *sql.Tx, p *DynamicQuotaPoolState,
 		return false, ensureFixedSeats(ctx, tx, p, group)
 	}
 	now := time.Now().UTC()
-	if p.CapacityUSD <= 0 || !p.trustedSnapshot(now) || p.growthFrozen(now) || p.Status != "active" || len(p.Samples) < 2 {
+	if p.CapacityUSD <= 0 || !p.trustedSnapshot(now) || !p.Snapshot.hasWindowEstimate() || p.growthFrozen(now) || p.Status != "active" {
 		return false, ErrDynamicQuotaSeatsLearning
 	}
 	if current > group.FixedSlots {
@@ -329,7 +304,7 @@ func (s *DynamicSubscriptionService) reallocateFixedSeats(ctx context.Context, t
 	if p.ceilingPercent, err = loadDynamicNativeCeiling(ctx, tx, accountID); err != nil {
 		return err
 	}
-	total, held, _, _, err := dynamicPoolTotals(ctx, tx, accountID)
+	total, _, _, _, err := dynamicPoolTotals(ctx, tx, accountID)
 	if err != nil {
 		return err
 	}
@@ -345,8 +320,7 @@ func (s *DynamicSubscriptionService) reallocateFixedSeats(ctx context.Context, t
  AND g.deleted_at IS NULL AND g.status='active' AND g.platform='openai' AND g.subscription_type='subscription'
  AND EXISTS(SELECT 1 FROM account_groups ag WHERE ag.account_id=d.account_id AND ag.group_id=d.group_id),false),
  COALESCE((SELECT sum(x.hold_standard_usd) FROM dynamic_quota_requests x WHERE x.account_id=d.account_id
- AND x.owner_subscription_id=d.subscription_id AND x.status IN ('pending','uncertain')
- AND x.operator_absorbed_at IS NULL AND x.review_required_at IS NULL AND x.source_closed_at IS NULL),0)
+ AND x.owner_subscription_id=d.subscription_id AND `+strings.ReplaceAll(dynamicClaimSQL, "d.", "x.")+`),0)
  FROM dynamic_quota_seats d JOIN dynamic_group_policies gp ON gp.group_id=d.group_id
  JOIN groups g ON g.id=d.group_id LEFT JOIN user_subscriptions us ON us.id=d.subscription_id
  LEFT JOIN users u ON u.id=us.user_id LEFT JOIN dynamic_subscription_policies q ON q.subscription_id=d.subscription_id
@@ -380,7 +354,7 @@ func (s *DynamicSubscriptionService) reallocateFixedSeats(ctx context.Context, t
 			m.previous = m.usedUSD + math.Max(0, m.share-m.used)*m.rate
 		}
 		members = append(members, m)
-		inputs = append(inputs, dynamicQuotaV2Member{ID: int64(len(members)), Weight: weight, Used: m.used + m.held,
+		inputs = append(inputs, dynamicQuotaV2Member{ID: int64(len(members)), Weight: weight, Used: m.used,
 			Cap: m.used + math.Max(0, m.cap-m.usedUSD)/m.rate})
 	}
 	err = errors.Join(rows.Err(), rows.Close())
@@ -421,13 +395,13 @@ func (s *DynamicSubscriptionService) reallocateFixedSeats(ctx context.Context, t
 		}
 		m := fixedQuotaMember{subID: id, used: q.usedStandard, usedUSD: q.UsedUSD, held: q.ReservedUSD / q.rate, cap: q.MaxLimitUSD, rate: q.rate, previous: q.LimitUSD, share: q.allocatedStandard, policyShare: q.allocatedStandard, allocated: true, active: true}
 		members = append(members, m)
-		inputs = append(inputs, dynamicQuotaV2Member{ID: int64(len(members)), Weight: q.Weight, Used: m.used + m.held, Cap: m.used + math.Max(0, m.cap-m.usedUSD)/m.rate})
+		inputs = append(inputs, dynamicQuotaV2Member{ID: int64(len(members)), Weight: q.Weight, Used: m.used, Cap: m.used + math.Max(0, m.cap-m.usedUSD)/m.rate})
 	}
 	allocations := map[int64]float64{}
 	if p.CapacityUSD > 0 {
 		if seatChange {
 			fair := append([]dynamicQuotaV2Member(nil), inputs...)
-			budget := p.Available(now, total, held)
+			budget := p.Available(now, total, 0)
 			for i := range fair {
 				budget += fair[i].Used
 				fair[i].Used = 0
@@ -436,38 +410,33 @@ func (s *DynamicSubscriptionService) reallocateFixedSeats(ctx context.Context, t
 			if e != nil {
 				return e
 			}
-			for _, m := range inputs {
-				if m.Used > shares[m.ID]+1e-8 {
+			for i, m := range inputs {
+				if m.Used+members[i].held > shares[m.ID]+1e-8 {
 					return ErrDynamicQuotaSeatsSpent
 				}
 			}
 		}
-		allocations, err = allocateDynamicQuotaV2(inputs, p.Available(now, total, held))
+		// Holds gate temporary availability; they are not permanent cycle grants.
+		allocations, err = allocateDynamicQuotaV2(inputs, p.Available(now, total, 0))
 		if err != nil {
 			return err
 		}
 	} else {
 		for i, m := range members {
-			allocations[int64(i+1)] = math.Max(m.used+m.held, m.used+math.Max(0, dynamicStartupLimit(m.cap)-m.usedUSD)/m.rate)
+			allocations[int64(i+1)] = m.used + math.Max(0, dynamicStartupLimit(m.cap)-m.usedUSD)/m.rate
 		}
 	}
-	node := p.fixedSeatNode(p.Snapshot.UsedPercent)
-	fresh := p.Snapshot.Valid(now) && !p.growthFrozen(now)
-	advance := fresh && p.CapacityUSD > 0 && node > p.V2.LastNode && p.V2.SampleAt.After(p.LastAllocationAt)
+	node := dynamicQuotaNode(p.Snapshot.UsedPercent)
+	fresh := p.Snapshot.Valid(now) && !p.growthFrozen(now) && (p.CapacityUSD == 0 || p.Snapshot.hasWindowEstimate())
+	advance := p.v2AllocationDue(now) && p.Snapshot.UsedPercent < p.stopPercent()
 	changed := false
 	for i, m := range members {
 		allocation := allocations[int64(i+1)]
 		limit := QuantizeUsageBillingAmount(math.Min(m.cap, m.usedUSD+math.Max(0, allocation-m.used)*m.rate))
 		if limit > m.previous && m.allocated && !seatChange {
-			if !advance || limit-m.previous < 20 {
+			if !advance {
 				limit = m.previous
 			}
-			if len(p.Samples) < 2 {
-				limit = math.Min(limit, math.Max(m.previous, dynamicStartupLimit(m.cap))+20)
-			}
-		}
-		if !m.allocated && p.CapacityUSD > 0 && len(p.Samples) < 2 {
-			limit = math.Min(limit, dynamicStartupLimit(m.cap)+20)
 		}
 		if !fresh && limit > m.previous && m.allocated {
 			limit = m.previous

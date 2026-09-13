@@ -72,6 +72,65 @@ func TestDynamicQuotaAbsorptionReportCountsAllMatchingRecords(t *testing.T) {
 	require.Zero(t, r.Summary.Requests)
 }
 
+func TestDynamicQuotaAbsorptionClearIsDisplayOnlyAndIdempotent(t *testing.T) {
+	s, db := dynamicTestStore(t)
+	ctx := context.Background()
+	ids := []string{uuid.NewString(), uuid.NewString(), uuid.NewString()}
+	dynamicExec(t, db, `ALTER TABLE users ADD COLUMN email TEXT DEFAULT 'synthetic@example.invalid';
+ ALTER TABLE groups ADD COLUMN name TEXT DEFAULT 'Synthetic group';
+ INSERT INTO dynamic_quota_pools(account_id) VALUES(4),(5);`)
+	for i, id := range ids {
+		dynamicExec(t, db, `INSERT INTO dynamic_quota_requests(id,account_id,cycle,api_key_id,owner_user_id,owner_subscription_id,hold_standard_usd,status,operator_absorbed_at)
+ VALUES($1,4,1,101,1,11,99,'uncertain',CASE WHEN $2 THEN NOW() END)`, id, i < 2)
+	}
+	var before, after string
+	const original = `SELECT (to_jsonb(d)-'display_cleared_at'-'display_cleared_by')::text FROM dynamic_quota_requests d WHERE id=$1`
+	require.NoError(t, db.QueryRow(original, ids[0]).Scan(&before))
+	_, err := s.ClearAbsorbedUsage(ctx, ids[:1], 2)
+	require.Error(t, err, "a regular user must not clear accounting notifications")
+	for _, invalid := range [][]string{nil, {ids[0], ids[0]}, {"invalid"}, {uuid.Nil.String()}, make([]string, 101)} {
+		_, err = s.ClearAbsorbedUsage(ctx, invalid, 1)
+		require.Error(t, err)
+	}
+	n, err := s.ClearAbsorbedUsage(ctx, []string{ids[0], ids[2]}, 1)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, n, "an unclosed request cannot be hidden")
+	n, err = s.ClearAbsorbedUsage(ctx, ids[:1], 1)
+	require.NoError(t, err)
+	require.Zero(t, n, "replaying the same click does nothing")
+	require.NoError(t, db.QueryRow(original, ids[0]).Scan(&after))
+	require.Equal(t, before, after, "all original accounting fields and holds must remain byte-for-byte unchanged")
+	var actor int64
+	require.NoError(t, db.QueryRow(`SELECT display_cleared_by FROM dynamic_quota_requests WHERE id=$1`, ids[0]).Scan(&actor))
+	require.EqualValues(t, 1, actor)
+	f := DynamicAbsorptionFilter{Scope: "current", Page: 1, PageSize: 20}
+	r, err := s.AbsorptionReport(ctx, f)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, r.Summary.Requests)
+	require.Equal(t, ids[1], r.Items[0].ID, "unselected/new records remain visible")
+	f.Visibility = "cleared"
+	r, err = s.AbsorptionReport(ctx, f)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, r.Summary.Requests)
+	require.NotNil(t, r.Items[0].DisplayClearedAt)
+	f.Visibility = "all"
+	r, err = s.AbsorptionReport(ctx, f)
+	require.NoError(t, err)
+	require.EqualValues(t, 2, r.Summary.Requests)
+	// Bulk selection clears only those displayed IDs, never later arrivals.
+	fresh := uuid.NewString()
+	dynamicExec(t, db, `INSERT INTO dynamic_quota_requests(id,account_id,cycle,api_key_id,owner_user_id,owner_subscription_id,hold_standard_usd,status,operator_absorbed_at)
+ VALUES($1,5,1,201,1,21,99,'uncertain',NOW())`, fresh)
+	n, err = s.ClearAbsorbedUsage(ctx, ids[:2], 1)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, n)
+	f.Visibility = "uncleared"
+	r, err = s.AbsorptionReport(ctx, f)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, r.Summary.Requests)
+	require.Equal(t, fresh, r.Items[0].ID)
+}
+
 func TestDynamicQuotaAbsorptionRecoveryAndResetIsolation(t *testing.T) {
 	s, db := dynamicTestStore(t)
 	ctx := context.Background()

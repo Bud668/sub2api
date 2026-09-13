@@ -41,13 +41,12 @@ func fixedSeatEvidence(t *testing.T, s *DynamicSubscriptionService, capacity, pe
 	p, err := lockDynamicPool(ctx, tx, 4)
 	require.NoError(t, err)
 	p.CapacityUSD, p.Status = capacity, "active"
-	p.Samples = []float64{capacity, capacity, capacity}
 	p.Snapshot.FetchedAt, p.Snapshot.UsedPercent = time.Now().UTC(), percent
+	p.Snapshot.WindowCostUSD, p.Snapshot.WindowStandardUSD = capacity*percent/100, capacity*percent/100
 	p.Health = dynamicQuotaHealth{}
 	if advance {
 		p.V2.LastNode = 0
 		p.LastAllocationAt = time.Now().Add(-time.Second)
-		p.V2.SampleAt = time.Now().UTC()
 	}
 	require.NoError(t, s.reallocateFixedSeats(ctx, tx, 4, p, time.Now().UTC(), false))
 	require.NoError(t, writeDynamicPool(ctx, tx, 4, p))
@@ -113,7 +112,7 @@ func TestDynamicQuotaFixedSeatsUsageHoldsAndImmediateSafety(t *testing.T) {
 	fixedSeatEvidence(t, s, 1660, 20, true)
 	q, err = s.Load(ctx, 11)
 	require.NoError(t, err)
-	require.InDelta(t, 318, q.LimitUSD, 1e-7, "$14 increase remains below the cumulative threshold")
+	require.InDelta(t, 332, q.LimitUSD, 1e-7, "every valid node applies even a small increase")
 	fixedSeatEvidence(t, s, 1710, 20, true)
 	q, err = s.Load(ctx, 11)
 	require.NoError(t, err)
@@ -185,82 +184,69 @@ func TestDynamicQuotaFixedSeatsRetainOwnersAndResetIsolation(t *testing.T) {
 	require.Equal(t, int64(2), q.Cycle)
 }
 
-func TestDynamicQuotaFixedSeatsDenseLearningAndReset(t *testing.T) {
+func TestDynamicQuotaFixedSeatsMilestonesAndReset(t *testing.T) {
 	now := time.Now().UTC().Add(-30 * time.Minute)
 	p := &DynamicQuotaPoolState{}
 	p.enableFixedSeats()
 	o := dynamicTestObservation(4, 0, now.Add(7*24*time.Hour), now)
 	require.False(t, p.Observe(o, now))
-	for _, percent := range []int{2, 4, 6, 8, 10, 15, 20, 25, 30} {
+	for _, percent := range []int{2, 4, 6, 8, 10, 15, 20, 25, 30, 35, 40, 95} {
 		o.FetchedAt = o.FetchedAt.Add(time.Minute)
 		o.UsedPercent = float64(percent)
 		o.LocalStandardTotal = float64(percent) * 16
+		o.WindowCostUSD, o.WindowStandardUSD = o.LocalStandardTotal, o.LocalStandardTotal
 		require.False(t, p.Observe(o, o.FetchedAt))
 		require.InDelta(t, 1600, p.CapacityUSD, 1e-7)
-		require.Equal(t, o.FetchedAt, p.V2.SampleAt)
+		require.True(t, p.v2AllocationDue(o.FetchedAt))
+		p.V2.LastNode, p.LastAllocationAt = percent, o.FetchedAt
+		require.False(t, p.v2AllocationDue(o.FetchedAt), "a node is not a repeat grant")
 	}
-	last := p.V2.SampleAt
-	o.FetchedAt = o.FetchedAt.Add(time.Minute)
-	o.UsedPercent = 32
-	o.LocalStandardTotal = 512
-	p.Observe(o, o.FetchedAt)
-	require.Equal(t, last, p.V2.SampleAt, "stable post-30% evidence uses ten-point intervals")
-	o.FetchedAt = o.FetchedAt.Add(time.Minute)
-	o.UsedPercent = 40
-	o.LocalStandardTotal = 640
-	p.Observe(o, o.FetchedAt)
-	require.Equal(t, o.FetchedAt, p.V2.SampleAt)
 	for _, tc := range []struct {
 		percent    float64
 		step, node int
-	}{{0, 2, 0}, {9.9, 2, 8}, {10, 5, 10}, {29.9, 5, 25}, {30, 10, 30}, {99, 10, 90}} {
-		require.Equal(t, tc.step, p.fixedSeatStep(tc.percent))
-		require.Equal(t, tc.node, p.fixedSeatNode(tc.percent))
+	}{{0, 2, 0}, {9.9, 2, 8}, {10, 5, 10}, {29.9, 5, 25}, {30, 5, 30}, {99, 5, 95}} {
+		require.Equal(t, tc.step, dynamicQuotaStep(tc.percent))
+		require.Equal(t, tc.node, dynamicQuotaNode(tc.percent))
 	}
 	p.V2.CandidateSamples = 1
-	require.Equal(t, 2, p.fixedSeatStep(70), "an anomaly restores dense evidence checks, not higher grants")
+	require.Equal(t, 5, dynamicQuotaStep(70), "guard does not secretly change the schedule")
+	o.UsedPercent, o.WindowCostUSD, o.WindowStandardUSD = 0, 0, 0
 	p.Candidate = &o
 	p.Confirm(o.FetchedAt)
 	require.Zero(t, p.CapacityUSD)
-	require.Empty(t, p.Samples)
 	require.True(t, p.V2.FixedSeats)
-	require.Equal(t, 2, p.fixedSeatStep(30), "new-cycle learning has no historical capacity evidence")
-	require.Equal(t, 60.0, dynamicStartupLimit(1e9), "a huge configured cap must not create huge startup credit")
+	require.Equal(t, 60.0, dynamicStartupLimit(1e9), "a huge cap must not create huge startup credit")
 	tiny := fixedSeatInput(4)
 	tiny.MaxLimitUSD = 1e-12
 	require.Error(t, validateDynamicInput(&tiny), "rounding must not turn a positive cap into zero")
 }
 
-func TestDynamicQuotaFixedSeatsLearningDisplay(t *testing.T) {
+func TestDynamicQuotaFixedSeatsMilestoneDisplay(t *testing.T) {
 	s, db := fixedSeatStore(t, 4)
 	ctx := context.Background()
 	fixedSeatEvidence(t, s, 1600, 17, true)
 	baseline, err := s.Load(ctx, 11)
 	require.NoError(t, err)
 	for _, tc := range []struct {
-		name                     string
-		samples, candidate, next int
-		percent                  float64
-		check                    *DynamicQuotaLearningCheck
+		name            string
+		candidate, next int
+		percent         float64
 	}{
-		{"learning", 2, 0, 18, 17, &DynamicQuotaLearningCheck{Samples: 2, Required: 3}},
-		{"stable", 3, 0, 20, 17, nil},
-		{"capacity change", 3, 1, 18, 17, &DynamicQuotaLearningCheck{Samples: 1, Required: 3, CapacityChange: true}},
-		{"early stable", 3, 0, 10, 8, nil},
-		{"no next node", 2, 0, 0, 98, &DynamicQuotaLearningCheck{Samples: 2, Required: 3}},
+		{"normal", 0, 20, 17},
+		{"capacity change", 1, 20, 17},
+		{"early", 0, 10, 8},
+		{"no next node", 0, 0, 98},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			updateDynamicGuardPool(t, db, 4, func(p *DynamicQuotaPoolState) {
-				p.Samples = []float64{1600, 1600, 1600}[:tc.samples]
 				p.V2.CandidateSamples = tc.candidate
 				p.Snapshot.UsedPercent = tc.percent
-				p.V2.LastNode = p.fixedSeatNode(tc.percent)
+				p.V2.LastNode = dynamicQuotaNode(tc.percent)
 			})
 			q, err := s.Load(ctx, 11)
 			require.NoError(t, err)
 			require.Equal(t, tc.next, q.NextAdjustmentPercent)
-			require.Equal(t, tc.check, q.LearningCheck)
-			require.Equal(t, tc.check, q.Public().LearningCheck)
+			require.Equal(t, tc.candidate > 0, q.GrowthFrozen)
 			require.Equal(t, baseline.LimitUSD, q.LimitUSD, "display reads do not allocate")
 			require.Equal(t, baseline.UsedUSD, q.UsedUSD, "display reads do not bill or reset")
 			require.Equal(t, baseline.LastAllocationAt, q.LastAllocationAt)

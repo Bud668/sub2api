@@ -27,6 +27,13 @@ function makeSnapshot(overrides: Partial<MonitorQuotaSnapshot> = {}): MonitorQuo
 }
 
 describe('MonitorQuotaView', () => {
+  it('uses the shared backend estimate when present, including cached snapshots', () => {
+    const wrapper = mount(MonitorQuotaView, { props: { provider: 'openai', snapshot: makeSnapshot({
+      tiers: [{ window: '7d', used_percent: 40, window_stats: { requests: 1, tokens: 1, cost: 720, estimated_total_cost: 1800 } }],
+    }) } })
+    expect(wrapper.findComponent(UsageProgressBar).props('estimatedTotalCost')).toBe(1800)
+    wrapper.unmount()
+  })
   it('renders nothing without a snapshot', () => {
     const wrapper = mount(MonitorQuotaView, { props: { snapshot: null } })
     expect(wrapper.find('[data-testid="monitor-quota-view"]').exists()).toBe(false)

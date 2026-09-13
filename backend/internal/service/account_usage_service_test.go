@@ -49,8 +49,10 @@ func TestAccountUsageService_LocalOpenAIUsageNeverProbes(t *testing.T) {
 			usage, err := svc.GetLocalOpenAIUsage(context.Background(), account)
 			require.NoError(t, err)
 			require.Equal(t, []int64{4, 4}, repo.ids)
-			require.Equal(t, &WindowStats{Requests: 42, Tokens: 12000, Cost: 7.5, StandardCost: 10, UserCost: 8.5}, usage.FiveHour.WindowStats)
-			require.Equal(t, usage.FiveHour.WindowStats, usage.SevenDay.WindowStats)
+			for _, window := range []*UsageProgress{usage.FiveHour, usage.SevenDay} {
+				require.Equal(t, &WindowStats{Requests: 42, Tokens: 12000, Cost: 7.5, StandardCost: 10, UserCost: 8.5,
+					EstimatedTotalCost: usagestats.EstimateWindowTotalCost(7.5, window.Utilization)}, window.WindowStats)
+			}
 			_, attemptedProbe := svc.cache.openAIProbeCache.Load(account.ID)
 			require.False(t, attemptedProbe, "even stale/missing/shadow snapshots must bypass the upstream probe path")
 			if sample != "missing" {

@@ -31,6 +31,8 @@ type DynamicQuotaObservation struct {
 	WindowSeconds      int64     `json:"window_seconds"`
 	FetchedAt          time.Time `json:"fetched_at"`
 	LocalStandardTotal float64   `json:"local_standard_total"`
+	WindowCostUSD      float64   `json:"window_cost_usd,omitempty"`
+	WindowStandardUSD  float64   `json:"window_standard_usd,omitempty"`
 }
 
 type DynamicQuotaPoolState struct {
@@ -43,8 +45,6 @@ type DynamicQuotaPoolState struct {
 	Candidate        *DynamicQuotaObservation `json:"candidate,omitempty"`
 	Status           string                   `json:"status"`
 	CapacityUSD      float64                  `json:"capacity_usd"`
-	Samples          []float64                `json:"samples,omitempty"`
-	SampleAnchor     *DynamicQuotaObservation `json:"sample_anchor,omitempty"`
 	LastAllocationAt time.Time                `json:"last_allocation_at"`
 	Health           dynamicQuotaHealth       `json:"health,omitempty"`
 	GuardSignal      string                   `json:"guard_signal,omitempty"`
@@ -103,13 +103,17 @@ func (p *DynamicQuotaPoolState) stopPercent() float64 {
 
 func validDynamicAmount(v float64) bool { return !math.IsNaN(v) && !math.IsInf(v, 0) && v >= 0 }
 
+func (o DynamicQuotaObservation) hasWindowEstimate() bool {
+	return o.UsedPercent >= 2 && o.WindowCostUSD > 0 && o.WindowStandardUSD > 0
+}
+
 func (o DynamicQuotaObservation) Valid(now time.Time) bool {
 	return o.Identity != "" && validDynamicAmount(o.UsedPercent) && o.UsedPercent <= 100 &&
 		o.WindowSeconds == 7*24*60*60 && !o.FetchedAt.IsZero() &&
 		!o.FetchedAt.After(now.Add(5*time.Second)) && now.Sub(o.FetchedAt) <= dynamicQuotaFreshness &&
 		!o.ResetAt.IsZero() && o.ResetAt.After(o.FetchedAt) &&
 		o.ResetAt.Sub(o.FetchedAt) <= 7*24*time.Hour+dynamicQuotaResetTolerance &&
-		validDynamicAmount(o.LocalStandardTotal)
+		validDynamicAmount(o.LocalStandardTotal) && validDynamicAmount(o.WindowCostUSD) && validDynamicAmount(o.WindowStandardUSD)
 }
 
 // Observe never resets a subscription. It produces a candidate that the store
@@ -125,14 +129,15 @@ func (p *DynamicQuotaPoolState) Observe(o DynamicQuotaObservation, now time.Time
 		return false
 	}
 	if p.Snapshot == nil {
-		p.Cycle, p.StartedAt, p.Snapshot, p.SampleAnchor = 1, now, &o, &o
+		p.Cycle, p.StartedAt, p.Snapshot = 1, now, &o
 		if p.V2 != nil {
 			p.V2.LastNode = dynamicQuotaNode(o.UsedPercent)
-			if p.V2.FixedSeats {
-				p.V2.LastNode = p.fixedSeatNode(o.UsedPercent)
-			}
 		}
 		p.Status = "learning"
+		p.observeWindowEstimate(o)
+		if p.CapacityUSD > 0 {
+			p.Status = "active"
+		}
 		p.recordHealthy(o.FetchedAt)
 		return false // First connection is a baseline, never a reset.
 	}
@@ -184,7 +189,7 @@ func (p *DynamicQuotaPoolState) Observe(o DynamicQuotaObservation, now time.Time
 		return false
 	}
 	p.recordHealthy(o.FetchedAt)
-	p.observeV2Capacity(o)
+	p.observeWindowEstimate(o)
 	p.Snapshot = &o
 	p.Status = "active"
 	if p.CapacityUSD <= 0 {
@@ -196,11 +201,14 @@ func (p *DynamicQuotaPoolState) Observe(o DynamicQuotaObservation, now time.Time
 func (p *DynamicQuotaPoolState) Confirm(now time.Time) {
 	p.Cycle++
 	p.StartedAt, p.ConfirmedAt = now, &now
-	p.Snapshot, p.SampleAnchor = p.Candidate, p.Candidate
+	p.Snapshot = p.Candidate
 	p.Candidate = nil
 	p.LastAllocationAt = time.Time{}
 	p.CapacityUSD = 0
 	p.startV2()
+	if p.Snapshot != nil {
+		p.observeWindowEstimate(*p.Snapshot)
+	}
 	p.Status = "active"
 	if p.CapacityUSD <= 0 {
 		p.Status = "learning"

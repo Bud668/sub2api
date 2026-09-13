@@ -173,7 +173,7 @@ func TestDynamicQuotaOperatorAbsorptionClosesOnlyCustomerLiability(t *testing.T)
 	dynamicExec(t, db, `UPDATE dynamic_quota_requests SET operator_absorbed_at=NOW() WHERE id=$1`, r.ID)
 	status, err := s.AdminStatus(ctx, 11)
 	require.NoError(t, err)
-	require.Zero(t, status.Policy.ReservedUSD)
+	require.Equal(t, held, status.Policy.ReservedUSD, "a still-live turn retains its temporary claim")
 	// Clearing customer liability alone must not release physical source headroom.
 	_, stillHeld, _, stillPending, err := dynamicPoolTotals(ctx, db, 4)
 	require.NoError(t, err)
