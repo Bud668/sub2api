@@ -18,6 +18,8 @@ describe('combined subscription status', () => {
       [{}, 'active', '生效中'],
       [{ status: 'learning' }, 'learning', '学习中 · 可用'],
       [{ growth_frozen: true }, 'growth_frozen', '调额暂缓 · 可用'],
+      [{ growth_frozen: true, growth_frozen_reason: 'sync_recovery' }, 'sync_recovery', '同步恢复中 · 可用'],
+      [{ growth_frozen: true, growth_frozen_reason: 'estimate_anomaly' }, 'estimate_anomaly', '额度异常核验 · 可用'],
       [{ growth_frozen: true, remaining_usd: 0 }, 'exhausted', '额度已用尽'],
       [{ status: 'learning', remaining_usd: -1, reserved_usd: 20 }, 'reserved', '额度正在处理中'],
       [{ status: 'confirming' }, 'confirming', '确认上游重置中'],

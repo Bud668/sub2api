@@ -113,6 +113,7 @@ func TestDynamicQuotaV2SpikeKeepsLastCapacity(t *testing.T) {
 	require.Equal(t, 1000.0, p.CapacityUSD)
 	require.Equal(t, 1, p.V2.CandidateSamples)
 	require.True(t, p.growthFrozen(o.FetchedAt))
+	require.Equal(t, "estimate_anomaly", p.growthFreezeReason(o.FetchedAt))
 	for i := 2; i <= 4; i++ {
 		o.FetchedAt = now.Add(time.Duration(i) * time.Minute)
 		p.Observe(o, o.FetchedAt)

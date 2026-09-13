@@ -51,7 +51,17 @@ type DynamicQuotaPoolState struct {
 }
 
 func (p *DynamicQuotaPoolState) growthFrozen(now time.Time) bool {
-	return (p.V2 != nil && p.V2.CandidateSamples > 0) || p.Health.Failures > 0 || p.Snapshot == nil || !p.Snapshot.Valid(now)
+	return p.growthFreezeReason(now) != ""
+}
+
+func (p *DynamicQuotaPoolState) growthFreezeReason(now time.Time) string {
+	if p.Health.Failures > 0 || p.Snapshot == nil || !p.Snapshot.Valid(now) {
+		return "sync_recovery"
+	}
+	if p.V2 != nil && p.V2.CandidateSamples > 0 {
+		return "estimate_anomaly"
+	}
+	return ""
 }
 
 // A delayed quota query may spend the last verified budget in the same window.

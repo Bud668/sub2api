@@ -28,15 +28,18 @@
         <div
           v-for="subscription in subscriptions"
           :key="subscription.id"
-          class="subscription-row min-w-0 overflow-hidden rounded-2xl border"
+          class="subscription-row relative min-w-0 overflow-hidden rounded-2xl border"
           :style="subscriptionBorderStyle(subscription)"
           data-testid="subscription-card"
         >
+          <div class="absolute right-4 top-3 z-10">
+            <SubscriptionStatusBadge :subscription="subscription" />
+          </div>
           <!-- Header -->
           <div
             class="subscription-identity flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 px-4 py-3 dark:border-dark-700"
           >
-            <div class="flex min-w-0 items-center gap-3">
+            <div class="subscription-identity-summary flex min-w-0 items-center gap-3">
               <div :class="['h-1.5 w-1.5 shrink-0 rounded-full', platformAccentDotClass(subscription.group?.platform || '')]" />
               <div class="min-w-0">
                 <div class="flex flex-wrap items-center gap-2">
@@ -61,7 +64,6 @@
               </div>
             </div>
             <div class="flex items-center gap-2">
-              <SubscriptionStatusBadge :subscription="subscription" />
               <button
                 v-if="subscription.status === 'active'"
                 :class="['rounded-lg px-3 py-1.5 text-xs font-semibold text-white transition-colors', platformButtonClass(subscription.group?.platform || '')]"
@@ -383,8 +385,10 @@ onMounted(() => {
 
 <style scoped>
 .subscription-list { container-type: inline-size; max-width: 90rem; margin-inline: auto; }
+.subscription-identity-summary { padding-right: 8rem; }
 @container (min-width: 48rem) {
   .subscription-row { display: grid; grid-template-columns: minmax(14rem, 1fr) minmax(0, 3fr); }
   .subscription-identity { flex-direction: column; align-items: flex-start; justify-content: flex-start; border-bottom: 0; border-right-width: 1px; }
+  .subscription-identity-summary { padding-right: 0; }
 }
 </style>

@@ -97,7 +97,7 @@ try {
     const errors = []
     page.on('pageerror', e => errors.push(e.message))
     let policy = { group_id: 7, account_id: 4, revision: 1, enabled: true, weight: 1, max_limit_usd: 600, fixed_slots: 4, floor_limit_usd: null }
-    const rows = groups.map((group, i) => ({ id: i + 11, user_id: 999, group_id: group.id, group, user, status: 'active', starts_at: stamp, expires_at: new Date(Date.parse(stamp) + [23, 7, 3][i] * 86400_000).toISOString(), weekly_usage_usd: 50, admin_debug: i === 2, dynamic_quota: i === 2 ? null : { ...base, ...(i === 1 ? { next_adjustment_percent: 40, pending_adjustment_percent: 35, pending_adjustment_reason: 'guard', growth_frozen: true } : {}) }, admin_debug_quota: i === 2 ? { weekly_limit_usd: 120, remaining_usd: 68, reserved_usd: 2, revision: 1, follow_reset: true, reset_pending: false, expected_reset_at: '2026-09-19T05:00:00Z' } : null }))
+    const rows = groups.map((group, i) => ({ id: i + 11, user_id: 999, group_id: group.id, group, user, status: 'active', starts_at: stamp, expires_at: new Date(Date.parse(stamp) + [23, 7, 3][i] * 86400_000).toISOString(), weekly_usage_usd: 50, admin_debug: i === 2, dynamic_quota: i === 2 ? null : { ...base, ...(i === 1 ? { next_adjustment_percent: 40, pending_adjustment_percent: 35, pending_adjustment_reason: 'sync_recovery', growth_frozen: true, growth_frozen_reason: 'sync_recovery' } : {}) }, admin_debug_quota: i === 2 ? { weekly_limit_usd: 120, remaining_usd: 68, reserved_usd: 2, revision: 1, follow_reset: true, reset_pending: false, expected_reset_at: '2026-09-19T05:00:00Z' } : null }))
     await page.addInitScript(({ user, locale, dark }) => {
       localStorage.setItem('auth_token', 'synthetic-local-preview')
       localStorage.setItem('auth_user', JSON.stringify(user))
@@ -163,6 +163,8 @@ try {
     await card.screenshot({ path: join(output, `${prefix}-admin.png`) })
     const pendingCard = page.locator('[data-table-card]').nth(1)
     await checkMilestone(page, pendingCard, locale, 40)
+    assert.equal(await pendingCard.getByTestId('subscription-status').innerText(), locale === 'zh' ? '同步恢复中 · 可用' : 'Sync recovering · Usable')
+    assert((await pendingCard.innerText()).includes(locale === 'zh' ? '上游额度同步正在恢复确认' : 'Upstream quota synchronization is being reconfirmed'))
     await pendingCard.screenshot({ path: join(output, `${prefix}-pending.png`) })
     const debugCard = page.locator('[data-table-card]').nth(2)
     await checkDebug(page, debugCard, locale, dark, 120)
@@ -206,25 +208,39 @@ try {
     card = page.getByTestId('subscription-card').first()
     await card.waitFor()
     await checkCard(page, card, dark)
+    assert.equal(await page.getByTestId('dynamic-next-adjustment').count(), 0, 'user subscriptions hide adjustment milestones')
+    assert.equal(await page.getByTestId('dynamic-pending-stage').count(), 0, 'user subscriptions hide pending milestones')
+    const recentAdjustment = card.getByTestId('dynamic-last-adjustment')
+    assert((await recentAdjustment.innerText()).includes(locale === 'zh' ? '最近调额' : 'Last adjustment'))
+    assert.notEqual(await recentAdjustment.evaluate(el => getComputedStyle(el).backgroundColor), 'rgba(0, 0, 0, 0)')
+    const userCardText = await card.innerText()
+    assert(!userCardText.includes(locale === 'zh' ? '上游达到' : 'Upstream reached'), 'user subscription details hide prior milestone')
+    const cardBox = await card.boundingBox(), statusBox = await card.getByTestId('subscription-status').boundingBox()
+    assert(Math.abs(cardBox.x + cardBox.width - statusBox.x - statusBox.width - 16) < 2, 'user status aligns to card right')
+    assert(Math.abs(statusBox.y - cardBox.y - 12) < 2, 'user status aligns to card top')
     await checkExpiry()
     await card.screenshot({ path: join(output, `${prefix}-user.png`) })
-    await checkMilestone(page, page.getByTestId('subscription-card').nth(1), locale, 40)
     await checkDebug(page, page.getByTestId('subscription-card').nth(2), locale, dark, 250)
     await page.getByTestId('subscription-card').nth(2).screenshot({ path: join(output, `${prefix}-debug.png`) })
     await page.getByTitle(locale === 'zh' ? '查看订阅详情' : 'View subscription details', { exact: true }).click()
     await page.waitForFunction(() => document.querySelectorAll('[data-testid=subscription-card]').length === 6)
     const cards = page.getByTestId('subscription-card')
     assert.equal(await page.getByTestId('fixed-seat-badge').count(), 4)
+    assert.equal(await page.getByTestId('dynamic-next-adjustment').count(), 0, 'header subscription details hide adjustment milestones')
     for (const item of await cards.all()) await fits(item)
-    await checkMilestone(page, cards.filter({ hasText: 'Preview Pro 8' }).first(), locale, 40)
     const headerDebug = cards.filter({ has: page.getByTestId('admin-debug-usage') }).first()
     await checkDebug(page, headerDebug, locale, dark, 250)
     await headerDebug.screenshot({ path: join(output, `${prefix}-header-debug.png`) })
+    rows[1].dynamic_quota.growth_frozen_reason = 'estimate_anomaly'
+    rows[1].dynamic_quota.pending_adjustment_reason = 'estimate_anomaly'
+    await page.goto(origin + '/subscriptions')
+    assert.equal(await page.getByTestId('subscription-card').nth(1).getByTestId('subscription-status').innerText(), locale === 'zh' ? '额度异常核验 · 可用' : 'Allowance review · Usable')
     delete rows[1].dynamic_quota.pending_adjustment_percent
     rows[1].dynamic_quota.growth_frozen = false
+    delete rows[1].dynamic_quota.growth_frozen_reason
     rows[1].dynamic_quota.next_adjustment_percent = 45
     await page.goto(origin + '/subscriptions')
-    await checkMilestone(page, page.getByTestId('subscription-card').nth(1), locale, 45)
+    assert.equal(await page.getByTestId('dynamic-next-adjustment').count(), 0)
     assert.equal(rows[1].dynamic_quota.used_usd, 50)
     assert.equal(rows[1].dynamic_quota.status, 'active')
     await page.clock.fastForward(20 * 86400_000 + 60_000)

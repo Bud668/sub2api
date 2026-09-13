@@ -55,6 +55,7 @@ type DynamicSubscriptionQuota struct {
 	UpdatedAt                             time.Time           `json:"updated_at"`
 	CapacityEstimateUSD                   float64             `json:"capacity_estimate_usd,omitempty"` // Admin-only diagnostic.
 	GrowthFrozen                          bool                `json:"growth_frozen,omitempty"`
+	GrowthFrozenReason                    string              `json:"growth_frozen_reason,omitempty"`
 	usedStandard, allocatedStandard, rate float64
 	userID, groupID                       int64
 	pool                                  DynamicQuotaPoolState
@@ -68,6 +69,9 @@ func (q *DynamicSubscriptionQuota) Public() *DynamicSubscriptionQuota {
 	cp.AccountID = 0
 	cp.CapacityEstimateUSD = 0
 	cp.AllocationBudgetConflict = false
+	cp.NextAdjustmentPercent = 0
+	cp.PendingAdjustmentPercent = 0
+	cp.LastChange = nil
 	if cp.PendingAdjustmentReason == "budget_conflict" {
 		cp.PendingAdjustmentReason = "protection"
 	}
@@ -330,7 +334,8 @@ func loadDynamicSubscription(ctx context.Context, db dynamicQuotaQuerier, subscr
 			q.LastAllocationAt = &q.LastChange.At
 		}
 	}
-	q.GrowthFrozen = q.pool.growthFrozen(now)
+	q.GrowthFrozenReason = q.pool.growthFreezeReason(now)
+	q.GrowthFrozen = q.GrowthFrozenReason != ""
 	if q.pool.Snapshot != nil {
 		q.SyncedAt = &q.pool.Snapshot.FetchedAt
 		t := q.pool.Snapshot.ResetAt
@@ -365,7 +370,9 @@ func loadDynamicSubscription(ctx context.Context, db dynamicQuotaQuerier, subscr
 	}
 	if q.PendingAdjustmentPercent > 0 {
 		switch {
-		case q.GrowthFrozen || (q.Status != "active" && q.Status != "learning"):
+		case q.GrowthFrozen:
+			q.PendingAdjustmentReason = q.GrowthFrozenReason
+		case q.Status != "active" && q.Status != "learning":
 			q.PendingAdjustmentReason = "guard"
 		case q.AllocationBudgetConflict:
 			q.PendingAdjustmentReason = "budget_conflict"

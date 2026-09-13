@@ -27,7 +27,7 @@ describe('fixed seat display', () => {
   })
 
   it('removes manual floor and explains finite startup with the two-point milestone', () => {
-    const wrapper = mount(DynamicQuotaCard, { props: { quota: { ...quota, floor_limit_usd: 400 } }, global: { plugins: [i18n('zh')] } })
+    const wrapper = mount(DynamicQuotaCard, { props: { quota: { ...quota, floor_limit_usd: 400 }, showNextAdjustment: true }, global: { plugins: [i18n('zh')] } })
     expect(wrapper.get('[data-testid=dynamic-next-adjustment]').text()).toContain('2%')
     expect(wrapper.get('[data-testid=dynamic-bounds]').text()).not.toContain('下调保护')
     expect(wrapper.text()).toContain('有限起步额度')

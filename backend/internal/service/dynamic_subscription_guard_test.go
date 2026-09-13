@@ -39,6 +39,7 @@ func TestDynamicQuotaFrozenTrustedBudgetAdmission(t *testing.T) {
 	q, err := s.Load(ctx, 11)
 	require.NoError(t, err)
 	require.True(t, q.GrowthFrozen)
+	require.Equal(t, "sync_recovery", q.GrowthFrozenReason)
 	require.Equal(t, "active", q.Status)
 	require.Equal(t, 80.0, q.RemainingUSD)
 	allowed, err := s.Begin(ctx, 101, 4)
@@ -125,6 +126,7 @@ func TestDynamicQuotaRefreshPersistsInvalidAndCanceledQueries(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, 1, q.pool.Health.Failures)
 		require.True(t, q.GrowthFrozen)
+		require.Equal(t, "sync_recovery", q.GrowthFrozenReason)
 		require.Equal(t, 20.0, q.UsedUSD)
 	}
 }
@@ -229,4 +231,5 @@ func TestDynamicQuotaFailureFreezeAndRecoveryKeepsBilling(t *testing.T) {
 	q, err = s.Load(ctx, 11)
 	require.NoError(t, err)
 	require.False(t, q.GrowthFrozen)
+	require.Empty(t, q.GrowthFrozenReason)
 }

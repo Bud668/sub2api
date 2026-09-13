@@ -2057,7 +2057,7 @@ export interface DynamicSubscriptionQuota {
   activation_pending?: boolean
   next_adjustment_percent?: number
   pending_adjustment_percent?: number
-  pending_adjustment_reason?: 'budget_conflict' | 'protection' | 'learning' | 'guard' | 'awaiting_allocation'
+  pending_adjustment_reason?: 'budget_conflict' | 'protection' | 'learning' | 'guard' | 'sync_recovery' | 'estimate_anomaly' | 'awaiting_allocation'
   allocation_budget_conflict?: boolean
   last_allocation_at?: string
   last_change?: { previous_usd: number; current_usd: number; node: number; reason: string; at: string }
@@ -2074,6 +2074,7 @@ export interface DynamicSubscriptionQuota {
   updated_at: string
   capacity_estimate_usd?: number
   growth_frozen?: boolean
+  growth_frozen_reason?: 'sync_recovery' | 'estimate_anomaly'
 }
 
 export interface DynamicQuotaInput {

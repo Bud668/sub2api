@@ -267,7 +267,7 @@
               </div>
 
               <!-- Weekly Usage -->
-              <DynamicQuotaCard v-if="row.dynamic_quota?.enabled" :quota="row.dynamic_quota" compact class="border-0" data-testid="subscription-card" />
+              <DynamicQuotaCard v-if="row.dynamic_quota?.enabled" :quota="row.dynamic_quota" compact show-next-adjustment class="border-0" data-testid="subscription-card" />
               <div v-else-if="row.group?.weekly_limit_usd" class="usage-row">
                 <div class="flex items-center gap-2">
                   <span class="usage-label">{{ t('admin.subscriptions.weekly') }}</span>

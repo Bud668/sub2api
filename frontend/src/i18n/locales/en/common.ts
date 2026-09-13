@@ -39,7 +39,7 @@ export default {
     stageAt: 'The {percent}% refers to total 7-day usage of the bound upstream account. Allocate from the usage-window estimated total cost after excluding the actual 7d threshold reserve, using fixed seats. Milestones are every 2 points through 10%, then every 5 points. Used amounts never reset on adjustment. Abnormal estimates pause growth; real in-flight claims only reduce temporary availability.', noNextStage: 'No further milestone this cycle',
     stageShort: 'Next adjustment · {percent}%', noNextStageShort: 'No next milestone',
     pendingStage: '{percent}% allocation pending',
-    allocationWait: { budget_conflict: 'Downward protections exceed the estimated budget. Allocation is deferred; existing allowances remain.', protection: 'Allocation conditions are not met. Existing allowances remain; real upstream capacity still limits availability.', learning: 'Waiting for a valid current-cycle estimate. Existing allowances remain.', guard: 'Waiting for upstream data verification. Existing allowances remain.', awaiting_allocation: 'Waiting for the background allocation to complete.' },
+    allocationWait: { budget_conflict: 'Downward protections exceed the estimated budget. Allocation is deferred; existing allowances remain.', protection: 'Allocation conditions are not met. Existing allowances remain; real upstream capacity still limits availability.', learning: 'Waiting for a valid current-cycle estimate. Existing allowances remain.', guard: 'Waiting for upstream data verification. Existing allowances remain.', sync_recovery: 'Upstream quota synchronization is being reconfirmed. Existing allowances remain.', estimate_anomaly: 'An unusual estimated-total change is being verified. Existing allowances remain.', awaiting_allocation: 'Waiting for the background allocation to complete.' },
     started: 'Cycle started',
     changes: { initial: 'Initial allocation', bounds: 'Operator changed bounds', upstream_node: 'Upstream reached {percent}%', reset: 'Verified upstream reset', seats: 'Operator changed fixed seats', budget_safety: 'Safety reduction from verified budget' },
     absorption: {
@@ -64,6 +64,8 @@ export default {
     optInHint: 'Off by default. Once active, the dynamic cycle replaces group daily, weekly and monthly quotas. Disabled or pending subscriptions use group quotas. Every participant counts, including administrators; non-participants still consume upstream capacity. Toggling never clears usage.',
     source: 'Bound quota source', chooseSource: 'Choose an upstream account', sourceUnavailable: 'Not currently an eligible source',
     growthFrozen: 'Allowance increases are frozen. Requests can use the trusted budget in this cycle; settled usage and in-flight reservations still count.',
+    growthFrozenSync: 'Upstream quota synchronization is being reconfirmed. Requests can still use the trusted budget in this cycle; settled usage and in-flight reservations continue to count.',
+    growthFrozenEstimate: 'An unusual estimated-total change is being verified. Requests can still use the trusted budget in this cycle; settled usage and in-flight reservations continue to count.',
     noSources: 'No directly authorized OpenAI OAuth source in this group. Cross-group binding is not allowed.',
     bindingHint: 'The saved source is fixed. Changing it requires a separate migration; toggling cannot change the source or refill quota.',
     weight: 'Allocation weight (1 = one share)', cap: 'Allocation cap', floor: 'Downward protection',
@@ -99,11 +101,11 @@ export default {
     conflict: 'Settings changed elsewhere. Close and reopen to review; no concurrent changes were overwritten.',
     bindingError: 'Source and group do not match, or an existing binding was changed. Check account membership.',
     unavailable: 'Fresh, identity-matched weekly quota data is unavailable. The change was not enabled. Check the source and retry.',
-    statuses: { active: 'Available', learning: 'Learning', confirming: 'Confirming reset', settling: 'Waiting for settlement', reset_unconfirmed: 'Reset needs review', identity_changed: 'Identity needs review', quota_unavailable: 'Waiting for quota data', growth_frozen: 'Adjustments deferred; remaining budget usable', invalid_billing_rate: 'Review billing rate', upstream_reserve: 'Upstream unavailable', disabled: 'Disabled', activation_pending: 'Waiting to activate', exhausted: 'Current allowance used up', reserved: 'Allowance reserved by active requests' }
+    statuses: { active: 'Available', learning: 'Learning', confirming: 'Confirming reset', settling: 'Waiting for settlement', reset_unconfirmed: 'Reset needs review', identity_changed: 'Identity needs review', quota_unavailable: 'Waiting for quota data', growth_frozen: 'Adjustments deferred; remaining budget usable', sync_recovery: 'Quota sync recovery is being confirmed; trusted budget remains usable', estimate_anomaly: 'Estimated-total anomaly is being verified; trusted budget remains usable', invalid_billing_rate: 'Review billing rate', upstream_reserve: 'Upstream unavailable', disabled: 'Disabled', activation_pending: 'Waiting to activate', exhausted: 'Current allowance used up', reserved: 'Allowance reserved by active requests' }
   },
   subscriptionStatus: {
     subscription: 'Subscription', quota: 'Dynamic quota',
-    labels: { active: 'Active', learning: 'Learning · Usable', growth_frozen: 'Adjustment deferred · Usable', exhausted: 'Quota exhausted', suspended: 'Suspended', unknown: 'Status needs review' },
+    labels: { active: 'Active', learning: 'Learning · Usable', growth_frozen: 'Adjustment deferred · Usable', sync_recovery: 'Sync recovering · Usable', estimate_anomaly: 'Allowance review · Usable', exhausted: 'Quota exhausted', suspended: 'Suspended', unknown: 'Status needs review' },
     availableHint: 'Dynamic quota is available. Requests still depend on upstream status, concurrency and model rules.',
     blockedHint: 'The current dynamic quota state does not admit new requests. Existing requests settle under the original rules.',
     inactiveHint: 'The subscription is unavailable. Retained quota data does not grant request access.',

@@ -39,7 +39,7 @@ export default {
     stageAt: '这里的 {percent}% 指绑定上游账号的 7 日总用量。达到节点后，按用量窗口的预计总费用，扣除账号 7d 阈值保护部分，再按固定名额分配当前动态额度。0～10% 每 2 个百分点分配，10% 后每 5 个百分点分配；已用量不会清零。异常估算暂缓扩额，真实在途只影响临时剩余额度。', noNextStage: '本周期暂无下一节点',
     stageShort: '下次调额 · {percent}%', noNextStageShort: '暂无下一节点',
     pendingStage: '{percent}% 节点待分配',
-    allocationWait: { budget_conflict: '下调保护合计超出当前估算预算，暂缓分配，保留原额度。', protection: '分配条件暂不满足，原额度保留；实际可用量仍受上游余量约束。', learning: '等待本周期有效预计总费用，保留原额度。', guard: '等待上游数据校验通过，保留原额度。', awaiting_allocation: '等待后台完成本次分配。' },
+    allocationWait: { budget_conflict: '下调保护合计超出当前估算预算，暂缓分配，保留原额度。', protection: '分配条件暂不满足，原额度保留；实际可用量仍受上游余量约束。', learning: '等待本周期有效预计总费用，保留原额度。', guard: '等待上游数据校验通过，保留原额度。', sync_recovery: '上游额度同步正在恢复确认，保留原额度。', estimate_anomaly: '预计总费用变化异常，正在核验并保留原额度。', awaiting_allocation: '等待后台完成本次分配。' },
     started: '本周期起点',
     changes: { initial: '首次分配', bounds: '管理员调整边界', upstream_node: '上游达到 {percent}% 后重分配', reset: '上游确认重置后重新起步', seats: '管理员调整固定名额', budget_safety: '按可信余量安全下调' },
     absorption: {
@@ -64,6 +64,8 @@ export default {
     optInHint: '默认关闭。生效后独立使用动态周期额度，不叠加分组日／周／月额度；关闭或等待生效时使用原分组额度。开启者均计入份额，管理员也不例外；关闭者的真实消耗仍影响上游余量。开关切换不清空已用额度。',
     source: '绑定上游额度来源', chooseSource: '请选择上游账号', sourceUnavailable: '当前不在可选来源中',
     growthFrozen: '额度上调已冻结，仍可使用本周期的可信剩余额度；已用量和在途预占继续计入。',
+    growthFrozenSync: '上游额度同步正在恢复确认，仍可使用本周期的可信剩余额度；已用量和在途预占继续计入。',
+    growthFrozenEstimate: '预计总费用变化异常，正在核验；仍可使用本周期的可信剩余额度，已用量和在途预占继续计入。',
     noSources: '此分组没有可用的直接授权 OpenAI OAuth 来源；不能跨分组绑定。',
     bindingHint: '保存后固定绑定此账号。换源须单独迁移，不能通过关闭再开启换源补额。',
     weight: '分配权重（1 = 一份）', cap: '分配上限', floor: '下调保护',
@@ -99,11 +101,11 @@ export default {
     conflict: '配置已被其他操作修改，请关闭并重新打开后核对；未覆盖他人的修改。',
     bindingError: '绑定与分组不一致，或试图变更已保存的来源。请核对账号归属。',
     unavailable: '尚未取得新鲜且身份一致的完整周额度，未启用修改。请核对来源并稍后重试。',
-    statuses: { active: '正常可用', learning: '学习期', confirming: '确认上游重置中', settling: '等待旧请求结算', reset_unconfirmed: '重置信号待核对', identity_changed: '上游身份变更待核对', quota_unavailable: '额度数据待同步', growth_frozen: '调额暂缓，余量可用', invalid_billing_rate: '计费倍率待核对', upstream_reserve: '上游暂不可用', disabled: '未开启', activation_pending: '等待来源数据生效', exhausted: '当前额度已用尽', reserved: '额度正在处理中' }
+    statuses: { active: '正常可用', learning: '学习期', confirming: '确认上游重置中', settling: '等待旧请求结算', reset_unconfirmed: '重置信号待核对', identity_changed: '上游身份变更待核对', quota_unavailable: '额度数据待同步', growth_frozen: '调额暂缓，余量可用', sync_recovery: '额度同步恢复确认中，可信余额可用', estimate_anomaly: '预计总费用异常核验中，可信余额可用', invalid_billing_rate: '计费倍率待核对', upstream_reserve: '上游暂不可用', disabled: '未开启', activation_pending: '等待来源数据生效', exhausted: '当前额度已用尽', reserved: '额度正在处理中' }
   },
   subscriptionStatus: {
     subscription: '订阅状态', quota: '动态额度',
-    labels: { active: '生效中', learning: '学习中 · 可用', growth_frozen: '调额暂缓 · 可用', exhausted: '额度已用尽', suspended: '已暂停', unknown: '状态待核对' },
+    labels: { active: '生效中', learning: '学习中 · 可用', growth_frozen: '调额暂缓 · 可用', sync_recovery: '同步恢复中 · 可用', estimate_anomaly: '额度异常核验 · 可用', exhausted: '额度已用尽', suspended: '已暂停', unknown: '状态待核对' },
     availableHint: '当前动态额度可用；实际请求仍受上游状态、并发和模型规则限制。',
     blockedHint: '当前动态额度状态不允许新请求，已有请求仍按原规则结算。',
     inactiveHint: '订阅当前不可用，保留的额度信息不代表可以发起请求。',

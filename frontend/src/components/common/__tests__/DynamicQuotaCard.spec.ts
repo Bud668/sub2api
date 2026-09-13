@@ -10,7 +10,7 @@ describe('upstream cycle display', () => {
     const quota: DynamicSubscriptionQuota = { enabled: true, revision: 1, weight: 1, fixed_slots: 4, max_limit_usd: 600, cycle: 1, status: 'active', limit_usd: 320, used_usd: 50, reserved_usd: 0, remaining_usd: 270, started_at: '', updated_at: '', next_adjustment_percent: 20 }
     for (const dark of [false, true]) {
       document.documentElement.classList.toggle('dark', dark)
-      const wrapper = mount(DynamicQuotaCard, { props: { quota, compact: true }, global: { plugins: [createI18n({ legacy: false, locale: 'zh', messages: { zh }, messageCompiler: message => ctx => String(message).replace(/\{(\w+)\}/g, (_, key) => String(ctx.named(key))) })] } })
+      const wrapper = mount(DynamicQuotaCard, { props: { quota, compact: true, showNextAdjustment: true }, global: { plugins: [createI18n({ legacy: false, locale: 'zh', messages: { zh }, messageCompiler: message => ctx => String(message).replace(/\{(\w+)\}/g, (_, key) => String(ctx.named(key))) })] } })
       const badge = wrapper.get('[data-testid=dynamic-next-adjustment]')
       const amounts = () => wrapper.findAll('.quota-amount').map(dd => dd.text())
       const initialAmounts = amounts()
@@ -37,7 +37,7 @@ describe('upstream cycle display', () => {
 
   it('separates an overdue allocation from the next milestone and displays both bounds in compact mode', () => {
     const quota: DynamicSubscriptionQuota = { enabled: true, revision: 1, weight: 1, max_limit_usd: 600, floor_limit_usd: 400, cycle: 1, status: 'active', limit_usd: 600, used_usd: 180, reserved_usd: 0, remaining_usd: 420, started_at: '', updated_at: '', next_adjustment_percent: 50, pending_adjustment_percent: 40, pending_adjustment_reason: 'budget_conflict' }
-    const wrapper = mount(DynamicQuotaCard, { props: { quota, compact: true }, global: { plugins: [createI18n({ legacy: false, locale: 'zh', messages: { zh }, messageCompiler: message => ctx => String(message).replace(/\{(\w+)\}/g, (_, key) => String(ctx.named(key))) })] } })
+    const wrapper = mount(DynamicQuotaCard, { props: { quota, compact: true, showNextAdjustment: true }, global: { plugins: [createI18n({ legacy: false, locale: 'zh', messages: { zh }, messageCompiler: message => ctx => String(message).replace(/\{(\w+)\}/g, (_, key) => String(ctx.named(key))) })] } })
     expect(wrapper.get('[data-testid=dynamic-pending-stage]').text()).toContain('40% 节点待分配')
     expect(wrapper.get('[data-testid=dynamic-pending-stage]').text()).toContain('下调保护合计超出')
     expect(wrapper.get('[data-testid=dynamic-allocated] [data-testid=dynamic-next-adjustment]').text()).toContain('下次调额 · 50%')
@@ -50,14 +50,19 @@ describe('upstream cycle display', () => {
     expect(wrapper.get('[data-testid=dynamic-bounds]').text()).toContain('$600.00')
   })
   it.each([false, true])('shows the upstream reset outside details and follows refreshed data (compact=%s)', async compact => {
-    const quota: DynamicSubscriptionQuota = { enabled: true, revision: 1, weight: 1, max_limit_usd: 600, cycle: 1, status: 'active', limit_usd: 600, used_usd: 180, reserved_usd: 0, remaining_usd: 420, started_at: '2026-09-01T01:00:00Z', updated_at: '', expected_reset_at: '2026-09-12T01:00:00Z' }
+    const quota: DynamicSubscriptionQuota = { enabled: true, revision: 1, weight: 1, max_limit_usd: 600, cycle: 1, status: 'active', limit_usd: 600, used_usd: 180, reserved_usd: 0, remaining_usd: 420, started_at: '2026-09-01T01:00:00Z', updated_at: '', last_allocation_at: '2026-09-08T01:00:00Z', expected_reset_at: '2026-09-12T01:00:00Z' }
     const wrapper = mount(DynamicQuotaCard, { props: { quota, compact }, global: { plugins: [createI18n({ legacy: false, locale: 'zh', messages: { zh }, messageCompiler: message => () => String(message) })] } })
+    const recent = wrapper.get('[data-testid="dynamic-last-adjustment"]')
+    expect(wrapper.find('[data-testid="dynamic-next-adjustment"]').exists()).toBe(false)
+    expect(recent.text()).toContain('最近调额')
+    expect(recent.get('time').attributes('datetime')).toBe(quota.last_allocation_at)
+    expect(recent.classes()).toEqual(expect.arrayContaining(['bg-primary-50', 'dark:bg-primary-900/30']))
     const reset = wrapper.get('[data-testid="dynamic-reset"]')
     expect(reset.element.closest('details')).toBeNull()
     expect(reset.attributes('title')).toContain('跟随绑定上游')
     expect(reset.text()).toContain('下次上游重置（预计）')
     expect(reset.text()).not.toContain('待确认')
-    expect(wrapper.findAll('time')).toHaveLength(1)
+    expect(wrapper.findAll('time')).toHaveLength(2)
     expect(reset.get('time').attributes('datetime')).toBe(quota.expected_reset_at)
     const previousText = reset.get('time').text()
     await wrapper.setProps({ quota: { ...quota, confirmed_at: '2026-09-08T02:30:00Z', expected_reset_at: '2026-09-15T02:30:00Z' } })
@@ -74,7 +79,7 @@ describe('upstream cycle display', () => {
 
   it('separates adjustment from reset and never fabricates a local seven-day countdown', async () => {
     const quota: DynamicSubscriptionQuota = { enabled: true, revision: 1, weight: 1, max_limit_usd: 700, floor_limit_usd: 100, next_adjustment_percent: 40, cycle: 4, status: 'confirming', limit_usd: 100, used_usd: 20, reserved_usd: 5, remaining_usd: 75, started_at: '2026-09-01T01:00:00Z', updated_at: '', synced_at: '2026-09-09T01:00:00Z', expected_reset_at: '2026-09-12T01:00:00Z' }
-    const wrapper = mount(DynamicQuotaCard, { props: { quota }, global: { plugins: [createI18n({ legacy: false, locale: 'zh', messages: { zh }, messageCompiler: message => () => String(message) })] } })
+    const wrapper = mount(DynamicQuotaCard, { props: { quota, showNextAdjustment: true }, global: { plugins: [createI18n({ legacy: false, locale: 'zh', messages: { zh }, messageCompiler: message => () => String(message) })] } })
     expect(wrapper.text()).not.toContain('确认上游重置中') // Status lives in the shared subscription header.
     expect(wrapper.text()).toContain('尚未确认重置')
     expect(wrapper.text()).toContain('下次上游重置（预计）')
@@ -96,11 +101,13 @@ describe('upstream cycle display', () => {
     expect(wrapper.text()).toContain('$200.00')
     expect(wrapper.text()).toContain('周期编号不是上游账号编号')
     expect(wrapper.text()).toContain('仅供参考')
-    await wrapper.setProps({ quota: { ...quota, status: 'active', growth_frozen: true } })
-    expect(wrapper.text()).toContain('额度上调已冻结')
+    await wrapper.setProps({ quota: { ...quota, status: 'active', growth_frozen: true, growth_frozen_reason: 'sync_recovery' } })
+    expect(wrapper.text()).toContain('上游额度同步正在恢复确认')
     expect(wrapper.text()).toContain('仍可使用本周期的可信剩余额度')
     expect(wrapper.text()).toContain('$75.00')
     expect(wrapper.text()).not.toContain('暂停')
+    await wrapper.setProps({ quota: { ...quota, status: 'active', growth_frozen: true, growth_frozen_reason: 'estimate_anomaly' } })
+    expect(wrapper.text()).toContain('预计总费用变化异常')
     await wrapper.setProps({ quota: { ...quota, status: 'active', last_allocation_at: '2026-09-08T01:00:00Z', last_change: { previous_usd: 600, current_usd: 100, node: 30, reason: 'upstream_node', at: '2026-09-08T01:00:00Z' } } })
     expect(wrapper.text()).toContain('$600.00 → $100.00')
     expect(wrapper.text()).toContain('后重分配')

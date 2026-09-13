@@ -33,7 +33,7 @@ const quotaState = computed(() => {
   if (['active', 'learning'].includes(q.status)) {
     if (!Number.isFinite(q.remaining_usd)) return 'quota_unavailable'
     if (q.remaining_usd <= 0) return q.reserved_usd > 0 ? 'reserved' : 'exhausted'
-    if (q.growth_frozen) return 'growth_frozen'
+    if (q.growth_frozen) return ['sync_recovery', 'estimate_anomaly'].includes(q.growth_frozen_reason || '') ? q.growth_frozen_reason! : 'growth_frozen'
     return q.status
   }
   return ['confirming', 'settling', 'reset_unconfirmed', 'identity_changed', 'quota_unavailable', 'invalid_billing_rate', 'upstream_reserve', 'activation_pending'].includes(q.status) ? q.status : 'quota_unavailable'
@@ -41,7 +41,7 @@ const quotaState = computed(() => {
 const state = computed(() => lifecycle.value !== 'active' ? lifecycle.value : quotaState.value === 'disabled' ? 'active' : quotaState.value)
 const label = (value: string): string => {
   if (['expired', 'revoked'].includes(value)) return t(`userSubscriptions.status.${value}`)
-  if (['active', 'learning', 'growth_frozen', 'exhausted', 'suspended', 'unknown'].includes(value)) return t(`subscriptionStatus.labels.${value}`)
+  if (['active', 'learning', 'growth_frozen', 'sync_recovery', 'estimate_anomaly', 'exhausted', 'suspended', 'unknown'].includes(value)) return t(`subscriptionStatus.labels.${value}`)
   return t(`dynamicQuota.statuses.${value}`)
 }
 const details = computed(() => {
@@ -52,7 +52,7 @@ const details = computed(() => {
     : quotaState.value === 'activation_pending' ? t(props.subscription.dynamic_quota?.fixed_slots ? 'dynamicQuota.fixedPendingActivation' : 'dynamicQuota.pendingActivation')
     : props.subscription.admin_debug ? t(props.subscription.admin_debug_quota?.reset_pending ? 'dynamicQuota.debugResetPending' : 'dynamicQuota.adminDebugHint')
     : quotaState.value === 'disabled' ? t('subscriptionStatus.nativeHint')
-    : ['active', 'learning', 'growth_frozen'].includes(quotaState.value) ? t('subscriptionStatus.availableHint')
+    : ['active', 'learning', 'growth_frozen', 'sync_recovery', 'estimate_anomaly'].includes(quotaState.value) ? t('subscriptionStatus.availableHint')
     : t('subscriptionStatus.blockedHint'))
   return lines.join('\n')
 })
