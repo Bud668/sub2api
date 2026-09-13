@@ -155,6 +155,8 @@ func runMainServer() {
 		log.Fatalf("Failed to initialize application: %v", err)
 	}
 	defer app.Cleanup()
+	stopMemoryDiagnostics := startMemoryDiagnostics()
+	defer stopMemoryDiagnostics()
 	drain := requestdrain.New()
 	defer drain.Cancel()
 	app.Server.Handler = drain.Wrap(app.Server.Handler)
