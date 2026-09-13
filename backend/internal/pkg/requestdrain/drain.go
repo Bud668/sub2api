@@ -6,6 +6,7 @@ import (
 	"context"
 	"net/http"
 	"sync"
+	"time"
 )
 
 type shutdownKey struct{}
@@ -45,8 +46,23 @@ func (d *Drain) Wrap(next http.Handler) http.Handler {
 			d.mu.Unlock()
 		}()
 		ctx, cancel := context.WithCancel(context.WithValue(r.Context(), shutdownKey{}, d.force))
-		stop := context.AfterFunc(d.force, cancel)
-		defer func() { stop(); cancel() }()
+		interrupted := make(chan struct{})
+		stop := context.AfterFunc(d.force, func() {
+			defer close(interrupted)
+			cancel()
+			// A canceled context alone cannot release blocked client Body.Read
+			// or ResponseWriter.Write. Interrupt I/O only on process shutdown;
+			// detached billing remains alive and is still included in Wait.
+			controller := http.NewResponseController(w)
+			_ = controller.SetReadDeadline(time.Now())
+			_ = controller.SetWriteDeadline(time.Now())
+		})
+		defer func() {
+			if !stop() {
+				<-interrupted // Do not touch a writer after net/http recycles it.
+			}
+			cancel()
+		}()
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
@@ -62,7 +78,7 @@ func (d *Drain) StopAccepting() {
 	}
 }
 
-// Cancel ends remaining upstream reads, not detached billing transactions.
+// Cancel interrupts request I/O, not detached billing transactions.
 // Always Wait before closing the database or the accounting workers.
 func (d *Drain) Cancel() { d.cancel() }
 
