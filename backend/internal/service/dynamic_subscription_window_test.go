@@ -41,7 +41,7 @@ func TestDynamicQuotaWindowReplacesOffsetLearningAndKeepsThreshold(t *testing.T)
 		require.InDelta(t, 1800*.99/4, q.LimitUSD, 1e-7, "40% allocates now, not at 47%; threshold excluded exactly once")
 		require.Equal(t, 180.0, q.UsedUSD)
 		require.Zero(t, q.PendingAdjustmentPercent)
-		require.Equal(t, 45, q.NextAdjustmentPercent)
+		require.Equal(t, 41, q.NextAdjustmentPercent)
 	}
 	q, err := s.Load(ctx, 11)
 	require.NoError(t, err)
@@ -58,7 +58,7 @@ func TestDynamicQuotaWindowReplacesOffsetLearningAndKeepsThreshold(t *testing.T)
 	require.NoError(t, db.QueryRow(`SELECT count(*) FROM dynamic_quota_events WHERE account_id=4 AND kind='allocation_node'`).Scan(&again))
 	require.Equal(t, count, again, "repeated snapshots do not regrant")
 
-	// A jump crosses 45/50/55 but produces one cumulative allocation.
+	// A jump crosses many one-percent nodes but produces one cumulative allocation.
 	dynamicExec(t, db, `UPDATE usage_logs SET total_cost=252 WHERE account_id=4;
  UPDATE dynamic_subscription_policies SET used_standard_usd=252,cycle_used_usd=252 WHERE account_id=4;
  UPDATE user_subscriptions SET weekly_usage_usd=252 WHERE id BETWEEN 11 AND 14;
@@ -69,8 +69,8 @@ func TestDynamicQuotaWindowReplacesOffsetLearningAndKeepsThreshold(t *testing.T)
 	require.NoError(t, err)
 	require.InDelta(t, 445.5, q.LimitUSD, 1e-7)
 	require.Equal(t, 252.0, q.UsedUSD)
-	require.Equal(t, 60, q.NextAdjustmentPercent)
-	require.Equal(t, 55, q.pool.V2.LastNode)
+	require.Equal(t, 57, q.NextAdjustmentPercent)
+	require.Equal(t, 56, q.pool.V2.LastNode)
 	require.NoError(t, db.QueryRow(`SELECT count(*) FROM dynamic_quota_events WHERE account_id=4 AND kind='allocation_node'`).Scan(&again))
 	require.Equal(t, count+1, again)
 

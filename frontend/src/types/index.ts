@@ -2061,6 +2061,7 @@ export interface DynamicSubscriptionQuota {
   allocation_budget_conflict?: boolean
   last_allocation_at?: string
   last_change?: { previous_usd: number; current_usd: number; node: number; reason: string; at: string }
+  last_change_usd?: number
   cycle: number
   status: string
   limit_usd: number

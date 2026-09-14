@@ -38,10 +38,10 @@ func dynamicQuotaNode(percent float64) int {
 }
 
 func dynamicQuotaStep(percent float64) int {
-	if percent < 10 {
+	if percent < 2 {
 		return 2
 	}
-	return 5
+	return 1
 }
 
 func (p *DynamicQuotaPoolState) startV2() {
@@ -323,7 +323,8 @@ func activateDynamicV2(ctx context.Context, tx *sql.Tx, accountID int64, pool *D
 			}
 		}
 		_, err = tx.ExecContext(ctx, `UPDATE dynamic_subscription_policies SET activation_pending=false,
- last_change=CASE WHEN activation_pending AND NOT $5 THEN jsonb_build_object('previous_usd',0,
+ last_change=CASE WHEN $5 THEN jsonb_build_object('previous_usd',COALESCE((last_change->>'previous_usd')::numeric,0),
+ 'current_usd',$2::numeric,'reason','reset','at',NOW()) WHEN activation_pending THEN jsonb_build_object('previous_usd',0,
  'current_usd',$2::numeric,'reason','initial','at',NOW()) ELSE last_change END,
  applied_limit_usd=$2,allocated_standard_usd=used_standard_usd+GREATEST(0,$2::numeric-$3::numeric)/$4::numeric,
  cycle_used_usd=GREATEST(cycle_used_usd,$3),updated_at=NOW() WHERE subscription_id=$1`, id, limit, q.UsedUSD, q.rate, reset)

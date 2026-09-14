@@ -72,7 +72,7 @@ func TestDynamicQuotaV2NodesUseCumulativeWindow(t *testing.T) {
 	p := DynamicQuotaPoolState{}
 	require.False(t, p.Observe(o, now))
 	p.startV2()
-	require.Equal(t, 15, p.V2.LastNode)
+	require.Equal(t, 19, p.V2.LastNode)
 	o.FetchedAt = now.Add(time.Minute)
 	o.UsedPercent, o.LocalStandardTotal = 19.96, 9.6
 	require.False(t, p.Observe(o, o.FetchedAt))
@@ -93,7 +93,7 @@ func TestDynamicQuotaV2NodesUseCumulativeWindow(t *testing.T) {
 	require.NoError(t, err)
 	var restored DynamicQuotaPoolState
 	require.NoError(t, json.Unmarshal(raw, &restored))
-	require.Equal(t, 30, restored.V2.LastNode)
+	require.Equal(t, 32, restored.V2.LastNode)
 	require.False(t, restored.v2AllocationDue(o.FetchedAt))
 	other := DynamicQuotaPoolState{}
 	require.Nil(t, other.V2, "a different source stays independent")

@@ -96,6 +96,10 @@ func dynamicTestStore(t *testing.T) (*DynamicSubscriptionService, *sql.DB) {
 	require.NoError(t, err)
 	dynamicExec(t, db, string(clearMigration))
 	dynamicExec(t, db, string(clearMigration))
+	modelReservationMigration, err := os.ReadFile("../../migrations/245_dynamic_quota_model_reservations.sql")
+	require.NoError(t, err)
+	dynamicExec(t, db, string(modelReservationMigration))
+	dynamicExec(t, db, string(modelReservationMigration))
 	s := NewDynamicSubscriptionService(db, dynamicTestAccounts{}, nil, nil)
 	s.fetch = func(_ context.Context, id int64) (DynamicQuotaObservation, error) {
 		return dynamicTestObservation(id, 50, time.Now().UTC().Add(6*24*time.Hour), time.Now().UTC()), nil
@@ -510,6 +514,52 @@ func TestDynamicQuotaPostgresTransactionRollback(t *testing.T) {
 	}
 	require.ErrorIs(t, s.Refresh(ctx, 4), ErrDynamicQuotaUnavailable)
 	require.False(t, strings.Contains(fmt.Sprint(q.Public()), "credential"))
+}
+
+func TestDynamicQuotaUsesObservedMaximumForRequestedModel(t *testing.T) {
+	s, db := dynamicTestStore(t)
+	ctx := context.Background()
+	dynamicTestSave(t, s, 11, 4, true)
+	dynamicExec(t, db, `UPDATE dynamic_quota_pools SET max_request_usd=5,
+ state=jsonb_set(state,'{model_max_request_usd}','{"gpt-5.6-terra":0.5}'::jsonb) WHERE account_id=4`)
+
+	terra := WithDynamicQuotaRequestMetadata(ctx, "gpt-5.6-terra", "/v1/responses", 0)
+	r, err := s.Begin(terra, 101, 4)
+	require.NoError(t, err)
+	var hold float64
+	require.NoError(t, db.QueryRow(`SELECT hold_standard_usd FROM dynamic_quota_requests WHERE id=$1`, r.ID).Scan(&hold))
+	require.Equal(t, 0.5, hold)
+	dynamicTestSettle(t, db, r, 101, 11, 0.75, 0.75)
+
+	r, err = s.Begin(terra, 101, 4)
+	require.NoError(t, err)
+	require.NoError(t, db.QueryRow(`SELECT hold_standard_usd FROM dynamic_quota_requests WHERE id=$1`, r.ID).Scan(&hold))
+	require.Equal(t, 0.75, hold, "a larger settled request raises only its model's hold")
+	r.RejectBeforeForward()
+
+	astra := WithDynamicQuotaRequestMetadata(ctx, "gpt-6-astra", "/v1/responses", 0)
+	r, err = s.Begin(astra, 101, 4)
+	require.NoError(t, err)
+	require.NoError(t, db.QueryRow(`SELECT hold_standard_usd FROM dynamic_quota_requests WHERE id=$1`, r.ID).Scan(&hold))
+	require.Equal(t, 5.0, hold, "a model without evidence keeps the conservative account fallback")
+	r.RejectBeforeForward()
+}
+
+func TestDynamicQuotaModelReservationMigrationBackfillsSettledRequests(t *testing.T) {
+	s, db := dynamicTestStore(t)
+	dynamicTestSave(t, s, 11, 4, true)
+	dynamicExec(t, db, `INSERT INTO dynamic_quota_requests(id,account_id,cycle,hold_standard_usd,status,standard_cost_usd,request_context)
+ VALUES('00000000-0000-0000-0000-000000000001',4,1,0,'settled',0.75,'{"model":"  gpt-5.6-terra  "}'),
+       ('00000000-0000-0000-0000-000000000002',4,1,0,'settled',4.25,'{"model":"gpt-6-astra"}')`)
+	migration, err := os.ReadFile("../../migrations/245_dynamic_quota_model_reservations.sql")
+	require.NoError(t, err)
+	dynamicExec(t, db, string(migration))
+	dynamicExec(t, db, string(migration))
+	var terra, astra float64
+	require.NoError(t, db.QueryRow(`SELECT (state->'model_max_request_usd'->>'gpt-5.6-terra')::numeric,
+ (state->'model_max_request_usd'->>'gpt-6-astra')::numeric FROM dynamic_quota_pools WHERE account_id=4`).Scan(&terra, &astra))
+	require.Equal(t, 0.75, terra)
+	require.Equal(t, 4.25, astra)
 }
 
 func TestDynamicQuotaHTTPAdmissionPostgres(t *testing.T) {

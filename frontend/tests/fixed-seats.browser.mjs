@@ -26,9 +26,9 @@ const browser = await chromium.launch({ headless: true })
 const stamp = '2026-09-12T05:00:00Z'
 const user = { id: 999, email: 'preview@example.invalid', username: 'Preview', role: 'admin', status: 'active', balance: 0 }
 const groups = [7, 8, 9].map(id => ({ id, name: `Preview Pro ${id}`, platform: 'openai', subscription_type: 'subscription', rate_multiplier: 1, status: 'active', account_count: 1, active_account_count: 1 }))
-const base = { enabled: true, requested_enabled: true, activation_pending: false, revision: 1, account_id: 4, weight: 1, max_limit_usd: 600, fixed_slots: 4, source_fixed_slots: 8, floor_limit_usd: null, cycle: 1, limit_usd: 320, used_usd: 50, remaining_usd: 270, reserved_usd: 0, status: 'active', started_at: stamp, updated_at: stamp, synced_at: stamp, expected_reset_at: '2026-09-19T05:00:00Z', next_adjustment_percent: 15, last_allocation_at: stamp, last_change: { previous_usd: 300, current_usd: 320, node: 10, reason: 'upstream_node', at: stamp } }
+const base = { enabled: true, requested_enabled: true, activation_pending: false, revision: 1, account_id: 4, weight: 1, max_limit_usd: 600, fixed_slots: 4, source_fixed_slots: 8, floor_limit_usd: null, cycle: 1, limit_usd: 320, used_usd: 50, remaining_usd: 267.31, reserved_usd: 2.69, status: 'active', started_at: stamp, updated_at: stamp, synced_at: stamp, expected_reset_at: '2026-09-19T05:00:00Z', next_adjustment_percent: 15, last_change_usd: 20, last_allocation_at: stamp, last_change: { previous_usd: 300, current_usd: 320, node: 10, reason: 'upstream_node', at: stamp } }
 const fits = async locator => assert.equal(await locator.evaluate(el => el.scrollWidth > el.clientWidth + 1), false, 'no horizontal overflow')
-async function checkCard(page, card, dark) {
+async function checkCard(page, card, dark, locale) {
   await fits(card)
   const metrics = await card.locator('.quota-amounts').evaluate(el => ({
     titles: [...el.querySelectorAll('dt')].map(dt => { const label = dt.firstElementChild || dt; const s = getComputedStyle(label); return [s.fontWeight, s.color] }),
@@ -36,6 +36,11 @@ async function checkCard(page, card, dark) {
   }))
   assert.deepEqual(metrics.titles, Array.from({ length: 3 }, () => ['600', dark ? 'rgb(229, 231, 235)' : 'rgb(55, 65, 81)']))
   assert.deepEqual(metrics.amounts, ['700', '700', '700'])
+  assert.equal(await card.getByTestId('dynamic-quota-delta').innerText(), '+$20.00')
+  assert.equal(await card.getByTestId('dynamic-reserved').innerText(), locale === 'zh' ? '在途预占 · $2.69' : 'In flight · $2.69')
+  assert.equal(await card.getByTestId('dynamic-used').locator('dt').getByTestId('dynamic-reserved').count(), 1)
+  assert.equal(await card.getByTestId('dynamic-quota-meta').count(), 1)
+  assert.equal(await card.locator('details').count(), 0)
   assert.equal(await card.locator('[data-testid=dynamic-bounds]').getByText(/下调保护|Downward protection/).count(), 0)
   const badge = card.getByTestId('fixed-seat-badge')
   assert.equal(await badge.count(), 1)
@@ -47,20 +52,6 @@ async function checkCard(page, card, dark) {
   const rect = await tooltip.boundingBox(), viewport = page.viewportSize()
   assert(rect.x >= 0 && rect.y >= 0 && rect.x + rect.width <= viewport.width + 1 && rect.y + rect.height <= viewport.height + 1)
   assert((await tooltip.innerText()).includes('10'), 'distinguish group seats from shared-source seats')
-  await page.keyboard.press('Escape')
-  assert.equal(await badge.getAttribute('aria-expanded'), 'false')
-}
-async function checkMilestone(page, card, locale, percent) {
-  const badge = card.getByTestId('dynamic-next-adjustment')
-  assert.equal(await badge.innerText(), locale === 'zh' ? `下次调额 · ${percent}%` : `Next adjustment · ${percent}%`)
-  await badge.focus()
-  await page.keyboard.press('Enter')
-  const tip = page.locator('[role=tooltip]:visible')
-  await tip.waitFor()
-  assert((await tip.innerText()).includes(locale === 'zh' ? '阈值保护' : 'threshold reserve'))
-  assert(!(await tip.innerText()).includes('2/3'))
-  const rect = await tip.boundingBox(), viewport = page.viewportSize()
-  assert(rect.x >= 0 && rect.y >= 0 && rect.x + rect.width <= viewport.width + 1 && rect.y + rect.height <= viewport.height + 1)
   await page.keyboard.press('Escape')
   assert.equal(await badge.getAttribute('aria-expanded'), 'false')
 }
@@ -89,7 +80,7 @@ async function checkDebug(page, card, locale, dark, limit) {
   assert.equal(await badge.getAttribute('aria-expanded'), 'false')
 }
 try {
-  for (const [width, locale, dark] of [[1440, 'zh', false], [1440, 'zh', true], [390, 'zh', false], [390, 'zh', true], [320, 'zh', false], [1440, 'en', true]]) {
+  for (const [width, locale, dark] of [[1440, 'zh', false], [1440, 'zh', true], [390, 'zh', false], [390, 'zh', true], [320, 'zh', false], [1440, 'en', true], [390, 'en', false]]) {
     const context = await browser.newContext({ viewport: { width, height: 1000 }, timezoneId: 'Asia/Shanghai' })
     const page = await context.newPage()
     await page.clock.install({ time: new Date(stamp) })
@@ -159,10 +150,16 @@ try {
     await page.goto(origin + '/admin/subscriptions')
     let card = page.locator('[data-table-card]').first()
     await card.waitFor()
-    await checkCard(page, card, dark)
+    const localizedCardCheck = async (target, targetDark) => {
+      await checkCard(page, target, targetDark, locale)
+      const meta = await target.getByTestId('dynamic-quota-meta').innerText()
+      assert(meta.includes(locale === 'zh' ? '订阅额度周期' : 'Subscription quota cycle'))
+      assert(meta.includes(locale === 'zh' ? '最近数据同步' : 'Latest data sync'))
+    }
+    await localizedCardCheck(card, dark)
     await card.screenshot({ path: join(output, `${prefix}-admin.png`) })
     const pendingCard = page.locator('[data-table-card]').nth(1)
-    await checkMilestone(page, pendingCard, locale, 40)
+    assert((await pendingCard.getByTestId('dynamic-pending-stage').innerText()).includes('35%'))
     assert.equal(await pendingCard.getByTestId('subscription-status').innerText(), locale === 'zh' ? '同步恢复中 · 可用' : 'Sync recovering · Usable')
     assert((await pendingCard.innerText()).includes(locale === 'zh' ? '上游额度同步正在恢复确认' : 'Upstream quota synchronization is being reconfirmed'))
     await pendingCard.screenshot({ path: join(output, `${prefix}-pending.png`) })
@@ -182,12 +179,12 @@ try {
     await checkExpiry()
     const initialBadgeColor = await page.getByTestId('subscription-expiry-badge').first().evaluate(el => getComputedStyle(el).backgroundColor)
     await page.evaluate(() => document.documentElement.classList.toggle('dark'))
-    await checkCard(page, card, !dark)
+    await localizedCardCheck(card, !dark)
     await checkDebug(page, debugCard, locale, !dark, 120)
     await checkExpiry()
     assert.notEqual(await page.getByTestId('subscription-expiry-badge').first().evaluate(el => getComputedStyle(el).backgroundColor), initialBadgeColor)
     await page.evaluate(() => document.documentElement.classList.toggle('dark'))
-    await checkCard(page, card, dark)
+    await localizedCardCheck(card, dark)
     assert.equal(await debugCard.getByTestId('fixed-seat-badge').count(), 0)
     await debugCard.getByRole('button', { name: locale === 'zh' ? '更多' : 'More', exact: true }).click()
     await page.getByRole('button', { name: locale === 'zh' ? '设置周额度' : 'Set weekly quota', exact: true }).click()
@@ -207,12 +204,10 @@ try {
     await page.goto(origin + '/subscriptions')
     card = page.getByTestId('subscription-card').first()
     await card.waitFor()
-    await checkCard(page, card, dark)
+    await localizedCardCheck(card, dark)
     assert.equal(await page.getByTestId('dynamic-next-adjustment').count(), 0, 'user subscriptions hide adjustment milestones')
     assert.equal(await page.getByTestId('dynamic-pending-stage').count(), 0, 'user subscriptions hide pending milestones')
-    const recentAdjustment = card.getByTestId('dynamic-last-adjustment')
-    assert((await recentAdjustment.innerText()).includes(locale === 'zh' ? '最近调额' : 'Last adjustment'))
-    assert.notEqual(await recentAdjustment.evaluate(el => getComputedStyle(el).backgroundColor), 'rgba(0, 0, 0, 0)')
+    assert.equal(await card.getByTestId('dynamic-last-adjustment').count(), 0)
     const userCardText = await card.innerText()
     assert(!userCardText.includes(locale === 'zh' ? '上游达到' : 'Upstream reached'), 'user subscription details hide prior milestone')
     const cardBox = await card.boundingBox(), statusBox = await card.getByTestId('subscription-status').boundingBox()
@@ -247,7 +242,7 @@ try {
     await page.waitForFunction(() => [...document.querySelectorAll('[data-testid=subscription-expiry-badge]')].every(el => el.classList.contains('bg-red-100')))
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1), false)
     assert.deepEqual(errors, [])
-    console.log(`PASS ${prefix}: settings/error/save, admin/user/header badges, fixed-node/guard tooltips, debug available/order/editing, expiry colors/time updates, bold metrics, light/dark switching and no overflow`)
+    console.log(`PASS ${prefix}: settings/error/save, admin/user/header quota change and metadata, debug available/order/editing, expiry colors/time updates, bold metrics, light/dark switching and no overflow`)
     await context.close()
   }
 } finally {

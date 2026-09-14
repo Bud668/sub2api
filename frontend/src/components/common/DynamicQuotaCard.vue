@@ -6,45 +6,31 @@
       </div>
       <dl class="quota-amounts grid grid-cols-3 gap-4 rounded-xl bg-white p-3 tabular-nums dark:bg-dark-800/60" data-testid="dynamic-allocation-stage">
         <div class="min-w-0" data-testid="dynamic-allocated">
-          <dt class="flex flex-wrap items-center gap-2 text-xs font-medium text-gray-600 dark:text-gray-300">
-            <span class="font-semibold text-gray-700 dark:text-gray-200">{{ t('dynamicQuota.limit') }}</span>
-            <HelpTooltip v-if="showNextAdjustment" trigger="click" :content="stageHint" class="!ml-0">
-              <template #trigger="{ open, tooltipId }">
-                <button
-                  type="button"
-                  class="inline-flex rounded-md bg-primary-100/70 px-2 py-0.5 text-xs font-medium leading-4 text-primary-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:bg-primary-900/40 dark:text-primary-200"
-                  data-testid="dynamic-next-adjustment"
-                  :title="stageHint"
-                  :aria-label="stageHint"
-                  :aria-expanded="open"
-                  :aria-describedby="tooltipId"
-                >{{ quota.next_adjustment_percent ? t('dynamicQuota.stageShort', { percent: quota.next_adjustment_percent }) : t('dynamicQuota.noNextStageShort') }}</button>
-              </template>
-            </HelpTooltip>
-            <span
-              v-else
-              class="inline-flex max-w-full flex-wrap items-center gap-x-1 rounded-md bg-primary-50 px-2 py-0.5 text-[11px] font-medium leading-4 text-primary-700 dark:bg-primary-900/30 dark:text-primary-200"
-              data-testid="dynamic-last-adjustment"
-              :title="`${t('dynamicQuota.allocatedAt')}: ${allocationTime ? date(quota.last_allocation_at) : t('dynamicQuota.notAllocated')}`"
-            >
-              <Icon name="refresh" size="xs" class="shrink-0" aria-hidden="true" />
-              <span class="shrink-0">{{ t('dynamicQuota.allocatedAt') }}</span>
-              <time v-if="allocationTime" :datetime="quota.last_allocation_at" :aria-label="date(quota.last_allocation_at)">{{ allocationTime }}</time>
-              <span v-else>{{ t('dynamicQuota.notAllocated') }}</span>
-            </span>
+          <dt class="text-xs font-semibold text-gray-700 dark:text-gray-200">
+            <span>{{ t('dynamicQuota.limit') }}</span>
           </dt>
-          <dd class="quota-amount mt-1 break-words text-lg font-bold tracking-tight text-gray-900 dark:text-gray-100">{{ usd(quota.limit_usd) }}</dd>
-          <dd v-if="showNextAdjustment" class="mt-2 flex flex-wrap items-start gap-1 text-xs leading-4 text-gray-600 dark:text-gray-300" :title="`${allocationLabel}: ${allocationTime ? date(quota.last_allocation_at) : t('dynamicQuota.notAllocated')}`">
-            <Icon name="refresh" size="xs" class="mt-0.5 shrink-0" aria-hidden="true" />
-            <span class="shrink-0">{{ allocationLabel }}</span>
-            <time v-if="allocationTime" :datetime="quota.last_allocation_at" :aria-label="date(quota.last_allocation_at)">{{ allocationTime }}</time>
-            <span v-else>{{ t('dynamicQuota.notAllocated') }}</span>
+          <dd class="quota-amount mt-1 flex min-w-0 flex-wrap items-start gap-1.5 text-lg font-bold tracking-tight text-gray-900 dark:text-gray-100">
+            <span class="min-w-0 break-words">{{ usd(quota.limit_usd) }}</span>
+            <span
+              v-if="quotaDelta"
+              class="quota-delta inline-flex shrink-0 rounded-full px-1.5 py-0.5 text-[11px] font-semibold leading-4 ring-1 ring-inset"
+              :class="quotaDelta > 0
+                ? 'bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-950/50 dark:text-emerald-300 dark:ring-emerald-800'
+                : 'bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-950/50 dark:text-amber-300 dark:ring-amber-800'"
+              data-testid="dynamic-quota-delta"
+              :title="deltaLabel"
+              :aria-label="deltaLabel"
+            >
+              {{ deltaText }}
+            </span>
           </dd>
         </div>
-        <div class="min-w-0">
-          <dt class="text-xs font-semibold text-gray-700 dark:text-gray-200">{{ t('dynamicQuota.used') }}</dt>
+        <div class="min-w-0" data-testid="dynamic-used">
+          <dt class="flex min-w-0 flex-wrap items-center gap-1.5 text-xs font-semibold text-gray-700 dark:text-gray-200">
+            <span>{{ t('dynamicQuota.used') }}</span>
+            <span v-if="quota.reserved_usd > 0" class="quota-reserved inline-flex w-fit shrink-0 rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium leading-4 text-amber-700 ring-1 ring-inset ring-amber-200 dark:bg-amber-950/40 dark:text-amber-200 dark:ring-amber-800/70" data-testid="dynamic-reserved">{{ t('dynamicQuota.reserved') }} · {{ usd(quota.reserved_usd) }}</span>
+          </dt>
           <dd class="quota-amount mt-1 break-words text-lg font-bold tracking-tight text-gray-900 dark:text-gray-100">{{ usd(quota.used_usd) }}</dd>
-          <dd v-if="quota.reserved_usd > 0" class="quota-reserved mt-2 text-xs leading-4 text-gray-600 dark:text-gray-300">{{ t('dynamicQuota.reserved') }} · {{ usd(quota.reserved_usd) }}</dd>
         </div>
         <div class="min-w-0" data-testid="dynamic-remaining">
           <dt class="text-xs font-semibold text-gray-700 dark:text-gray-200">{{ t('dynamicQuota.remaining') }}</dt>
@@ -78,21 +64,13 @@
     <template v-if="!compact">
       <p v-if="quota.status === 'learning'" class="mt-2 text-xs text-gray-600 dark:text-gray-300">{{ t(showNextAdjustment ? (quota.source_fixed_slots ? 'dynamicQuota.fixedLearningHint' : 'dynamicQuota.v2LearningHint') : 'dynamicQuota.allocationWait.learning') }}</p>
       <p v-if="quota.growth_frozen" class="mt-2 text-xs text-amber-800 dark:text-amber-200">{{ growthFrozenText }}</p>
-      <details class="mt-2 text-xs text-gray-600 dark:text-gray-300">
-        <summary class="cursor-pointer font-medium">{{ t('dynamicQuota.details') }}</summary>
-        <p class="my-2">{{ t('dynamicQuota.cycle') }} · #{{ quota.cycle }}</p>
-        <p v-if="showNextAdjustment && quota.last_change" class="mb-2 flex flex-wrap gap-x-2 tabular-nums">
-          <span>{{ usd(quota.last_change.previous_usd) }} → {{ usd(quota.last_change.current_usd) }}</span>
-          <span>{{ t(`dynamicQuota.changes.${changeReason}`, { percent: quota.last_change.node }) }}</span>
-        </p>
-        <dl class="space-y-1">
-      <div class="flex flex-wrap justify-between gap-1"><dt>{{ t('dynamicQuota.started') }}</dt><dd>{{ date(quota.started_at) }}</dd></div>
-      <div class="flex flex-wrap justify-between gap-1"><dt>{{ t('dynamicQuota.synced') }}</dt><dd>{{ date(quota.synced_at) }}</dd></div>
-      <div class="flex flex-wrap justify-between gap-1"><dt>{{ t('dynamicQuota.confirmed') }}</dt><dd>{{ quota.confirmed_at ? date(quota.confirmed_at) : t('dynamicQuota.notReset') }}</dd></div>
-        </dl>
-        <p class="mt-2">{{ t('dynamicQuota.cycleHint') }}</p>
-      </details>
     </template>
+    <dl class="quota-meta mt-3 grid grid-cols-2 gap-x-4 gap-y-2 border-t border-gray-200 pt-3 text-xs dark:border-dark-600" data-testid="dynamic-quota-meta" :title="t('dynamicQuota.cycleHint')">
+      <div class="min-w-0"><dt class="text-gray-500 dark:text-gray-400">{{ t('dynamicQuota.cycle') }}</dt><dd class="mt-0.5 font-medium tabular-nums text-gray-900 dark:text-gray-100">#{{ quota.cycle }}</dd></div>
+      <div class="min-w-0"><dt class="text-gray-500 dark:text-gray-400">{{ t('dynamicQuota.started') }}</dt><dd class="mt-0.5 break-words font-medium tabular-nums text-gray-900 dark:text-gray-100">{{ date(quota.started_at) }}</dd></div>
+      <div class="min-w-0"><dt class="text-gray-500 dark:text-gray-400">{{ t('dynamicQuota.synced') }}</dt><dd class="mt-0.5 break-words font-medium tabular-nums text-gray-900 dark:text-gray-100">{{ date(quota.synced_at) }}</dd></div>
+      <div class="min-w-0"><dt class="text-gray-500 dark:text-gray-400">{{ t('dynamicQuota.confirmed') }}</dt><dd class="mt-0.5 break-words font-medium tabular-nums text-gray-900 dark:text-gray-100">{{ quota.confirmed_at ? date(quota.confirmed_at) : t('dynamicQuota.notReset') }}</dd></div>
+    </dl>
   </section>
 </template>
 
@@ -100,25 +78,22 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { DynamicSubscriptionQuota } from '@/types'
-import { formatDate, formatDateTimeToMinute } from '@/utils/format'
+import { formatDateTimeToMinute } from '@/utils/format'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
-import Icon from '@/components/icons/Icon.vue'
 
 const props = withDefaults(defineProps<{ quota: DynamicSubscriptionQuota; compact?: boolean; showNextAdjustment?: boolean }>(), { compact: false, showNextAdjustment: false })
 const { t, locale } = useI18n()
-const stageHint = computed(() => {
-  const q = props.quota
-  if (!q.next_adjustment_percent) return t('dynamicQuota.noNextStage')
-  return t('dynamicQuota.stageAt', { percent: q.next_adjustment_percent })
-})
 const resetTime = computed(() => formatDateTimeToMinute(props.quota.expected_reset_at, locale.value))
-const allocationTime = computed(() => formatDate(props.quota.last_allocation_at, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }, locale.value))
-const allocationLabel = computed(() => t(props.quota.last_change?.reason === 'initial' ? 'dynamicQuota.initialAllocatedAt' : 'dynamicQuota.allocatedAt'))
-const changeReason = computed(() => ['initial', 'bounds', 'upstream_node', 'reset', 'seats', 'budget_safety'].includes(props.quota.last_change?.reason || '') ? props.quota.last_change!.reason : 'bounds')
 const pendingReason = computed(() => ['budget_conflict', 'protection', 'learning', 'guard', 'sync_recovery', 'estimate_anomaly', 'awaiting_allocation'].includes(props.quota.pending_adjustment_reason || '') ? props.quota.pending_adjustment_reason : 'guard')
 const growthFrozenText = computed(() => t(props.quota.growth_frozen_reason === 'sync_recovery' ? 'dynamicQuota.growthFrozenSync' : props.quota.growth_frozen_reason === 'estimate_anomaly' ? 'dynamicQuota.growthFrozenEstimate' : 'dynamicQuota.growthFrozen'))
 const percentage = computed(() => props.quota.limit_usd > 0 ? Math.min(100, Math.max(0, Math.round(props.quota.used_usd / props.quota.limit_usd * 100))) : 0)
 const usd = (value: number) => Number.isFinite(value) ? new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(value) : '—'
+const quotaDelta = computed(() => {
+  const value = props.quota.last_change_usd ?? (props.quota.last_change ? props.quota.last_change.current_usd - props.quota.last_change.previous_usd : 0)
+  return Number.isFinite(value) && Math.abs(value) >= 0.005 ? value : 0
+})
+const deltaText = computed(() => `${quotaDelta.value > 0 ? '+' : '−'}${usd(Math.abs(quotaDelta.value))}`)
+const deltaLabel = computed(() => t(quotaDelta.value > 0 ? 'dynamicQuota.increasedBy' : 'dynamicQuota.decreasedBy', { amount: usd(Math.abs(quotaDelta.value)) }))
 const date = (value?: string) => formatDateTimeToMinute(value, locale.value) || '—'
 </script>
 
@@ -128,8 +103,10 @@ const date = (value?: string) => formatDateTimeToMinute(value, locale.value) || 
 .quota-amounts > div { display: grid; grid-row: span 3; grid-template-rows: subgrid; }
 .quota-amounts dt { align-self: center; }
 .quota-amount { line-height: 1.75rem; }
+.quota-delta { transform: translateY(-0.2rem); }
 @container (min-width: 36rem) {
   .quota-amount { font-size: 1.5rem; line-height: 2rem; }
+  .quota-meta { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
 @container (max-width: 32rem) {
   .quota-amounts { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 0.5rem; }

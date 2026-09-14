@@ -42,6 +42,7 @@ type DynamicSubscriptionQuota struct {
 	AllocationBudgetConflict              bool                `json:"allocation_budget_conflict,omitempty"`
 	LastAllocationAt                      *time.Time          `json:"last_allocation_at,omitempty"`
 	LastChange                            *DynamicQuotaChange `json:"last_change,omitempty"`
+	LastChangeUSD                         float64             `json:"last_change_usd,omitempty"`
 	Cycle                                 int64               `json:"cycle"`
 	Status                                string              `json:"status"`
 	LimitUSD                              float64             `json:"limit_usd"`
@@ -71,6 +72,7 @@ func (q *DynamicSubscriptionQuota) Public() *DynamicSubscriptionQuota {
 	cp.AllocationBudgetConflict = false
 	cp.NextAdjustmentPercent = 0
 	cp.PendingAdjustmentPercent = 0
+	cp.LastAllocationAt = nil
 	cp.LastChange = nil
 	if cp.PendingAdjustmentReason == "budget_conflict" {
 		cp.PendingAdjustmentReason = "protection"
@@ -332,6 +334,7 @@ func loadDynamicSubscription(ctx context.Context, db dynamicQuotaQuerier, subscr
 		}
 		if q.LastChange != nil {
 			q.LastAllocationAt = &q.LastChange.At
+			q.LastChangeUSD = QuantizeUsageBillingAmount(q.LastChange.CurrentUSD - q.LastChange.PreviousUSD)
 		}
 	}
 	q.GrowthFrozenReason = q.pool.growthFreezeReason(now)
@@ -753,7 +756,7 @@ func (s *DynamicSubscriptionService) Refresh(ctx context.Context, accountID int6
 				return err
 			}
 			if _, err = tx.ExecContext(ctx, `UPDATE dynamic_subscription_policies SET used_standard_usd=0,allocated_standard_usd=0,applied_limit_usd=0,
- last_change=jsonb_build_object('previous_usd',applied_limit_usd,'current_usd',max_limit_usd,'reason','reset','at',NOW()),
+ last_change=jsonb_build_object('previous_usd',applied_limit_usd,'current_usd',0,'reason','reset','at',NOW()),
  cycle_used_usd=0,cycle_started_at=NOW(),updated_at=NOW() WHERE subscription_id=$1 AND account_id=$2 AND enabled`, id, accountID); err != nil {
 				return err
 			}
@@ -1031,8 +1034,9 @@ func (s *DynamicSubscriptionService) Begin(ctx context.Context, apiKeyID, accoun
 	if err != nil {
 		return nil, err
 	}
+	metadata, _ := ctx.Value(dynamicQuotaMetadataKey{}).(dynamicQuotaMetadata)
 	// Conservative observed maximum, not an asserted bound on arbitrary prompts.
-	hold := math.Max(0.01, maxCost)
+	hold := math.Max(0.01, p.requestMaxUSD(metadata.Model, maxCost))
 	if protected && p.CapacityUSD > 0 {
 		hold = math.Max(hold, p.CapacityUSD*0.0001)
 		if p.Available(now, total, held) < hold {
@@ -1066,7 +1070,6 @@ func (s *DynamicSubscriptionService) Begin(ctx context.Context, apiKeyID, accoun
 		billSub = subID.Int64
 	}
 	r := &DynamicQuotaReservation{ID: uuid.NewString(), AccountID: accountID, Cycle: p.Cycle, service: s}
-	metadata, _ := ctx.Value(dynamicQuotaMetadataKey{}).(dynamicQuotaMetadata)
 	metadata.RequestID = resolveUsageBillingRequestID(ctx, "")
 	// Freeze the policy per request. Old unresolved rows are not silently waived
 	// just because a new binary starts; they retain their original audit trail.
@@ -1210,9 +1213,10 @@ func SettleDynamicQuota(ctx context.Context, tx *sql.Tx, cmd *UsageBillingComman
 	var absorbed bool
 	var reviewed bool
 	var claim sql.NullString
+	var requestContext []byte
 	err = tx.QueryRowContext(ctx, `SELECT account_id,cycle,subscription_id,api_key_id,status,billing_windows,operator_absorbed_at IS NOT NULL,owner_subscription_id,
- review_required_at IS NOT NULL,review_claim_id FROM dynamic_quota_requests WHERE id=$1 FOR UPDATE`, cmd.DynamicQuotaReservationID).
-		Scan(&accountID, &cycle, &subID, &keyID, &status, &windows, &absorbed, &ownerSubID, &reviewed, &claim)
+ review_required_at IS NOT NULL,review_claim_id,request_context FROM dynamic_quota_requests WHERE id=$1 FOR UPDATE`, cmd.DynamicQuotaReservationID).
+		Scan(&accountID, &cycle, &subID, &keyID, &status, &windows, &absorbed, &ownerSubID, &reviewed, &claim, &requestContext)
 	if err != nil {
 		return err
 	}
@@ -1265,7 +1269,18 @@ func SettleDynamicQuota(ctx context.Context, tx *sql.Tx, cmd *UsageBillingComman
 	if err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE dynamic_quota_pools SET standard_total_usd=standard_total_usd+$2,max_request_usd=GREATEST(max_request_usd,$2) WHERE account_id=$1`, cmd.AccountID, cmd.DynamicStandardCost)
+	var metadata dynamicQuotaMetadata
+	modelMaxChanged := json.Unmarshal(requestContext, &metadata) == nil && p.observeRequestCost(metadata.Model, cmd.DynamicStandardCost)
+	if !modelMaxChanged {
+		_, err = tx.ExecContext(ctx, `UPDATE dynamic_quota_pools SET standard_total_usd=standard_total_usd+$2,max_request_usd=GREATEST(max_request_usd,$2) WHERE account_id=$1`, cmd.AccountID, cmd.DynamicStandardCost)
+		return err
+	}
+	raw, err := json.Marshal(p)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE dynamic_quota_pools SET standard_total_usd=standard_total_usd+$2,
+ max_request_usd=GREATEST(max_request_usd,$2),state=$3::jsonb WHERE account_id=$1`, cmd.AccountID, cmd.DynamicStandardCost, string(raw))
 	return err
 }
 

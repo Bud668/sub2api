@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"strings"
 	"time"
 )
 
@@ -36,18 +37,47 @@ type DynamicQuotaObservation struct {
 }
 
 type DynamicQuotaPoolState struct {
-	V2               *DynamicQuotaV2State     `json:"v2,omitempty"`
-	ceilingPercent   float64                  // Read from native account/global 7d auto-pause settings; never persisted here.
-	Cycle            int64                    `json:"cycle"`
-	StartedAt        time.Time                `json:"started_at"`
-	ConfirmedAt      *time.Time               `json:"confirmed_at,omitempty"`
-	Snapshot         *DynamicQuotaObservation `json:"snapshot,omitempty"`
-	Candidate        *DynamicQuotaObservation `json:"candidate,omitempty"`
-	Status           string                   `json:"status"`
-	CapacityUSD      float64                  `json:"capacity_usd"`
-	LastAllocationAt time.Time                `json:"last_allocation_at"`
-	Health           dynamicQuotaHealth       `json:"health,omitempty"`
-	GuardSignal      string                   `json:"guard_signal,omitempty"`
+	V2                 *DynamicQuotaV2State     `json:"v2,omitempty"`
+	ModelMaxRequestUSD map[string]float64       `json:"model_max_request_usd,omitempty"`
+	ceilingPercent     float64                  // Read from native account/global 7d auto-pause settings; never persisted here.
+	Cycle              int64                    `json:"cycle"`
+	StartedAt          time.Time                `json:"started_at"`
+	ConfirmedAt        *time.Time               `json:"confirmed_at,omitempty"`
+	Snapshot           *DynamicQuotaObservation `json:"snapshot,omitempty"`
+	Candidate          *DynamicQuotaObservation `json:"candidate,omitempty"`
+	Status             string                   `json:"status"`
+	CapacityUSD        float64                  `json:"capacity_usd"`
+	LastAllocationAt   time.Time                `json:"last_allocation_at"`
+	Health             dynamicQuotaHealth       `json:"health,omitempty"`
+	GuardSignal        string                   `json:"guard_signal,omitempty"`
+}
+
+func dynamicQuotaModel(model string) string {
+	model = strings.TrimSpace(model)
+	if model == "" || len(model) > 128 {
+		return ""
+	}
+	return model
+}
+
+func (p *DynamicQuotaPoolState) requestMaxUSD(model string, fallback float64) float64 {
+	model = dynamicQuotaModel(model)
+	if value := p.ModelMaxRequestUSD[model]; model != "" && value > 0 && validDynamicAmount(value) {
+		return value
+	}
+	return fallback
+}
+
+func (p *DynamicQuotaPoolState) observeRequestCost(model string, cost float64) bool {
+	model = dynamicQuotaModel(model)
+	if model == "" || cost <= 0 || !validDynamicAmount(cost) || p.ModelMaxRequestUSD[model] >= cost {
+		return false
+	}
+	if p.ModelMaxRequestUSD == nil {
+		p.ModelMaxRequestUSD = make(map[string]float64)
+	}
+	p.ModelMaxRequestUSD[model] = cost
+	return true
 }
 
 func (p *DynamicQuotaPoolState) growthFrozen(now time.Time) bool {

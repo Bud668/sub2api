@@ -26,13 +26,14 @@ describe('fixed seat display', () => {
     wrapper.unmount()
   })
 
-  it('removes manual floor and explains finite startup with the two-point milestone', () => {
+  it('removes manual floor and explains finite startup before the first milestone', () => {
     const wrapper = mount(DynamicQuotaCard, { props: { quota: { ...quota, floor_limit_usd: 400 }, showNextAdjustment: true }, global: { plugins: [i18n('zh')] } })
-    expect(wrapper.get('[data-testid=dynamic-next-adjustment]').text()).toContain('2%')
+    expect(wrapper.find('[data-testid=dynamic-next-adjustment]').exists()).toBe(false)
     expect(wrapper.get('[data-testid=dynamic-bounds]').text()).not.toContain('下调保护')
+    expect(wrapper.get('[data-testid=dynamic-used] dt').text()).toContain('在途预占 · $1.00')
     expect(wrapper.text()).toContain('有限起步额度')
     expect(wrapper.text()).toContain('首个 2% 节点')
     expect(wrapper.text()).toContain('不再等待独立学习样本')
-    expect(wrapper.text()).not.toContain('每 10 个百分点')
+    expect(wrapper.text()).not.toContain('下次调额')
   })
 })

@@ -139,6 +139,7 @@ func TestDynamicQuotaFixedSeatsRetainOwnersAndResetIsolation(t *testing.T) {
 	q, err := s.Load(ctx, 11)
 	require.NoError(t, err)
 	require.Equal(t, 6, q.FixedSlots, "explicit safe count changes apply in this cycle")
+	previousLimit := q.LimitUSD
 	state, err := s.GroupStatus(ctx, 7)
 	require.NoError(t, err)
 	require.Equal(t, 6, state.Policy.FixedSlots)
@@ -173,6 +174,10 @@ func TestDynamicQuotaFixedSeatsRetainOwnersAndResetIsolation(t *testing.T) {
 	require.Equal(t, int64(2), q.Cycle)
 	require.Equal(t, 6, q.FixedSlots)
 	require.Equal(t, 60.0, q.LimitUSD)
+	require.Equal(t, "reset", q.LastChange.Reason)
+	require.Equal(t, previousLimit, q.LastChange.PreviousUSD)
+	require.Equal(t, q.LimitUSD, q.LastChange.CurrentUSD)
+	require.Equal(t, QuantizeUsageBillingAmount(q.LimitUSD-previousLimit), q.LastChangeUSD)
 	require.Zero(t, q.CapacityEstimateUSD)
 	otherAfter, err := s.Load(ctx, 21)
 	require.NoError(t, err)
@@ -190,7 +195,7 @@ func TestDynamicQuotaFixedSeatsMilestonesAndReset(t *testing.T) {
 	p.enableFixedSeats()
 	o := dynamicTestObservation(4, 0, now.Add(7*24*time.Hour), now)
 	require.False(t, p.Observe(o, now))
-	for _, percent := range []int{2, 4, 6, 8, 10, 15, 20, 25, 30, 35, 40, 95} {
+	for _, percent := range []int{2, 3, 4, 9, 10, 11, 30, 31, 95, 98} {
 		o.FetchedAt = o.FetchedAt.Add(time.Minute)
 		o.UsedPercent = float64(percent)
 		o.LocalStandardTotal = float64(percent) * 16
@@ -204,12 +209,12 @@ func TestDynamicQuotaFixedSeatsMilestonesAndReset(t *testing.T) {
 	for _, tc := range []struct {
 		percent    float64
 		step, node int
-	}{{0, 2, 0}, {9.9, 2, 8}, {10, 5, 10}, {29.9, 5, 25}, {30, 5, 30}, {99, 5, 95}} {
+	}{{0, 2, 0}, {1.9, 2, 0}, {2, 1, 2}, {9.9, 1, 9}, {30, 1, 30}, {99, 1, 99}} {
 		require.Equal(t, tc.step, dynamicQuotaStep(tc.percent))
 		require.Equal(t, tc.node, dynamicQuotaNode(tc.percent))
 	}
 	p.V2.CandidateSamples = 1
-	require.Equal(t, 5, dynamicQuotaStep(70), "guard does not secretly change the schedule")
+	require.Equal(t, 1, dynamicQuotaStep(70), "guard does not secretly change the schedule")
 	o.UsedPercent, o.WindowCostUSD, o.WindowStandardUSD = 0, 0, 0
 	p.Candidate = &o
 	p.Confirm(o.FetchedAt)
@@ -232,10 +237,10 @@ func TestDynamicQuotaFixedSeatsMilestoneDisplay(t *testing.T) {
 		candidate, next int
 		percent         float64
 	}{
-		{"normal", 0, 20, 17},
-		{"capacity change", 1, 20, 17},
-		{"early", 0, 10, 8},
-		{"no next node", 0, 0, 98},
+		{"normal", 0, 18, 17},
+		{"capacity change", 1, 18, 17},
+		{"early", 0, 9, 8},
+		{"no next node", 0, 0, 99},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			updateDynamicGuardPool(t, db, 4, func(p *DynamicQuotaPoolState) {

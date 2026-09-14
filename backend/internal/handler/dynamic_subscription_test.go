@@ -224,7 +224,7 @@ func TestDynamicQuotaWSShutdownWaitsForUsagePersistence(t *testing.T) {
 
 func TestDynamicQuotaPublicProjectionAndOps(t *testing.T) {
 	sub := &service.UserSubscription{ID: 11, AdminDebug: true, Notes: "private-admin-notes", DynamicQuota: &service.DynamicSubscriptionQuota{Enabled: true, AccountID: 4, CapacityEstimateUSD: 12345, LimitUSD: 200, UsedUSD: 20, RemainingUSD: 180,
-		NextAdjustmentPercent: 60, PendingAdjustmentPercent: 55, LastChange: &service.DynamicQuotaChange{Node: 55, Reason: "upstream_node"}, GrowthFrozen: true, GrowthFrozenReason: "sync_recovery", AllocationBudgetConflict: true}}
+		NextAdjustmentPercent: 60, PendingAdjustmentPercent: 55, LastAllocationAt: new(time.Time), LastChange: &service.DynamicQuotaChange{Node: 55, Reason: "upstream_node"}, LastChangeUSD: 20, GrowthFrozen: true, GrowthFrozenReason: "sync_recovery", AllocationBudgetConflict: true}}
 	public, err := json.Marshal(dto.UserSubscriptionFromService(sub))
 	require.NoError(t, err)
 	require.Contains(t, string(public), `"admin_debug":true`)
@@ -239,7 +239,9 @@ func TestDynamicQuotaPublicProjectionAndOps(t *testing.T) {
 	require.NotContains(t, string(public), "private-review-id")
 	require.NotContains(t, string(public), "next_adjustment_percent")
 	require.NotContains(t, string(public), "pending_adjustment_percent")
-	require.NotContains(t, string(public), "last_change")
+	require.NotContains(t, string(public), "last_allocation_at")
+	require.NotContains(t, string(public), `"last_change":`)
+	require.Contains(t, string(public), `"last_change_usd":20`)
 	require.True(t, dto.UserSubscriptionFromService(sub).DynamicQuota.GrowthFrozen)
 	require.Equal(t, "sync_recovery", dto.UserSubscriptionFromService(sub).DynamicQuota.GrowthFrozenReason)
 	require.Contains(t, string(public), `"growth_frozen_reason":"sync_recovery"`)
