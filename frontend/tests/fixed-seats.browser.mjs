@@ -31,15 +31,22 @@ const fits = async locator => assert.equal(await locator.evaluate(el => el.scrol
 async function checkCard(page, card, dark, locale) {
   await fits(card)
   const metrics = await card.locator('.quota-amounts').evaluate(el => ({
+    order: [...el.children].map(node => node.dataset.testid),
     titles: [...el.querySelectorAll('dt')].map(dt => { const label = dt.firstElementChild || dt; const s = getComputedStyle(label); return [s.fontWeight, s.color] }),
-    amounts: [...el.querySelectorAll('.quota-amount')].map(dd => getComputedStyle(dd).fontWeight)
+    amounts: [...el.querySelectorAll('.quota-amount')].map(dd => [getComputedStyle(dd).fontWeight, getComputedStyle(dd).textAlign])
   }))
+  assert.deepEqual(metrics.order, ['dynamic-allocated', 'dynamic-used', 'dynamic-remaining'])
   assert.deepEqual(metrics.titles, Array.from({ length: 3 }, () => ['600', dark ? 'rgb(229, 231, 235)' : 'rgb(55, 65, 81)']))
-  assert.deepEqual(metrics.amounts, ['700', '700', '700'])
+  assert.deepEqual(metrics.amounts, Array.from({ length: 3 }, () => ['700', 'center']))
+  assert(!(await card.innerText()).includes('US$'))
   assert.equal(await card.getByTestId('dynamic-quota-delta').innerText(), '+$20.00')
   assert.equal(await card.getByTestId('dynamic-reserved').innerText(), locale === 'zh' ? '在途预占 · $2.69' : 'In flight · $2.69')
   assert.equal(await card.getByTestId('dynamic-used').locator('dt').getByTestId('dynamic-reserved').count(), 1)
+  assert((await card.getByTestId('dynamic-cap').innerText()).includes('$600.00'))
+  assert.notEqual(await card.getByTestId('dynamic-cap').evaluate(el => getComputedStyle(el).backgroundColor), 'rgba(0, 0, 0, 0)')
   assert.equal(await card.getByTestId('dynamic-quota-meta').count(), 1)
+  assert((await card.getByTestId('dynamic-start').locator('dt').innerText()).includes('#1'))
+  assert.deepEqual(await card.getByTestId('dynamic-quota-meta').locator(':scope > div').evaluateAll(nodes => nodes.map(node => getComputedStyle(node).textAlign)), Array.from({ length: 4 }, () => 'center'))
   assert.equal(await card.locator('details').count(), 0)
   assert.equal(await card.locator('[data-testid=dynamic-bounds]').getByText(/下调保护|Downward protection/).count(), 0)
   const badge = card.getByTestId('fixed-seat-badge')
@@ -88,7 +95,7 @@ try {
     const errors = []
     page.on('pageerror', e => errors.push(e.message))
     let policy = { group_id: 7, account_id: 4, revision: 1, enabled: true, weight: 1, max_limit_usd: 600, fixed_slots: 4, floor_limit_usd: null }
-    const rows = groups.map((group, i) => ({ id: i + 11, user_id: 999, group_id: group.id, group, user, status: 'active', starts_at: stamp, expires_at: new Date(Date.parse(stamp) + [23, 7, 3][i] * 86400_000).toISOString(), weekly_usage_usd: 50, admin_debug: i === 2, dynamic_quota: i === 2 ? null : { ...base, ...(i === 1 ? { next_adjustment_percent: 40, pending_adjustment_percent: 35, pending_adjustment_reason: 'sync_recovery', growth_frozen: true, growth_frozen_reason: 'sync_recovery' } : {}) }, admin_debug_quota: i === 2 ? { weekly_limit_usd: 120, remaining_usd: 68, reserved_usd: 2, revision: 1, follow_reset: true, reset_pending: false, expected_reset_at: '2026-09-19T05:00:00Z' } : null }))
+    const rows = groups.map((group, i) => ({ id: i + 11, user_id: 999, group_id: group.id, group, user, status: 'active', starts_at: stamp, expires_at: new Date(Date.parse(stamp) + [23, 7, 3][i] * 86400_000).toISOString(), weekly_usage_usd: 50, admin_debug: i === 2, dynamic_quota: i === 2 ? null : { ...base, ...(i === 1 ? { next_adjustment_percent: 40, pending_adjustment_percent: 35, pending_adjustment_reason: 'sync_recovery', growth_frozen: true, growth_frozen_reason: 'sync_recovery', last_change_usd: -20 } : {}) }, admin_debug_quota: i === 2 ? { weekly_limit_usd: 120, remaining_usd: 68, reserved_usd: 2, revision: 1, follow_reset: true, reset_pending: false, expected_reset_at: '2026-09-19T05:00:00Z' } : null }))
     await page.addInitScript(({ user, locale, dark }) => {
       localStorage.setItem('auth_token', 'synthetic-local-preview')
       localStorage.setItem('auth_user', JSON.stringify(user))
@@ -153,13 +160,17 @@ try {
     const localizedCardCheck = async (target, targetDark) => {
       await checkCard(page, target, targetDark, locale)
       const meta = await target.getByTestId('dynamic-quota-meta').innerText()
-      assert(meta.includes(locale === 'zh' ? '订阅额度周期' : 'Subscription quota cycle'))
+      assert(meta.includes(locale === 'zh' ? '本周期起点' : 'Cycle started'))
+      assert(meta.includes('#1'))
       assert(meta.includes(locale === 'zh' ? '最近数据同步' : 'Latest data sync'))
     }
     await localizedCardCheck(card, dark)
     await card.screenshot({ path: join(output, `${prefix}-admin.png`) })
     const pendingCard = page.locator('[data-table-card]').nth(1)
     assert((await pendingCard.getByTestId('dynamic-pending-stage').innerText()).includes('35%'))
+    const decrease = pendingCard.getByTestId('dynamic-quota-delta')
+    assert((await decrease.getAttribute('class')).includes(dark ? 'dark:bg-red-950/50' : 'bg-red-50'))
+    assert.notEqual(await decrease.evaluate(el => getComputedStyle(el).backgroundColor), 'rgba(0, 0, 0, 0)')
     assert.equal(await pendingCard.getByTestId('subscription-status').innerText(), locale === 'zh' ? '同步恢复中 · 可用' : 'Sync recovering · Usable')
     assert((await pendingCard.innerText()).includes(locale === 'zh' ? '上游额度同步正在恢复确认' : 'Upstream quota synchronization is being reconfirmed'))
     await pendingCard.screenshot({ path: join(output, `${prefix}-pending.png`) })
