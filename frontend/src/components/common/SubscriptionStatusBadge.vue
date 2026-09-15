@@ -48,6 +48,8 @@ const details = computed(() => {
   const lines = [t('subscriptionStatus.subscription') + ': ' + label(lifecycle.value)]
   if (props.subscription.admin_debug) lines.push(t('dynamicQuota.debugUsageHint'))
   else if (quotaState.value !== 'disabled') lines.push(t('subscriptionStatus.quota') + ': ' + t(`dynamicQuota.statuses.${quotaState.value}`))
+  const q = props.subscription.admin_debug ? null : props.subscription.dynamic_quota
+  if (lifecycle.value === 'active' && q?.enabled && Number.isInteger(q.cycle) && q.cycle > 0) lines.push(`${t('dynamicQuota.cycle')}: #${q.cycle}`)
   lines.push(lifecycle.value !== 'active' ? t('subscriptionStatus.inactiveHint')
     : quotaState.value === 'activation_pending' ? t(props.subscription.dynamic_quota?.fixed_slots ? 'dynamicQuota.fixedPendingActivation' : 'dynamicQuota.pendingActivation')
     : props.subscription.admin_debug ? t(props.subscription.admin_debug_quota?.reset_pending ? 'dynamicQuota.debugResetPending' : 'dynamicQuota.adminDebugHint')

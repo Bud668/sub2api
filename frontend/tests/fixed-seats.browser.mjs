@@ -32,21 +32,26 @@ async function checkCard(page, card, dark, locale) {
   await fits(card)
   const metrics = await card.locator('.quota-amounts').evaluate(el => ({
     order: [...el.children].map(node => node.dataset.testid),
+    columns: getComputedStyle(el).gridTemplateColumns.trim().split(/\s+/).length,
     titles: [...el.querySelectorAll('dt')].map(dt => { const label = dt.firstElementChild || dt; const s = getComputedStyle(label); return [s.fontWeight, s.color] }),
     amounts: [...el.querySelectorAll('.quota-amount')].map(dd => [getComputedStyle(dd).fontWeight, getComputedStyle(dd).textAlign])
   }))
   assert.deepEqual(metrics.order, ['dynamic-allocated', 'dynamic-used', 'dynamic-remaining'])
   assert.deepEqual(metrics.titles, Array.from({ length: 3 }, () => ['600', dark ? 'rgb(229, 231, 235)' : 'rgb(55, 65, 81)']))
-  assert.deepEqual(metrics.amounts, Array.from({ length: 3 }, () => ['700', 'center']))
+  assert.deepEqual(metrics.amounts, [['700', 'left'], ['700', metrics.columns === 2 ? 'left' : 'center'], ['700', 'right']])
   assert(!(await card.innerText()).includes('US$'))
   assert.equal(await card.getByTestId('dynamic-quota-delta').innerText(), '+$20.00')
   assert.equal(await card.getByTestId('dynamic-reserved').innerText(), locale === 'zh' ? '在途预占 · $2.69' : 'In flight · $2.69')
   assert.equal(await card.getByTestId('dynamic-used').locator('dt').getByTestId('dynamic-reserved').count(), 1)
   assert((await card.getByTestId('dynamic-cap').innerText()).includes('$600.00'))
   assert.notEqual(await card.getByTestId('dynamic-cap').evaluate(el => getComputedStyle(el).backgroundColor), 'rgba(0, 0, 0, 0)')
+  assert.equal(await card.getByTestId('dynamic-cap').evaluate(el => getComputedStyle(el).backgroundColor), await card.getByTestId('dynamic-reserved').evaluate(el => getComputedStyle(el).backgroundColor))
   assert.equal(await card.getByTestId('dynamic-quota-meta').count(), 1)
-  assert((await card.getByTestId('dynamic-start').locator('dt').innerText()).includes('#1'))
-  assert.deepEqual(await card.getByTestId('dynamic-quota-meta').locator(':scope > div').evaluateAll(nodes => nodes.map(node => getComputedStyle(node).textAlign)), Array.from({ length: 4 }, () => 'center'))
+  assert.equal(await card.getByTestId('dynamic-start').locator('dt').innerText(), locale === 'zh' ? '本周期起点' : 'Cycle started')
+  assert(!(await card.getByTestId('dynamic-quota-meta').innerText()).includes('#1'))
+  const metaLayout = await card.getByTestId('dynamic-quota-meta').evaluate(el => ({ columns: getComputedStyle(el).gridTemplateColumns.trim().split(/\s+/).length, padding: getComputedStyle(el).paddingLeft, align: [...el.children].map(node => getComputedStyle(node).textAlign) }))
+  assert.equal(metaLayout.padding, '12px')
+  assert.deepEqual(metaLayout.align, metaLayout.columns === 4 ? ['left', 'center', 'center', 'right'] : ['left', 'right', 'left', 'right'])
   assert.equal(await card.locator('details').count(), 0)
   assert.equal(await card.locator('[data-testid=dynamic-bounds]').getByText(/下调保护|Downward protection/).count(), 0)
   const badge = card.getByTestId('fixed-seat-badge')
@@ -161,8 +166,16 @@ try {
       await checkCard(page, target, targetDark, locale)
       const meta = await target.getByTestId('dynamic-quota-meta').innerText()
       assert(meta.includes(locale === 'zh' ? '本周期起点' : 'Cycle started'))
-      assert(meta.includes('#1'))
+      assert(!meta.includes('#1'))
       assert(meta.includes(locale === 'zh' ? '最近数据同步' : 'Latest data sync'))
+      const status = target.getByTestId('subscription-status')
+      if (await status.count()) {
+        await status.locator('button').click()
+        const tooltip = page.locator('[role=tooltip]:visible')
+        await tooltip.waitFor()
+        assert((await tooltip.innerText()).includes(locale === 'zh' ? '订阅额度周期: #1' : 'Subscription quota cycle: #1'))
+        await page.keyboard.press('Escape')
+      }
     }
     await localizedCardCheck(card, dark)
     await card.screenshot({ path: join(output, `${prefix}-admin.png`) })

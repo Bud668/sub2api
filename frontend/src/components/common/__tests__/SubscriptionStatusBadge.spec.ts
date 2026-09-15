@@ -14,6 +14,7 @@ describe('combined subscription status', () => {
       global: { plugins: [createI18n({ legacy: false, locale: 'zh', messages: { zh }, messageCompiler: message => () => String(message) })] }
     })
     const button = wrapper.get('button')
+    expect(button.attributes('title')).toContain('订阅额度周期: #1')
     for (const [patch, state, label] of [
       [{}, 'active', '生效中'],
       [{ status: 'learning' }, 'learning', '学习中 · 可用'],
@@ -40,6 +41,7 @@ describe('combined subscription status', () => {
       expect(button.text()).toBe(label)
       expect(button.attributes('title')).toContain('订阅当前不可用')
       expect(button.attributes('title')).not.toContain('当前动态额度可用')
+      expect(button.attributes('title')).not.toContain('订阅额度周期')
     }
     await wrapper.setProps({ subscription: { ...subscription, status: 'invalid' as UserSubscription['status'] } })
     expect(button.text()).toBe('状态待核对')
@@ -47,6 +49,7 @@ describe('combined subscription status', () => {
     expect(button.text()).toBe('生效中')
     expect(button.attributes('title')).toContain('不参与动态分配')
     expect(button.attributes('title')).toContain('独立周额度')
+    expect(button.attributes('title')).not.toContain('订阅额度周期')
     const debug = { weekly_limit_usd: 50, revision: 1, follow_reset: true, reset_pending: false }
     await wrapper.setProps({ subscription: { ...subscription, admin_debug: true, admin_debug_quota: debug, weekly_usage_usd: 50 } })
     expect(button.text()).toBe('额度已用尽')
@@ -55,13 +58,16 @@ describe('combined subscription status', () => {
     await wrapper.setProps({ subscription: { status: 'active', dynamic_quota: null } })
     expect(button.text()).toBe('生效中')
     expect(button.attributes('title')).toContain('原分组限额')
-    await wrapper.setProps({ subscription: { ...subscription, dynamic_quota: { ...quota, status: 'learning' } } })
+    expect(button.attributes('title')).not.toContain('订阅额度周期')
+    await wrapper.setProps({ subscription: { ...subscription, dynamic_quota: { ...quota, cycle: 2, status: 'learning' } } })
+    expect(button.attributes('title')).toContain('订阅额度周期: #2')
     expect(button.attributes('aria-expanded')).toBe('false')
     await button.trigger('click')
     expect(button.attributes('aria-expanded')).toBe('true')
     const tip = document.getElementById(button.attributes('aria-describedby'))!
     expect(tip.textContent).toContain('订阅状态: 生效中')
     expect(tip.textContent).toContain('动态额度: 学习期')
+    expect(tip.textContent).toContain('订阅额度周期: #2')
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
     await wrapper.vm.$nextTick()
     expect(button.attributes('aria-expanded')).toBe('false')
