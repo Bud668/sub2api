@@ -64,7 +64,7 @@ export default {
     growthFrozenEstimate: 'An unusual estimated-total change is being verified. Requests can still use the trusted budget in this cycle; settled usage and in-flight reservations continue to count.',
     noSources: 'No directly authorized OpenAI OAuth source in this group. Cross-group binding is not allowed.',
     bindingHint: 'The saved source is fixed. Changing it requires a separate migration; toggling cannot change the source or refill quota.',
-    weight: 'Allocation weight (1 = one share)', cap: 'Allocation cap', floor: 'Downward protection',
+    weight: 'Allocation weight (1 = one share)', cap: 'Allocation cap', capShort: 'Cap', floor: 'Downward protection',
     fixedSlots: 'Fixed seats', fixedSlotsBadge: 'Fixed seats · {n}',
     fixedSlotsHint: 'This group allocates across {n} fixed seats, not online or current users. Vacancies remain reserved and are never lent to others; new members take a reserved share. New administrator debug subscriptions do not occupy seats, but their actual usage reduces upstream capacity.',
     sourceSeatsHint: 'This upstream has {n} fixed seats across multiple groups; group weights and billing rates also affect allocation.',

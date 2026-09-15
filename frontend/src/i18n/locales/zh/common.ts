@@ -64,7 +64,7 @@ export default {
     growthFrozenEstimate: '预计总费用变化异常，正在核验；仍可使用本周期的可信剩余额度，已用量和在途预占继续计入。',
     noSources: '此分组没有可用的直接授权 OpenAI OAuth 来源；不能跨分组绑定。',
     bindingHint: '保存后固定绑定此账号。换源须单独迁移，不能通过关闭再开启换源补额。',
-    weight: '分配权重（1 = 一份）', cap: '分配上限', floor: '下调保护',
+    weight: '分配权重（1 = 一份）', cap: '分配上限', capShort: '上限', floor: '下调保护',
     fixedSlots: '固定名额', fixedSlotsBadge: '固定名额 · {n}',
     fixedSlotsHint: '此分组按 {n} 个固定名额分配，不是在线人数或当前用户数。空名额持续预留，不借给其他人；中途加入接手预留份额。新建管理员调试订阅不占名额，其实际消耗仍影响上游余量。',
     sourceSeatsHint: '同一上游共 {n} 个固定名额，分布在多个分组；实际分配还取决于各组权重和计费倍率。',

@@ -8,7 +8,7 @@
         <div class="min-w-0 text-left" data-testid="dynamic-allocated">
           <dt class="flex min-w-0 flex-wrap items-center justify-start gap-1.5 text-xs font-semibold text-gray-700 dark:text-gray-200" data-testid="dynamic-bounds">
             <span>{{ t('dynamicQuota.limit') }}</span>
-            <span class="inline-flex shrink-0 items-center rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium leading-4 text-amber-700 ring-1 ring-inset ring-amber-200 dark:bg-amber-950/40 dark:text-amber-200 dark:ring-amber-800/70" data-testid="dynamic-cap">{{ t('dynamicQuota.cap') }} · {{ usd(quota.max_limit_usd) }}</span>
+            <span class="inline-flex shrink-0 items-center text-[11px] font-medium leading-4 text-gray-600 dark:text-gray-300" data-testid="dynamic-cap">{{ t('dynamicQuota.capShort') }} · {{ usd(quota.max_limit_usd) }}</span>
             <span v-if="!quota.fixed_slots && quota.floor_limit_usd != null" class="inline-flex shrink-0 items-center rounded-md bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium leading-4 text-gray-700 ring-1 ring-inset ring-gray-200 dark:bg-dark-700 dark:text-gray-200 dark:ring-dark-500">{{ t('dynamicQuota.floor') }} · {{ usd(quota.floor_limit_usd) }}<HelpTooltip trigger="click" :content="t('dynamicQuota.floorHint')"><template #trigger><button type="button" class="rounded px-1 focus-visible:ring-2 focus-visible:ring-primary-500" :aria-label="t('dynamicQuota.floorHelp')">ⓘ</button></template></HelpTooltip></span>
           </dt>
           <dd class="quota-amount mt-1 flex min-w-0 flex-wrap items-start justify-start gap-1.5 text-lg font-bold tracking-tight text-gray-900 dark:text-gray-100">
@@ -93,6 +93,7 @@ const date = (value?: string) => formatDateTimeToMinute(value, locale.value) || 
 .quota-meta > div:nth-child(odd) { text-align: left; }
 .quota-meta > div:nth-child(even) { text-align: right; }
 @container (min-width: 36rem) {
+  .quota-amounts { padding-inline: 2rem; }
   .quota-amount { font-size: 1.5rem; line-height: 2rem; }
   .quota-meta { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .quota-meta > div:nth-child(2), .quota-meta > div:nth-child(3) { text-align: center; }
